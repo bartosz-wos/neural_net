@@ -171,6 +171,12 @@ double XGBoostTree::compute_weight(const std::vector<double>& G,
     return Gs / (Hs + lambda_);
 }
 
+void XGBoostTree::fit(const Tensor& X, const Tensor& g, const Tensor& h) {
+    std::vector<size_t> indices(X.rows);
+    for (size_t i = 0; i < X.rows; ++i) indices[i] = i;
+    build(root_, X, indices, 0);
+}
+
 void XGBoostTree::build(XGBNode& node, const Tensor& X,
                           const std::vector<size_t>& indices, size_t depth) {
 
@@ -266,7 +272,10 @@ void XGBoostClassifier::fit(const Tensor& X, const Tensor& y, size_t n_classes) 
         std::vector<XGBoostTree> class_trees;
         for (size_t t = 0; t < n_estimators_; ++t) {
             XGBoostTree tree(max_depth_, lambda_, gamma_);
-            Tensor g(X.rows, 1, 0.5), h(X.rows, 1, 1.0);
+            Tensor g(X.rows, 1);
+            for (size_t i = 0; i < g.rows; ++i) g[i][0] = 0.5;
+            Tensor h(X.rows, 1);
+            for (size_t i = 0; i < h.rows; ++i) h[i][0] = 1.0;
             tree.fit(X, g, h);
             class_trees.push_back(tree);
         }

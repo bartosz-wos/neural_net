@@ -54,6 +54,14 @@ $(BUILD_DIR)/utils/adaboost.cpp.o: include/nn/utils/adaboost.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/gradient_boosting.cpp.o: include/nn/utils/gradient_boosting.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/elastic_net.cpp.o: include/nn/utils/elastic_net.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/random_forest.cpp.o: include/nn/utils/random_forest.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/isolation_forest.cpp.o: include/nn/utils/isolation_forest.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/lightgbm_style.cpp.o: include/nn/utils/lightgbm_style.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers
 $(BUILD_DIR)/layers/conv_layer.cpp.o: include/nn/layers/conv_layer.cpp | $(BUILD_DIR)
@@ -139,7 +147,11 @@ LIB_OBJS = \
 	$(BUILD_DIR)/utils/focal_loss.cpp.o \
 	$(BUILD_DIR)/utils/tabular_ensemble.cpp.o \
 	$(BUILD_DIR)/utils/adaboost.cpp.o \
-	$(BUILD_DIR)/utils/gradient_boosting.cpp.o
+	$(BUILD_DIR)/utils/gradient_boosting.cpp.o \
+	$(BUILD_DIR)/utils/elastic_net.cpp.o \
+	$(BUILD_DIR)/utils/random_forest.cpp.o \
+	$(BUILD_DIR)/utils/isolation_forest.cpp.o \
+	$(BUILD_DIR)/utils/lightgbm_style.cpp.o \
 	$(BUILD_DIR)/layers/conv_layer.cpp.o \
 	$(BUILD_DIR)/layers/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/lstm.cpp.o \
