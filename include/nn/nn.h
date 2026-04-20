@@ -38,6 +38,7 @@
 #include "utils/serialization_roundtrip.h"
 #include "utils/label_smoothing.h"
 #include "utils/clip_grad_norm.h"
+#include "utils/focal_loss.h"
 #include "optimizers/one_cycle_lr.h"
 #include "layers/lstm_las.h"
 

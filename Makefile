@@ -45,6 +45,8 @@ $(BUILD_DIR)/utils/timing_benchmark.cpp.o: include/nn/utils/timing_benchmark.cpp
 $(BUILD_DIR)/utils/serialization_roundtrip.cpp.o: include/nn/utils/serialization_roundtrip.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/clip_grad_norm.cpp.o: include/nn/utils/clip_grad_norm.cpp | $(BUILD_DIR)
+\n$(BUILD_DIR)/utils/focal_loss.cpp.o: include/nn/utils/focal_loss.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers
