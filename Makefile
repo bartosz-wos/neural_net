@@ -103,6 +103,8 @@ $(BUILD_DIR)/layers/densenet.cpp.o: include/nn/layers/densenet.cpp | $(BUILD_DIR
 $(BUILD_DIR)/layers/mobilenet_v2.cpp.o: include/nn/layers/mobilenet_v2.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/lstm_las.cpp.o: include/nn/layers/lstm_las.cpp | $(BUILD_DIR)
+\n$(BUILD_DIR)/layers/capsnet.cpp.o: include/nn/layers/capsnet.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 LIB_OBJS = \
