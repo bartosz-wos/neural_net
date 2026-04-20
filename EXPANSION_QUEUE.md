@@ -5,18 +5,20 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-- **tabular_ensemble**: Tabular data Ensemble base — dataset loader for tabular CSV, train/test split, minmax normalization. `TabularDataset`, `TabularLoader`
-- **decision_stump**: Decision stump (1-level decision tree) as weak learner. `DecisionStump` with Gini/entropy split search
-- **adaboost**: AdaBoost — sequential boosting with sample reweighting, weighted vote. `AdaBoost` with `DecisionStump` weak learners
-- **gradient_boosting**: Generic Gradient Boosting — sequential learners fit negative gradient of loss, `GradientBoosting` with customizable loss (MSE, cross-entropy)
-- **xgboost_style**: XGBoost-style boosting — regularization term (γT + λ/2 * ||w||^2), approximate histogram binning, gradient statistics per node. `XGBoostTree`, `XGBoostClassifier`
+- **catboost_style**: CatBoost-style boosting — ordered boosting (anti-leakage), symmetric trees, `PerceptronCriterion` for classification, `CatBoostClassifier`
+- **random_forest**: Random Forest — bagging + random feature subset at each split. `RandomForest` with parallel trees, majority vote
+- **isolation_forest**: Isolation Forest — anomaly detection via random splits, anomaly score = 2^{-(avg_depth / c(n))}. `IsolationForest`
+- **lightgbm_style**: LightGBM-style — histogram-based binning (feature binning for speed), leaf-wise growth (best-first), `HistogramBoosting`
+- **elastic_net**: ElasticNet regularization — combined L1 (Lasso) + L2 (Ridge) penalty on weights, `ElasticNet` utility
 
 ## Done
 
-- **coordconv** ✅
-- **gnn** ✅
-- **squeeze_excitation** ✅
-- **mixture_of_experts** ✅
+- **tabular_ensemble** ✅ — `TabularDataset`, `DecisionStump` (Gini-split search)
+- **adaboost** ✅ — `AdaBoost` with sample reweighting + weighted vote
+- **gradient_boosting** ✅ — `GradientBoosting`, `RegressionTree`
+- **xgboost_style** ✅ — `XGBoostTree` (λ, γ, min_child_weight), `XGBoostClassifier`
+
+- **coordconv** ✅, **gnn** ✅, **squeeze_excitation** ✅, **mixture_of_experts** ✅
 - **capsnet** ✅, **clip_grad_norm** ✅, **one_cycle_lr** ✅, **focal_loss** ✅, **label_smoothing** ✅
 - **densenet**, **mobilenet_v2**, **serialization_roundtrip_test**, **lstm_las**, **memory_network**, **squeezenet**, **numerical_stability_tests**, **layer_timing_benchmark**, **layer_output_tracker**
 
