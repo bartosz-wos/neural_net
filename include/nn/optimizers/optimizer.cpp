@@ -14,16 +14,9 @@ void SGD::step(Model& model) {
 }
 
 Adam::Adam(double lr, double b1, double b2, double eps)
-    : lr(lr), beta1(b1), beta2(b2), epsilon(eps), t(0) {}
+    : lr(lr), beta1(b1), beta2(b2), epsilon(eps), t(1) {}
 
 void Adam::step(Model& model) {
-    t++;
-    // t starts at 0; on first call t becomes 1, giving b1_corr = 1-beta1 (e.g. 0.1 for beta1=0.9).
-    // This causes m_hat = m / 0.1 = 10× the raw gradient — a classic Adam bug.
-    // Fix: only apply bias correction when the denominator is large enough (> 1e-7),
-    // otherwise fall back to the raw (unbiased) moments.
-    const double BIAS_CORR_THRESH = 1e-7;
-
     // First, ensure state exists for each layer
     for (auto& layer : model.layers) {
         auto* ptr = layer.get();
@@ -53,12 +46,9 @@ void Adam::step(Model& model) {
             Tensor& m = m_vec[i];
             Tensor& v = v_vec[i];
 
-            // bias-corrected moments
-            double b1_corr = (beta1 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta1, t));
-            double b2_corr = (beta2 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta2, t));
-
-            bool use_b1_corr = b1_corr > BIAS_CORR_THRESH;
-            bool use_b2_corr = b2_corr > BIAS_CORR_THRESH;
+            // Bias correction denominators: 1 - beta^t
+            double b1_corr = 1.0 - std::pow(beta1, t);
+            double b2_corr = 1.0 - std::pow(beta2, t);
 
             // elementwise: m = beta1*m + (1-beta1)*grad; v = beta2*v + (1-beta2)*grad*grad
             for (size_t r = 0; r < param->rows; ++r) {
@@ -66,8 +56,8 @@ void Adam::step(Model& model) {
                     double g = (*grad)[r][c];
                     m[r][c] = beta1 * m[r][c] + (1 - beta1) * g;
                     v[r][c] = beta2 * v[r][c] + (1 - beta2) * g * g;
-                    double m_hat = use_b1_corr ? m[r][c] / b1_corr : m[r][c];
-                    double v_hat = use_b2_corr ? v[r][c] / b2_corr : v[r][c];
+                    double m_hat = m[r][c] / b1_corr;
+                    double v_hat = v[r][c] / b2_corr;
                     // update
                     (*param)[r][c] -= lr * m_hat / (std::sqrt(v_hat) + epsilon);
                 }
@@ -77,6 +67,8 @@ void Adam::step(Model& model) {
         // zero gradients
         ptr->zero_grad();
     }
+    // Increment timestep after full pass (t starts at 1, so b1_corr = 1-beta1 on first step)
+    t++;
 }
 
 double Optimizer::clip_grad_norm_(Model& model, double max_norm) {

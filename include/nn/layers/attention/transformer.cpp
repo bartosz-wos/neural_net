@@ -623,7 +623,8 @@ Tensor PositionalEncoding::forward(const Tensor& input) {
 }
 
 Tensor PositionalEncoding::backward(const Tensor& grad_output, double) {
-    // FIX: PE has no parameters — gradients should not flow through the addition.
-    // Return zeros so that upstream layers don't receive spurious gradient contributions.
-    return Tensor::zeros(grad_output.rows, grad_output.cols);
+    // Forward: output = input + pe (elementwise addition, pe is a constant table).
+    // grad_output flows in from downstream; dL/dinput = dL/doutput (identity).
+    // PE has no trainable parameters so gradient w.r.t. PE is discarded.
+    return grad_output;
 }

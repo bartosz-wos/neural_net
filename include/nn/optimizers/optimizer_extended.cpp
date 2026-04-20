@@ -38,7 +38,6 @@ void RMSprop::step(Model& model) {
 }
 
 void AdamW::step(Model& model) {
-    t++;
     for (auto& layer : model.layers) {
         auto* ptr = layer.get();
         auto params = ptr->parameters();
@@ -64,9 +63,9 @@ void AdamW::step(Model& model) {
             Tensor& m = m_vec[i];
             Tensor& v = v_vec[i];
 
-            // Bias correction: computed once per param tensor, NOT per element.
-            double b1_corr = (beta1 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta1, t));
-            double b2_corr = (beta2 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta2, t));
+            // Bias correction: 1 - beta^t, t starts at 1 so first step gets 1-beta1
+            double b1_corr = 1.0 - std::pow(beta1, t);
+            double b2_corr = 1.0 - std::pow(beta2, t);
 
             for (size_t r = 0; r < p->rows; ++r) {
                 for (size_t c_col = 0; c_col < p->cols; ++c_col) {
@@ -83,6 +82,7 @@ void AdamW::step(Model& model) {
         }
         ptr->zero_grad();
     }
+    t++;
 }
 
 void SGDNesterov::step(Model& model) {

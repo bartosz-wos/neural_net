@@ -20,8 +20,8 @@ public:
     double lr, beta1, beta2, epsilon, weight_decay;
     int t;
     AdamW(double lr = 0.001, double b1 = 0.9, double b2 = 0.999,
-          double eps = 1e-7, double wd = 0.01)
-        : lr(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(0) {}
+          double eps = 1e-8, double wd = 0.01)
+        : lr(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(1) {}
     void step(Model& model) override;
     bool handles_weight_decay() const override { return true; }
 private:

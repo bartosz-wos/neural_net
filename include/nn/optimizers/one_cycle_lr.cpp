@@ -6,7 +6,7 @@ OneCycleLR::OneCycleLR(double max_lr, size_t total_steps,
                         double min_lr, const std::string& anneal_strategy)
     : max_lr_(max_lr), min_lr_(min_lr),
       total_steps_(total_steps),
-      warmup_steps_(total_steps / 3),
+      warmup_steps_(total_steps * 3 / 10),  // ~30% of total (was 33% with /3)
       anneal_strategy_(anneal_strategy),
       step_(0) {
     if (total_steps < 3) warmup_steps_ = 0;  // guard div/0
