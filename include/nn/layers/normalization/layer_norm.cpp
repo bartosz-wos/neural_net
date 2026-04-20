@@ -48,10 +48,13 @@ Tensor LayerNorm::backward(const Tensor& grad_output, double /* learning_rate */
     size_t batch = grad_output.rows;
     size_t features = grad_output.cols;
 
-    // FIX: Accumulate grad_gamma_ and grad_beta_ across multiple backward calls.
-    // Multiple backward passes (without zero_grad between) would otherwise double-count gradients.
+    // Initialize (on first backward call within an optimizer step) and accumulate
+    // across multiple backward() calls before zero_grad() is called.
     if (grad_gamma_.rows == 0) grad_gamma_ = Tensor(1, features);
     if (grad_beta_.rows == 0)  grad_beta_  = Tensor(1, features);
+    // NOTE: no fill(0.0) here — accumulation is += so multiple backward calls
+    // between zero_grad() calls correctly sum their contributions.
+
     grad_x = Tensor(batch, features);
 
     for (size_t f = 0; f < features; ++f) {
@@ -61,8 +64,8 @@ Tensor LayerNorm::backward(const Tensor& grad_output, double /* learning_rate */
                                          std::sqrt(last_var[0][b] + eps));
             g_b += grad_output[b][f];
         }
-        grad_gamma_[0][f] = g_g;
-        grad_beta_[0][f] = g_b;
+        grad_gamma_[0][f] += g_g;
+        grad_beta_[0][f] += g_b;
     }
 
     for (size_t b = 0; b < batch; ++b) {

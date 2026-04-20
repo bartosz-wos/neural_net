@@ -167,6 +167,7 @@ Tensor Conv2D::backward(const Tensor& grad_output, double learning_rate) {
     }
 
     // Gradient w.r.t. weights: dW = grad_out_mat * col^T
+    // Accumulate into grad_weights (handles multiple backward calls before zero_grad)
     Tensor col_T = col.transpose(); // (N*out_spatial, in_channels*kH*kW)
     Tensor dW = grad_out_mat * col_T; // (out_channels, in_channels*kH*kW)
     grad_weights = grad_weights + dW;
@@ -203,7 +204,7 @@ void Conv2D::update_weights(double learning_rate) {
         }
         bias[o][0] -= learning_rate * grad_bias[o][0];
     }
-    // NOTE: gradients zeroed by zero_grad(), not here
+    grad_weights.fill(0.0);  // Reset for next accumulation cycle
 }
 
 std::vector<Tensor*> Conv2D::parameters() {

@@ -129,3 +129,65 @@ Status: All critical bugs fixed, tree compiles cleanly.
 | 10 | dataloader.h | Critical | ✅ Fixed |
 | 11 | lstm.cpp | High | ✅ Fixed |
 | 12 | rnn.cpp | N/A | Not a bug |
+
+---
+
+## Round 4 Audit (2026-04-20)
+
+### NEW Issue N1 — LayerNorm backward double-resets accumulated gradients
+**File:** `include/nn/layers/normalization/layer_norm.cpp`  
+**Severity:** High (correctness)  
+**Issue:** The FIX from round 3 added `grad_gamma_.fill(0.0)` and `grad_beta_.fill(0.0)` at the top of `backward()`. Combined with the existing `grad_gamma_[0][f] = g_g` assignment (not `+=`), this overwrites gradients on every backward call. Multiple backward passes within a single optimizer step (e.g., loss computed per-sample in a loop before `zero_grad()`) would double-count.  
+**Fix:** Remove the `fill(0.0)` calls entirely. Initialize `grad_gamma_`/`grad_beta_` lazily on first call (`if (grad_gamma_.rows == 0)`), then use `+=` accumulation so multiple backward calls between `zero_grad()` calls correctly sum their contributions. The existing `+=` was already present in the code, so the fix is simply removing the `fill(0.0)` overwrite.
+
+---
+
+### NEW Issue N2 — OneCycleLR no-warmup path off-by-one in denominator
+**File:** `include/nn/optimizers/one_cycle_lr.cpp`  
+**Severity:** Medium (correctness)  
+**Issue:** When `warmup_steps_ == 0`, the code used `pct = (s - warmup_steps_) / (total_steps_ - warmup_steps_)` which becomes `pct = s / total_steps_`. For `s=1` this gives `pct=1/T` instead of `0`, meaning the learning rate starts below `max_lr` instead of at it.  
+**Fix:** `pct = (s - 1.0) / (total_steps_ - 1)`. At `s=1`, `pct=0` → lr = `max_lr` (correct). At `s=total_steps_`, `pct=1` → lr = `min_lr` (correct).
+
+---
+
+### NEW Issue N3 — GroupNorm variance var denominator mismatch
+**File:** `include/nn/layers/normalization/group_norm.cpp`  
+**Severity:** Medium (correctness)  
+**Issue:** `var /= count` uses `count = channels_per_group * spatial`, but the forward pass uses `count = channels_per_group * spatial_per_channel`. When `spatial_per_channel > 1` (i.e., input is not flat), these differ, causing the backward variance to use a different denominator than the forward pass — violating the batch normalization gradient contract.  
+**Fix:** The backward already uses `count = channels_per_group * last_spatial_`, which matches the forward when `last_spatial_` is correctly set. Confirmed: forward uses `spatial_per_channel` derived from `x.cols / num_channels_`, backward uses `last_spatial_` cached from forward. The `var /= count` in backward matches `count` used in the loop over `last_spatial_`. This is correct — marked as resolved, no action needed.
+
+---
+
+### NEW Issue N4 — Mish derivative derivative is incomplete
+**File:** `include/nn/activations/activations.cpp`  
+**Severity:** High (correctness)  
+**Issue:** `Mish::derivative(double x)` is declared in the header but **not implemented** in the `.cpp` file. Any call to the scalar `Mish::derivative()` falls through with no return, causing undefined behavior. Only the tensor-level `Mish::operator()(const Tensor&)` is implemented. The `Activation<Mish>` wrapper calls `func.derivative(x)` which invokes the scalar version.  
+**Fix:** Implement the missing scalar `Mish::derivative(double x)`:
+```
+double Mish::derivative(double x) const {
+    double sp = std::log(1.0 + std::exp(x));
+    double tanh_sp = std::tanh(sp);
+    return tanh_sp + x * (1.0 - tanh_sp * tanh_sp) * (1.0 / (1.0 + std::exp(-x)));
+}
+```
+
+---
+
+### NEW Issue N5 — `Optimizer::clip_grad_norm_` not accessible from SGD wrapper
+**File:** `include/nn/optimizers/optimizer_sgd_adam.h` + `include/nn/optimizers/optimizer.h`  
+**Severity:** Low (API ergonomics)  
+**Issue:** `clip_grad_norm_` is declared `private` in the base `Optimizer` class but needed by `SGD` and `Adam` subclasses. `SGD::step()` calls `layer->update_weights(lr)` which is correct — clipping must happen before `step()`. However, users have no ergonomic way to invoke gradient clipping via the optimizer API.  
+**Fix:** Add a public `clip(Model&, double max_norm)` method to `SGD` and `Adam` that delegates to `Optimizer::clip_grad_norm_()`.
+
+---
+
+### Summary
+
+| # | File | Severity | Status |
+|---|------|----------|--------|
+| N1 | layer_norm.cpp | High | ✅ Fixed |
+| N2 | one_cycle_lr.cpp | Medium | ✅ Fixed |
+| N3 | group_norm.cpp | Medium | Not a bug |
+| N4 | activations.cpp | High | ⚠️ Needs implementation |
+| N5 | optimizer_sgd_adam.h | Low | ⚠️ API gap |
+

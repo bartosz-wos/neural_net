@@ -94,9 +94,10 @@ Tensor VAE::backward(const Tensor& grad_output, double learning_rate) {
 
             // KL divergence gradient contributions
             // KL = -0.5 * (1 + logvar - mu^2 - exp(logvar))
-            // dKL/dmu = +mu_ij,  dKL/dlogvar = 0.5 * (exp(logvar) - 1.0)
-            grad_mu_enc[i][j] = mu_ij;  // dKL/dmu
-            grad_logvar_enc[i][j] = 0.5 * (std::exp(logvar_ij) - 1.0);  // dKL/dlogvar
+            // dKL/dmu = -mu_ij  (NOT +mu_ij — the sign is negative)
+            grad_mu_enc[i][j] = -mu_ij;
+            // dKL/dlogvar = 0.5 * (exp(logvar) - 1.0)
+            grad_logvar_enc[i][j] = 0.5 * (std::exp(logvar_ij) - 1.0);
 
             // Reparameterization gradient contributions
             // dL/dmu += grad_z (direct path z=mu+...)
