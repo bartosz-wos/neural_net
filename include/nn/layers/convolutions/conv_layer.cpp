@@ -152,21 +152,8 @@ Tensor Conv2D::backward(const Tensor& grad_output, double learning_rate) {
         }
     }
 
-    // Gradient w.r.t. weights: dW = grad_out_mat * flipped(col)^T (convolution, not correlation)
-    // im2col stores patches in forward order; for true convolution we flip the kernel (180°)
-    Tensor col_flipped(in_channels * kernel_h * kernel_w, N * out_spatial);
-    for (int c = 0; c < in_channels; ++c) {
-        for (int i = 0; i < kernel_h; ++i) {
-            for (int j = 0; j < kernel_w; ++j) {
-                int dst_row = c * kernel_h * kernel_w + i * kernel_w + j;
-                int src_row = c * kernel_h * kernel_w + (kernel_h - 1 - i) * kernel_w + (kernel_w - 1 - j);
-                for (int col_idx = 0; col_idx < N * out_spatial; ++col_idx) {
-                    col_flipped[dst_row][col_idx] = col[src_row][col_idx];
-                }
-            }
-        }
-    }
-    Tensor col_T = col_flipped.transpose(); // (N*out_spatial, in_channels*kH*kW)
+    // Gradient w.r.t. weights: dW = grad_out_mat * col^T
+    Tensor col_T = col.transpose(); // (N*out_spatial, in_channels*kH*kW)
     Tensor dW = grad_out_mat * col_T; // (out_channels, in_channels*kH*kW)
     grad_weights = grad_weights + dW;
 
