@@ -97,7 +97,7 @@ MaxPool1D::MaxPool1D(int ksz, int seq_len, int ch, int stride)
 Tensor MaxPool1D::forward(const Tensor& input) {
     int N = input.rows;
     last_input = input;
-    max_indices_.assign(channels, std::vector<int>(N * seq_out, -1));
+    max_indices_.assign(channels * N, std::vector<int>(seq_out, -1));
 
     Tensor output(N, channels * seq_out);
     for (int n = 0; n < N; ++n) {
@@ -112,9 +112,9 @@ Tensor MaxPool1D::forward(const Tensor& input) {
                         if (val > max_val) { max_val = val; max_idx = t; }
                     }
                 }
-                int col_idx = n * seq_out + t_out;
+                int idx_2d = c * N + n;
                 output[n][c * seq_out + t_out] = max_val;
-                max_indices_[c][col_idx] = max_idx;
+                max_indices_[idx_2d][t_out] = max_idx;
             }
         }
     }
@@ -128,8 +128,8 @@ Tensor MaxPool1D::backward(const Tensor& grad_output, double /* learning_rate */
     for (int n = 0; n < N; ++n) {
         for (int c = 0; c < channels; ++c) {
             for (int t_out = 0; t_out < seq_out; ++t_out) {
-                int col_idx = n * seq_out + t_out;
-                int max_idx = max_indices_[c][col_idx];
+                int idx_2d = c * N + n;
+                int max_idx = max_indices_[idx_2d][t_out];
                 if (max_idx >= 0) {
                     grad_input[n][c * seq_len + max_idx] += grad_output[n][c * seq_out + t_out];
                 }

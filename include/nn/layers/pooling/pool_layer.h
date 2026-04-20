@@ -50,7 +50,7 @@ public:
 
 private:
     int seq_out;
-    std::vector<std::vector<int>> max_indices_; // [batch*channels][seq_out] stores argmax time index
+    std::vector<std::vector<int>> max_indices_; // [channels * N][seq_out] stores argmax time index
 };
 
 // 1D average pooling

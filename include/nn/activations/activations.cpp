@@ -123,17 +123,21 @@ static const double GELU_A = std::sqrt(2.0 / std::acos(-1.0));
 
 Tensor GELU::operator()(const Tensor& t) const {
     return t.apply([](double x) {
-        double cdf = 0.5 * (1.0 + std::tanh(GELU_A * (x + 0.044715 * x * x * x)));
+        // Clamp input to [-4, 4] for numerical stability
+        double x_clamped = std::max(-4.0, std::min(4.0, x));
+        double cdf = 0.5 * (1.0 + std::tanh(GELU_A * (x_clamped + 0.044715 * x_clamped * x_clamped * x_clamped)));
         return x * cdf;
     });
 }
 
 double GELU::derivative(double x) const {
-    double arg = GELU_A * (x + 0.044715 * x * x * x);
+    // Clamp input to [-4, 4] for numerical stability
+    double x_clamped = std::max(-4.0, std::min(4.0, x));
+    double arg = GELU_A * (x_clamped + 0.044715 * x_clamped * x_clamped * x_clamped);
     double tanh_val = std::tanh(arg);
     double tanh_sq = tanh_val * tanh_val;  // sech²(arg) = 1 - tanh²
     double cdf = 0.5 * (1.0 + tanh_val);
-    double pdf = 0.5 * GELU_A * (1.0 - tanh_sq) * (1.0 + 3.0 * 0.044715 * x * x);
+    double pdf = 0.5 * GELU_A * (1.0 - tanh_sq) * (1.0 + 3.0 * 0.044715 * x_clamped * x_clamped);
     return cdf + x * pdf;
 }
 

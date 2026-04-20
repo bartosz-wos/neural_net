@@ -92,6 +92,15 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
             }
         }
 
+        // Causal mask: mask[i][j] = 0 if j <= i (can attend), -inf otherwise
+        for (size_t i = 0; i < tokens; ++i) {
+            for (size_t j = 0; j < tokens; ++j) {
+                if (j > i) {
+                    scores[i][j] += -1e9f;
+                }
+            }
+        }
+
         // Softmax over target (columns)
         for (size_t i = 0; i < tokens; ++i) {
             double max_s = scores[i][0];
@@ -496,7 +505,7 @@ Tensor TransformerBlock::backward(const Tensor& grad_output, double) {
     for (size_t f = 0; f < d; ++f)
         for (size_t s = 0; s < seq_len; ++s)
             attn_tokens[s][f] = last_attn_out[f][s];
-    Tensor residual1 = last_x - attn_tokens;
+    Tensor residual1 = last_x + attn_tokens;
     Tensor norm1_out = ln1.forward(residual1);
 
     grad_W1.fill(0.0);
@@ -519,12 +528,12 @@ Tensor TransformerBlock::backward(const Tensor& grad_output, double) {
     // Accumulate FFN contribution into grad_norm1
     grad_norm1 = grad_norm1 + grad_norm1_ffn;
 
-    // 6. Backprop through residual1: residual1 = x - attn_tokens
-    // dL/dx += dL/dnorm1 (identity), dL/dattn_tokens = -dL/dnorm1
-    Tensor grad_attn_tokens = grad_norm1 * (-1.0);
+    // 6. Backprop through residual1: residual1 = x + attn_tokens
+    // dL/dx += dL/dnorm1 (identity), dL/dattn_tokens = dL/dnorm1
+    Tensor grad_attn_tokens = grad_norm1;
 
-    // 7. Backprop through ln1: dL/dresidual1 = ln1.backward(-grad_norm1)
-    Tensor grad_residual1 = ln1.backward(grad_norm1 * (-1.0), 0.0);
+    // 7. Backprop through ln1: dL/dresidual1 = ln1.backward(grad_norm1)
+    Tensor grad_residual1 = ln1.backward(grad_norm1, 0.0);
     // dL/dx = grad_residual1 + grad_attn_tokens
     Tensor grad_x = grad_residual1 + grad_attn_tokens;
 
