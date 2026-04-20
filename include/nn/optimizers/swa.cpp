@@ -42,6 +42,8 @@ void SWAOptimizer::step(Model& model) {
         double n = static_cast<double>(step_count_ - start_after_ + 1);
         for (auto& layer : model.layers)
             for (Tensor* p : layer->parameters()) {
+                // Bounds check: prevent out-of-bounds if parameter count changed
+                if (avg_idx >= param_total_) break;
                 for (size_t i = 0; i < p->rows; ++i)
                     for (size_t j = 0; j < p->cols; ++j) {
                         double old_avg = averaged_weights_[avg_idx][i][j];
@@ -83,7 +85,7 @@ SWALRScheduler::SWALRScheduler(double start_lr, double swa_lr,
       warmup_steps_(warmup_steps), swa_start_step_(swa_start_step), step_count_(0) {}
 
 void SWALRScheduler::update_lr() {
-    if (step_count_ < warmup_steps_) {
+    if (step_count_ < warmup_steps_ && warmup_steps_ > 0) {
         current_lr_ = start_lr_ * (static_cast<double>(step_count_) / warmup_steps_);
     } else if (step_count_ >= swa_start_step_) {
         current_lr_ = swa_lr_;

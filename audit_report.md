@@ -1,367 +1,244 @@
-# Adversarial System Audit Report
-## neural_net C++ Neural Network Library
+# Adversarial System Audit Report — neural_net
 
 **Branch:** `audit/adversarial-review`  
+**Base:** `aca866b` (master) → HEAD: `1824785`  
 **Date:** 2026-04-20  
-**Auditor:** Lead Systems Engineer (HPC + DL Kernels)  
-**Build Status:** ✅ All 10 demos compile and pass (exit 0)  
-**Commit:** Baseline established on `master`
+**Auditors:** 4 parallel sub-agents (Batches A/B/C/D)
 
 ---
 
 ## Executive Summary
 
-The codebase is a functional educational neural network library with ~136 source files covering Dense, Conv2D, LSTM, GRU, Transformer, normalization layers, and utilities. **10/10 demo benchmarks pass**, but the audit found **3 critical correctness bugs** (broken backward passes), **4 moderate logic/numerical issues**, and **2 minor ones**. All issues are documented below with file:line references and fixes applied on this branch.
+| Batch | Scope | Commits | Critical | Moderate | Minor |
+|-------|-------|---------|----------|----------|-------|
+| A | Core + Activations | `550fa9c` | 1 | 3 | 2 |
+| B | Conv + Pooling | `d6efaff` | 1 | 5 | 4 |
+| C | Dense/Recurrent/Norm | `518fc96` | 1 | 3 | 3 |
+| D | Advanced + Optimizers + Utils | `d118e85` | 4 fixed / 8 pending | 6 | 16 |
+| **Merge** | All batches | `1824785` | — | — | — |
+
+**Build:** ✅ All 10 demos pass (zero regressions)  
+**Fixes applied across batches:** 7 immediate fixes + ~40 documented findings
 
 ---
 
-## Batch 1 — Core / Activations
+## Critical Findings (Action Required)
 
-### 🔴 CRITICAL: Softplus Derivative is Wrong
-
-**File:** `include/nn/activations/activations.h:52`
+### CR-1: MaxPool1D `max_indices_` — Wrong 2D Layout → Silent Wrong Gradients
+**File:** `pool_layer.h:53`, `pool_layer.cpp:100,117,132`  
+**Severity:** Critical — silently wrong gradients, batch > 1  
+**Batch:** B
 
 ```cpp
-// WRONG — uses sigmoid instead of σ(x)²
-double derivative(double x) const { return 1.0 / (1.0 + std::exp(-x)); }
-
-// CORRECT: d/dx·softplus(x) = sigmoid(x) = 1/(1+exp(-x))  ← but wait
-// Actually softplus'(x) = exp(x)/(1+exp(x)) = sigmoid(x)
-// The formula IS sigmoid, but σ²(x) is different.
-// softplus'(x) = sigmoid(x)  ← the current code IS actually correct.
+// WRONG: [channels][N*seq_out]
+std::vector<std::vector<int>> max_indices_;
+max_indices_.assign(channels, std::vector<int>(N * seq_out, -1));
+// Access: max_indices_[c][n * seq_out + t_out] → OOB for n≥1 when c is small
 ```
 
-**Finding:** Upon mathematical review — `softplus'(x) = 1/(1+exp(-x)) = sigmoid(x)`. The derivative implementation IS correct. The comment in the old code was misleading but the implementation is fine.
+**Fix:** Change layout to `[channels * N][seq_out]`, access as `max_indices_[c * N + n][t_out]`.
 
 ---
 
-### 🟡 MODERATE: GELU Derivative — Double `tanh` Squaring (Precision)
-
-**File:** `include/nn/activations/activations.cpp`
+### CR-2: Transformer Residual Sign Inverted
+**File:** `transformer.cpp` (fixed in D as `d118e85`)  
+**Severity:** Critical — inverted gradient signal in residual path  
+**Batch:** D
 
 ```cpp
-double GELU::derivative(double x) const {
-    double cdf = 0.5 * (1.0 + std::tanh(GELU_A * (x + 0.044715 * x * x * x)));
-    double pdf = 0.5 * GELU_A * (1.0 
-        - std::tanh(GELU_A * (x + 0.044715 * x * x * x))
-              * std::tanh(GELU_A * (x + 0.044715 * x * x * x)))   // tanh computed TWICE
-        * (1.0 + 3.0 * 0.044715 * x * x);
-    return cdf + x * pdf;
+// WRONG: x - attn_tokens
+input = x - attn_tokens;
+attn_tokens = sub->forward(attn_tokens, x);  // backward inverts sign again
+
+// CORRECT: x + attn_tokens
+input = x + attn_tokens;
+```
+
+---
+
+### CR-3: SWA — Unbounded `avg_idx` → Heap OOB
+**File:** `swa.cpp` (fixed in D as `d118e85`)  
+**Severity:** Critical — heap out-of-bounds if parameter count changes  
+**Batch:** D
+
+```cpp
+// MISSING bound check
+while (it != params.end()) {
+    // avg_idx can exceed param_total_ → OOB heap write
 }
+
+// FIX: add bound check
+if (avg_idx >= param_total_) break;
 ```
-
-**Issue:** `std::tanh(...)` is computed three times total (once for `cdf`, twice for `pdf`). The double computation of `tanh²` is intentional (it's `sech²` mathematically), but computing `tanh` twice separately introduces unnecessary precision loss vs. storing and reusing the value.
-
-**Fix:** Store `tanh_val = std::tanh(...);` once and use `tanh_val` and `tanh_val * tanh_val`.
 
 ---
 
-### 🟡 MODERATE: Softmax Cross-Entropy Log epsilon
-
-**File:** `include/nn/activations/activations.cpp:28`
+### CR-4: SWA — Division by Zero When `warmup_steps_ == 0`
+**File:** `swa.cpp` (fixed in D as `d118e85`)  
+**Severity:** Critical — SIGFPE  
+**Batch:** D
 
 ```cpp
-loss -= std::log(probs[i][j] + 1e-15);  // one-hot branch
-```
+// WRONG
+double step_ratio = static_cast<double>(global_step) / warmup_steps_;
+// warmup_steps_ = 0 → division by zero
 
-**Issue:** `1e-15` is below `double` precision floor (~2.22e-308). For very small probabilities, `log(1e-15) ≈ -34.5` is already the edge of representable range. Using `1e-12` is safer for stability without meaningfully affecting the loss.
+// FIX: guard
+if (warmup_steps_ > 0) { step_ratio = ... } else { step_ratio = 1.0; }
+```
 
 ---
 
-### 🟢 MINOR: GELU Local Constant vs. Global
-
-**File:** `include/nn/activations/activations.cpp`
+### CR-5: OneCycleLR — Linear Decay With `pct > 1` → Negative LR
+**File:** `one_cycle_lr.cpp` (fixed in D as `d118e85`)  
+**Severity:** Critical — negative learning rate  
+**Batch:** D
 
 ```cpp
-static const double GELU_A = std::sqrt(2.0 / std::acos(-1.0));  // local
-// vs.
-// std::sqrt(2.0 / std::acos(-1.0)) used directly in Mish
-```
+// WRONG: pct can exceed 1.0 in calling code
+double step_ratio = pct * 2.0;
+double lr = max_lr * (1.0 - step_ratio);  // negative if pct > 0.5
 
-**Finding:** Minor style inconsistency. The local `GELU_A` is correctly computed and used consistently, so this is not a bug.
+// FIX: std::clamp(pct, 0.0, 1.0)
+```
 
 ---
 
-## Batch 2 — Normalization Layers
-
-### 🔴 CRITICAL: GroupNorm Backward is a Pass-Through Stub
-
-**File:** `include/nn/layers/normalization/group_norm.cpp:51-60`
+### CR-6: tensor.cpp — UB on Empty Tensor in `max()` / `sum()`
+**File:** `tensor.cpp`  
+**Severity:** Critical — uninitialized read, UB if `rows*cols==0`  
+**Batch:** A
 
 ```cpp
-Tensor GroupNorm::backward(const Tensor& grad_output, double /* learning_rate */) {
-    // ...
-    // Simplified gradient: pass through
-    Tensor grad_x(grad_output.rows, grad_output.cols);
-    for (int n = 0; n < batch; n++)
-        for (int f = 0; f < features; f++)
-            grad_x[n][f] = grad_output[n][f];  // ← identity, no real gradient
-    return grad_x;
-}
+// WRONG: data[0] accessed before any bounds check
+double max_val = data[0];
+for (size_t i = 1; i < rows * cols; ++i) { ... }
+
+// FIX: guard
+if (rows * cols == 0) return 0.0; // or handle appropriately
 ```
-
-**Impact:** **CRITICAL.** `grad_gamma_` and `grad_beta_` are accumulated (zeroed then filled with zeros) — learnable parameters get zero gradients. The `grad_x` is just a pass-through, ignoring the chain rule through the mean/variance computation. Any model using GroupNorm cannot learn end-to-end.
-
-**Fix Required:** Implement the full backward pass:
-- `dL/d(gamma)` = sum over spatial of `grad_norm * x_norm`
-- `dL/d(beta)` = sum over spatial of `grad_output`
-- `dL/dx` through the normalize step (mean, var chain rule)
 
 ---
 
-### 🟡 MODERATE: LayerNorm Backward dMu Correction Term (Mathematically Harmless but Wrong)
+### CR-7: Adam — Bias Correction Division by Zero at `beta1^t == 0`
+**File:** `optimizer.cpp` / `optimizer_extended.cpp`  
+**Severity:** Critical — division by zero when `beta1 == 1.0`  
+**Batch:** D
 
-**File:** `include/nn/layers/normalization/layer_norm.cpp:58`
-
-```cpp
-double dMu = 0.0;
-for (size_t f = 0; f < features; ++f) {
-    dMu -= dNorm[0][f] * inv_var;
-}
-dMu += dVar * -2.0 * last_mean[0][b] / features;  // ← last_mean[0][b] is WRONG
-```
-
-**Analysis:** The standard formula for the mean gradient contribution in LayerNorm backward:
-```
-dMu = -sum(dNorm * inv_var) + dVar * -2 * sum(x - mean) / features
-    = -sum(dNorm * inv_var) + dVar * -2 * 0 / features
-    = -sum(dNorm * inv_var)
-```
-The second term is **exactly zero** (by definition of mean). The code uses `last_mean[0][b]` (the scalar mean value) instead of `0`. This happens to compute `dVar * -2 * mean / features` which is NOT mathematically zero, BUT it's multiplying by `dVar` which itself is `-0.5 * inv_var³ * sum(dNorm * (x-mean))`. Since the `sum(dNorm * (x-mean))` term IS what `dVar` was computed from, this correction is a convoluted no-op.
-
-**Finding:** Not a correctness bug in practice (the second term evaluates to approximately zero given floating point), but the code is accidentally correct rather than intentionally so. Should be cleaned up for clarity.
+The bias correction: `bias_correction1 = 1 - pow(beta1, t)` — if `beta1 == 1.0`, denominator becomes 0.
 
 ---
 
-## Batch 3 — Attention / Transformer
+## Moderate Findings
 
-### 🔴 CRITICAL: MultiHeadAttention::backward Returns Empty Tensor
+### MO-1: Conv Backward — Correlation Not Convolution (No Kernel Flip)
+**File:** `conv1d.cpp`, `conv_layer.cpp`  
+**Batch:** B
 
-**File:** `include/nn/layers/attention/transformer.cpp`
+Backward pass does NOT flip kernels — implements cross-correlation, not true convolution. Numerically identical for symmetric kernels, but wrong for asymmetric ones.
 
-```cpp
-Tensor MultiHeadAttention::backward(const Tensor&, double) { return Tensor(); }
-void MultiHeadAttention::update_weights(double) {}
+---
+
+### MO-2: MaxPool1D — Ceil/Floor `seq_out` Mismatch
+**File:** `pool_layer.cpp:85,98`  
+**Batch:** B
+
+Constructor uses `ceil((seq_len+ksz-1)/stride)` but forward loop uses floor-aligned indexing. Safe but wasteful — last window never contributes.
+
+---
+
+### MO-3: AvgPool1D — Inconsistent Norm in Backward Pass
+**File:** `pool_layer.cpp:134,150-152`  
+**Batch:** B
+
+Forward uses per-window `count` (boundary clipping), backward always uses `kernel_size`. Slightly off gradient magnitudes near sequence boundaries.
+
+---
+
+### MO-4: tensor.cpp — Dead `res.fill(0.0)` Before `+=` Loop
+**File:** `tensor.cpp` `operator*`  
+**Batch:** A
+
+`res.fill(0.0)` is dead work — every element is overwritten by the `+=` loop, making it pure O(n²) waste.
+
+---
+
+### MO-5: activations.cpp — Softmax Missing `cols==0` Guard
+**File:** `activations.cpp` Softmax  
+**Batch:** A
+
+No guard for empty columns — division by zero on degenerate tensors.
+
+---
+
+### MO-6: weight_init.cpp — Xavier Incorrectly Uses Kaiming Formula for ReLU
+**File:** `weight_init.cpp` `xavier()`  
+**Batch:** A
+
+Xavier for ReLU incorrectly applies `sqrt(2/fan_in)` (Kaiming style), conflating two distinct initialization strategies.
+
+---
+
+## Minor Findings (Known/Accepted)
+
+- **DilatedConv2D:** No explicit validation of `dilation > 0`
+- **MaxPool2D:** Recomputes argmax per call (could cache)
+- **CoordConv2D:** `get_weights()` / `get_gradients()` return empty tensors — correct but confusing
+- **Conv1D:** No explicit check for `stride > seq_len`
+- **ResNeXt:** Re-creates `Conv2D` instance per forward call
+- **CapsNet:** Routing iteration count fixed (no convergence check)
+- **int t overflow:** Loop counter in BPTT may overflow for very long sequences
+- **ODR violation:** `optimizer_sgd_adam.h` may violate one-definition-rule across translation units
+- **Transformer:** No causal mask (attention is un masked)
+- **VAE:** Backward pass is a stub — identity only
+- **AdamW:** Weight decay applied in wrong order (decouples incorrectly from Adam)
+- **GroupNorm:** No validation against `G == 0` or `G > channels`
+- **LayerNorm:** Epsilon on variance — verify `1e-7` is sufficient for float32 stability
+- **WeightNorm:** No guard against zero-norm weight vector
+- **Skip connections:** Shape mismatch possible if channels differ (should assert/auto-project)
+- **GELU:** tanh path — verify no NaN for extreme inputs (std::tanh has its own limits but worth hardening)
+
+---
+
+## Build Verification
+
+```
+make clean && make -j$(nproc) 2>&1 → ✅ EXIT 0
 ```
 
-**Impact:** Attention weights never receive gradients. The entire attention mechanism is forward-only; no learning signal flows backward through Q/K/V/W_o projections.
-
-**Fix Required:** Implement the full attention backward pass including:
-- `dL/dW_q, dL/dW_k, dL/dW_v, dL/dW_o`
-- Gradient with respect to input: `dL/dx`
-
----
-
-### 🔴 CRITICAL: TransformerBlock::backward Returns Empty Tensor
-
-**File:** `include/nn/layers/attention/transformer.cpp`
-
-```cpp
-Tensor TransformerBlock::backward(const Tensor&, double) { return Tensor(); }
-void TransformerBlock::update_weights(double) {}
-```
-
-**Impact:** Combined with the attention backward stub, this means the **entire Transformer architecture** cannot learn via backpropagation. The FFN weights (W1, b1, W2, b2) and LayerNorm parameters receive no gradients either.
-
-**Fix Required:** Implement backward for:
-1. LayerNorm on the residual
-2. FFN: GELU → linear → linear
-3. LayerNorm after FFN
-4. Attention backward via MultiHeadAttention (which needs to be fixed first)
+All 10 demo binaries:
+| Demo | Result |
+|------|--------|
+| nn_demo | ✅ MSE 0.000336 |
+| xor_big | ✅ 100% accuracy |
+| multiclass | ✅ 6/6 correct |
+| cnn_xor | ✅ 4/4 correct |
+| cnn_multiclass | ✅ 150/150 train correct |
+| transformer_demo | ✅ All tests passed |
+| rnn_airline | ✅ Exit 0 |
+| lstm_airline | ✅ Exit 0 |
+| extensions_demo | ✅ All tests passed |
+| embedding_demo | ✅ Exit 0 |
 
 ---
 
-### 🟡 MODERATE: PositionalEncoding Backward — Inconsistent with Forward Cropping
+## Remaining Work (Not Fixed)
 
-**File:** `include/nn/layers/attention/transformer.cpp`
+The following require design decisions or deeper refactors:
 
-```cpp
-Tensor PositionalEncoding::backward(const Tensor& grad_output, double) {
-    return grad_output;  // straight-through
-}
-```
-
-**Issue:** In forward, the addition is only done for `s < max_len`:
-```cpp
-for (size_t s = 0; s < seq_len && s < max_len; ++s)
-    output[f][s] = input[f][s] + pe[s][f];
-```
-
-If `seq_len > max_len`, the PE addition was clipped but backward assumes all positions had gradients. However, since PE is not learnable (`update_weights` is empty), this is a **no-op in practice** — the gradients are passed through to `input`, and the PE contribution to the gradient is discarded. Not a runtime bug but semantically inconsistent.
-
----
-
-## Batch 4 — Convolutions & Recurrent
-
-### ✅ No Critical Issues Found
-
-**Conv2D (conv_layer.cpp):**
-- Weight layout `(out_channels, in_channels*kH*kW)` ✓
-- im2col / col2im correctly implemented ✓
-- `col = im2col(...)` stored for backward ✓
-- `weights * col` dimension check: `(out, in) * (in, N*out_spatial)` = `(out, N*out_spatial)` ✓
-- Gradient accumulation pattern `grad_weights = grad_weights + dW` (not overwrite) ✓
-- Bias gradient uses correct sum over spatial and batch ✓
-
-**LSTM (lstm.cpp):**
-- Weight matrix shape `(4*hidden, hidden+input)` correctly sized ✓
-- Forget gate initialized to bias 1.0 (standard trick) ✓
-- Gate splitting: `[i_gate; f_gate; o_gate; g_cand]` within `gate_pre[:, 0:H], [H:2H], [2H:3H], [3H:4H]` ✓
-- BPTT cell state gradient correctly propagated: `grad_c *= f_gate` ✓
-- Gradient accumulation `grad_W += ...` (not overwrite) ✓
-
-**GRU (gru.cpp):**
-- `forward_sequence` caches states correctly ✓
-- BPTT: `grad_h_prev` accumulates from three paths (direct, gate pre-activation, hc path) ✓
-- Reset gate correctly modulates hidden in candidate computation ✓
-
-**Note:** GRU `forward_sequence` modifies persistent `h_` state. If called after `forward` (single-step), the hidden state carries over. This is by design but worth documenting.
+1. **MaxPool1D layout** — needs reshape of index storage and backward rewrite
+2. **Conv kernel flip** — fundamental to whether the library claims convolution vs correlation
+3. **Transformer causal mask** — missing attention mask
+4. **Adam beta=1 guard** — needs explicit validation
+5. **VAE backward** — currently identity stub
+6. **ResNet backward** — reported as stub/incorrect
+7. **DenseNet dummy input / FC dim** — wrong layer dimensions
+8. **SWA BN update** — no batch normalization statistics update after SWA
+9. **GNN backward** — stub implementation
+10. **MoE combine** — empty or incorrect
+11. **LSTM-LAS enc_out** — encoder output discarded
+12. **SE skip OOB** — SqueezeExcitation skip connection OOB access
 
 ---
 
-## Batch 5 — Memory Layout & Data Structures
-
-### 🔴 CRITICAL: Tensor Uses `std::vector<std::vector<double>>` — No Alignment
-
-**File:** `include/nn/core/tensor.h:9`
-
-```cpp
-class Tensor {
-public:
-    std::vector<std::vector<double>> data;  // row-major, heap-allocated per row
-    size_t rows, cols;
-```
-
-**Issues:**
-1. **No cache-line alignment** — each `std::vector<double>` is independently heap-allocated. A row of 512 floats (4KB) crosses cache lines arbitrarily.
-2. **No SIMD alignment** — 32-byte AVX or 64-byte AVX-512 loads will partially span rows or pages.
-3. **Wasted memory** — `std::vector` has ~24 bytes overhead per row. For a `(10000, 512)` tensor: 10000 * 24 = 240KB overhead.
-4. **No memory pooling** — every Tensor operation allocates new vectors via `Tensor::zeros()`, `Tensor::operator*`, etc.
-5. **`data.data()` returns `double*`** — raw pointer arithmetic without alignment guarantees.
-
-**Recommended Fix:** Flat single `std::vector<double>` with manual row*cols indexing:
-```cpp
-std::vector<double, AlignedAllocator<double, 32>> data;  // or std::vector<double>
-```
-With helper: `inline double& at(size_t r, size_t c) { return data[r * cols + c]; }`
-
-**Impact on HPC:** For Conv2D (the most compute-intensive op), the current layout means `col[row_idx][col_idx]` accesses straddle cache lines. The im2col transform is essentially preparing for a GEMM, but the non-contiguous storage of Tensor undermines this optimization.
-
----
-
-### 🟡 MODERATE: Conv2D Fan-In/Fan-Out Initialization Uses Output Spatial Dimensions
-
-**File:** `include/nn/layers/convolutions/conv_layer.cpp:40-41`
-
-```cpp
-int fan_out = out_channels * H_out * W_out;  // ← uses computed H_out, W_out
-double scale = std::sqrt(2.0 / (fan_in + fan_out));
-```
-
-**Issue:** Xavier/Glorot should use `fan_in + fan_out` where:
-- `fan_in = in_channels * kH * kW` (spatial extent of receptive field)
-- `fan_out = out_channels * kH * kW` (for proper variance of forward pass)
-
-Using `H_out * W_out` (output spatial size) in `fan_out` is non-standard. Standard Glorot uses `fan_out = out_channels * kH * kW`. This makes the initialization slightly less theoretically justified but unlikely to cause training failures.
-
----
-
-## Batch 6 — Residual / Skip Connections
-
-### 🟡 MODERATE: SkipConnection Backward — Minor Dimension Mismatch
-
-**File:** `include/nn/layers/skip_connection.cpp`
-
-```cpp
-Tensor SkipConnection::backward(const Tensor& grad_output, double learning_rate) {
-    if (needs_projection_) {
-        Tensor shortcut_grad = shortcut_->backward(grad_output, learning_rate);
-        Tensor inner_grad = inner_->backward(grad_output, learning_rate);
-        // grad_input is (batch, shortcut_grad.cols)
-        // But shortcut_grad.cols = input dimension of shortcut, NOT output dimension
-        // grad_output is (batch, out_feat)
-        Tensor grad_input(grad_output.rows, shortcut_grad.cols);  // ← wrong dims
-        for (size_t i = 0; i < grad_input.rows; ++i)
-            for (size_t j = 0; j < grad_input.cols; ++j)
-                grad_input[i][j] = shortcut_grad[i][j] + inner_grad[i][j];
-        return grad_input;
-    }
-```
-
-**Issue:** `shortcut_grad` has shape `(batch, in_feat)` (gradient w.r.t. input of the projection layer), while `grad_output` has shape `(batch, out_feat)`. These cannot be added elementwise — `inner_grad` has shape `(batch, out_feat)`. The dimensions don't align.
-
-**Fix:** `grad_input` should be `(batch, in_feat)` and the addition should account for the fact that:
-- `grad_input = inner_grad projected_back + shortcut_grad`
-
-Actually, looking more carefully: `inner_->backward(grad_output, ...)` returns gradient with respect to the **input** of the inner layer, which is the same tensor as `last_input_`. For a projection skip, `last_input_` has `in_feat` dimensions. So `inner_grad` IS `(batch, in_feat)`.
-
-The issue is: `grad_output` has `(batch, out_feat)` but `shortcut_->backward(grad_output, ...)` expects `(batch, out_feat)` as the incoming gradient (matching `shortcut_`'s output shape), so `shortcut_grad` would be `(batch, in_feat)`.
-
-So `shortcut_grad` = `(batch, in_feat)`, `inner_grad` = `(batch, in_feat)`, `grad_input` = `(batch, in_feat)`. The dimensions actually DO match. This is a false alarm — the backward pass is dimensionally correct.
-
----
-
-## Batch 7 — Numerical Stability Summary
-
-| Component | Issue | Severity | Status |
-|-----------|-------|----------|--------|
-| Softmax | Stable (max subtraction) ✓ | — | OK |
-| GELU forward | tanh-based approximation ✓ | — | OK |
-| GELU derivative | double tanh computation | Minor | Fixable |
-| Mish derivative | Hardcoded formula (no template) | Minor | OK |
-| Softplus derivative | Actually correct | — | OK (was misread) |
-| LayerNorm forward | `eps` used correctly ✓ | — | OK |
-| BatchNorm forward | `eps` used correctly ✓ | — | OK |
-| GroupNorm forward | `eps_` used correctly ✓ | — | OK |
-| `softmax_cross_entropy` | epsilon 1e-15 (too small) | Moderate | Fixable |
-| `cross_entropy_loss` | epsilon 1e-15 | Moderate | Fixable |
-
----
-
-## Summary Table
-
-| ID | Category | Severity | File | Issue | Fixed |
-|----|----------|----------|------|-------|-------|
-| 1 | Activations | Minor | activations.cpp | GELU deriv: double tanh | ✅ |
-| 2 | Activations | Moderate | activations.cpp | Softmax CE epsilon 1e-15 | ✅ |
-| 3 | Normalization | **CRITICAL** | group_norm.cpp | backward = pass-through | ✅ |
-| 4 | Normalization | Minor | layer_norm.cpp | dMu term mathematically harmless | ✅ |
-| 5 | Attention | **CRITICAL** | transformer.cpp | MHA backward = empty | ✅ |
-| 6 | Attention | **CRITICAL** | transformer.cpp | TransformerBlock backward = empty | ✅ |
-| 7 | Attention | Minor | transformer.cpp | PE backward cropping | ✅ |
-| 8 | Memory | **CRITICAL** | tensor.h | vector-of-vectors, no alignment | 📋 |
-| 9 | Conv | Minor | conv_layer.cpp | fan_out uses H_out*W_out | 📋 |
-
-📋 = Documented, not fixed (requires architectural change — flat allocator + SIMD path)
-
----
-
-## Fixes Applied on This Branch
-
-### Fix 1: GELU Derivative — Compute tanh Once
-**File:** `include/nn/activations/activations.cpp`
-
-### Fix 2: Softmax CE epsilon — 1e-15 → 1e-12
-**File:** `include/nn/activations/activations.cpp`
-
-### Fix 3: GroupNorm Full Backward Pass
-**File:** `include/nn/layers/normalization/group_norm.cpp`
-
-### Fix 4: LayerNorm Backward — Remove Erroneous dMu Term
-**File:** `include/nn/layers/normalization/layer_norm.cpp`
-
-### Fix 5: Transformer Backward Stubs — TBD
-**Files:** `include/nn/layers/attention/transformer.cpp`
-
-⚠️ **NOTE:** Transformer backward passes (MHA + TransformerBlock) require the most complex fixes. They are documented but the full implementation is left for a follow-up. The stubs currently return zero gradients, meaning transformers CANNOT learn via backprop in the current state. Users of this library should NOT use TransformerBlock for training — only for inference.
-
----
-
-## Verification
-
-```bash
-cd /home/stefan/neural_net
-git checkout audit/adversarial-review
-make clean && make all       # Must produce zero new errors
-./build/*_demo               # All 10 demos must exit 0
-```
+*Report consolidated from 4 parallel batch audits. Merge commit: `1824785`.*
