@@ -2,6 +2,9 @@
 #define SCHEDULER_H
 
 #include "optimizer.h"
+#include "../core/model.h"
+#include <string>
+#include <cmath>
 
 // Base scheduler: just wraps an Optimizer with LR adjustment
 class LRScheduler {

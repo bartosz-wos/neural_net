@@ -30,6 +30,8 @@ $(BUILD_DIR)/optimizers/optimizer_extended.cpp.o: include/nn/optimizers/optimize
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/optimizers/swa.cpp.o: include/nn/optimizers/swa.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/optimizers/one_cycle_lr.cpp.o: include/nn/optimizers/one_cycle_lr.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Utils
 $(BUILD_DIR)/utils/grid_search.cpp.o: include/nn/utils/grid_search.cpp | $(BUILD_DIR)
@@ -41,8 +43,8 @@ $(BUILD_DIR)/utils/numerical_stability.cpp.o: include/nn/utils/numerical_stabili
 $(BUILD_DIR)/utils/timing_benchmark.cpp.o: include/nn/utils/timing_benchmark.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/serialization_roundtrip.cpp.o: include/nn/utils/serialization_roundtrip.cpp | $(BUILD_DIR)
-\n$(BUILD_DIR)/utils/label_smoothing.cpp.o: include/nn/utils/label_smoothing.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/clip_grad_norm.cpp.o: include/nn/utils/clip_grad_norm.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers
@@ -109,11 +111,13 @@ LIB_OBJS = \
 	$(BUILD_DIR)/optimizers/optimizer.cpp.o \
 	$(BUILD_DIR)/optimizers/optimizer_extended.cpp.o \
 	$(BUILD_DIR)/optimizers/swa.cpp.o \
+	$(BUILD_DIR)/optimizers/one_cycle_lr.cpp.o \
 	$(BUILD_DIR)/utils/grid_search.cpp.o \
 	$(BUILD_DIR)/utils/tokenizer.cpp.o \
 	$(BUILD_DIR)/utils/numerical_stability.cpp.o \
 	$(BUILD_DIR)/utils/timing_benchmark.cpp.o \
 	$(BUILD_DIR)/utils/serialization_roundtrip.cpp.o \
+	$(BUILD_DIR)/utils/clip_grad_norm.cpp.o \
 	$(BUILD_DIR)/layers/conv_layer.cpp.o \
 	$(BUILD_DIR)/layers/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/lstm.cpp.o \
