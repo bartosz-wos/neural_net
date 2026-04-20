@@ -1,5 +1,6 @@
 #include "skip_connection.h"
 #include "convolutions/conv_layer.h"
+#include <cassert>
 
 SkipConnection::SkipConnection(Layer* inner)
     : inner_(inner)
@@ -27,6 +28,7 @@ Tensor SkipConnection::forward(const Tensor& input) {
                 out[i][j] += projected[i][j];
     } else {
         // Direct add: input and output must have same shape
+        assert(out.rows == input.rows && out.cols == input.cols);
         for (size_t i = 0; i < out.rows; ++i)
             for (size_t j = 0; j < out.cols; ++j)
                 out[i][j] += input[i][j];

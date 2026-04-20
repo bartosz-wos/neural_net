@@ -24,7 +24,8 @@ void WeightNorm::normalize_weights() {
         double norm = 0.0;
         for (size_t j = 0; j < v_.cols; ++j)
             norm += v_[i][j] * v_[i][j];
-        norm = std::sqrt(norm) + 1e-8;
+        norm = std::sqrt(norm);
+        if (norm < 1e-8) norm = 1e-8;
         double g_i = learnable_scale_ ? g_[i][0] : 1.0;
         for (size_t j = 0; j < w.cols; ++j)
             w[i][j] = g_i * v_[i][j] / norm;

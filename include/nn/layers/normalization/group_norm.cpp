@@ -1,5 +1,6 @@
 #include "group_norm.h"
 #include <cmath>
+#include <stdexcept>
 
 GroupNorm::GroupNorm(int num_groups, int num_channels, float eps)
     : num_groups_(num_groups), num_channels_(num_channels), eps_(eps) {
@@ -18,6 +19,10 @@ Tensor GroupNorm::forward(const Tensor& x) {
     // x: (batch, C*H*W)
     int batch = (int)x.rows;
     int spatial_per_channel = (int)(x.cols / num_channels_);
+
+    if (num_groups_ == 0 || num_groups_ > (int)num_channels_) {
+        throw std::invalid_argument("GroupNorm: num_groups must be > 0 and <= num_channels");
+    }
 
     last_x_ = x;
     last_spatial_ = spatial_per_channel;
@@ -46,6 +51,7 @@ Tensor GroupNorm::forward(const Tensor& x) {
                 }
             }
             var /= count;
+            var = std::max(var, 1e-5f);
 
             float sqrt_var = std::sqrt(var + eps_);
 

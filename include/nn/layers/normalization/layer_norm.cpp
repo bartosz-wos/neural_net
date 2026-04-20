@@ -32,6 +32,7 @@ Tensor LayerNorm::forward(const Tensor& input) {
             var += diff * diff;
         }
         var /= features;
+        var = std::max(var, 1e-7);
         last_var[0][b] = var;
 
         double sqrt_var = std::sqrt(var + eps);
@@ -64,6 +65,7 @@ Tensor LayerNorm::backward(const Tensor& grad_output, double /* learning_rate */
 
     for (size_t b = 0; b < batch; ++b) {
         double var = last_var[0][b];
+        var = std::max(var, 1e-7);
         double sqrt_var = std::sqrt(var + eps);
         double inv_var = 1.0 / sqrt_var;
 

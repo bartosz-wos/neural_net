@@ -97,8 +97,17 @@ Tensor Conv1D::backward(const Tensor& grad_output, double learning_rate) {
         }
     }
 
-    // gradient w.r.t. weights: dW = grad_out_mat * col^T
-    Tensor col_T = col.transpose();
+    // gradient w.r.t. weights: dW = grad_out_mat * flipped(col)^T (convolution, not correlation)
+    // im2col stores patches in forward order; for true convolution we flip the kernel (time-reverse)
+    Tensor col_flipped(in_channels * kernel_size, N * seq_out);
+    for (int c = 0; c < in_channels; ++c) {
+        for (int k = 0; k < kernel_size; ++k) {
+            for (int col_idx = 0; col_idx < N * seq_out; ++col_idx) {
+                col_flipped[c * kernel_size + k][col_idx] = col[c * kernel_size + (kernel_size - 1 - k)][col_idx];
+            }
+        }
+    }
+    Tensor col_T = col_flipped.transpose();
     Tensor dW = grad_out_mat * col_T; // (out_channels, in_channels*ksz)
     grad_weights = grad_weights + dW;
 
