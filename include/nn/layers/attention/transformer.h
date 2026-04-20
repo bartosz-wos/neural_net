@@ -10,8 +10,8 @@ public:
     size_t d_model, num_heads, d_k;
     Tensor W_q, W_k, W_v, W_o;
     Tensor grad_W_q, grad_W_k, grad_W_v, grad_W_o;
-    Tensor last_q, last_k, last_v;
-    Tensor last_scores;
+    Tensor last_q, last_k, last_v;   // cached Q, K, V after projection
+    Tensor last_scores;              // cached attention scores for backward
     Tensor last_attn_out;
     Tensor last_x;
     size_t batch_size;

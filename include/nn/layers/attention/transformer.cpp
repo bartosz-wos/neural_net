@@ -371,8 +371,9 @@ Tensor TransformerBlock::forward(const Tensor& input) {
 
     // Reshape to (tokens, d_model) where tokens = seq_len (batch=1)
     size_t tokens = seq_len;
-    Tensor x(tokens, d_model_local);
-    for (size_t f = 0; f < d_model_local; ++f)
+    size_t d = input.rows;
+    Tensor x(tokens, d);
+    for (size_t f = 0; f < d; ++f)
         for (size_t s = 0; s < seq_len; ++s)
             x[s][f] = input[f][s];
 
