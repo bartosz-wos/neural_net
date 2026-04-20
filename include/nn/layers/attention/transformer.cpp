@@ -602,7 +602,7 @@ PositionalEncoding::PositionalEncoding(size_t max_len, size_t d_model) {
     pe = Tensor(max_len, d_model);
     for (size_t pos = 0; pos < max_len; ++pos) {
         for (size_t i = 0; i < d_model; ++i) {
-            double angle = pos / std::pow(10000.0, 2.0 * (static_cast<double>(i) / 2.0) / d_model);
+            double angle = pos / std::pow(10000.0, 2.0 * static_cast<double>(i) / d_model);
             pe[pos][i] = (i % 2 == 0) ? std::sin(angle) : std::cos(angle);
         }
     }
