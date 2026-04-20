@@ -45,8 +45,8 @@ $(BUILD_DIR)/utils/timing_benchmark.cpp.o: include/nn/utils/timing_benchmark.cpp
 $(BUILD_DIR)/utils/serialization_roundtrip.cpp.o: include/nn/utils/serialization_roundtrip.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/clip_grad_norm.cpp.o: include/nn/utils/clip_grad_norm.cpp | $(BUILD_DIR)
-\n$(BUILD_DIR)/utils/focal_loss.cpp.o: include/nn/utils/focal_loss.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/focal_loss.cpp.o: include/nn/utils/focal_loss.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers
@@ -103,8 +103,16 @@ $(BUILD_DIR)/layers/densenet.cpp.o: include/nn/layers/densenet.cpp | $(BUILD_DIR
 $(BUILD_DIR)/layers/mobilenet_v2.cpp.o: include/nn/layers/mobilenet_v2.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/lstm_las.cpp.o: include/nn/layers/lstm_las.cpp | $(BUILD_DIR)
-\n$(BUILD_DIR)/layers/capsnet.cpp.o: include/nn/layers/capsnet.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/capsnet.cpp.o: include/nn/layers/capsnet.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/coordconv.cpp.o: include/nn/layers/coordconv.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/squeeze_excitation.cpp.o: include/nn/layers/squeeze_excitation.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/gnn.cpp.o: include/nn/layers/gnn.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/mixture_of_experts.cpp.o: include/nn/layers/mixture_of_experts.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 LIB_OBJS = \
@@ -122,6 +130,7 @@ LIB_OBJS = \
 	$(BUILD_DIR)/utils/timing_benchmark.cpp.o \
 	$(BUILD_DIR)/utils/serialization_roundtrip.cpp.o \
 	$(BUILD_DIR)/utils/clip_grad_norm.cpp.o \
+	$(BUILD_DIR)/utils/focal_loss.cpp.o \
 	$(BUILD_DIR)/layers/conv_layer.cpp.o \
 	$(BUILD_DIR)/layers/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/lstm.cpp.o \
@@ -148,7 +157,12 @@ LIB_OBJS = \
 	$(BUILD_DIR)/layers/layer_output_tracker.cpp.o \
 	$(BUILD_DIR)/layers/densenet.cpp.o \
 	$(BUILD_DIR)/layers/mobilenet_v2.cpp.o \
-	$(BUILD_DIR)/layers/lstm_las.cpp.o
+	$(BUILD_DIR)/layers/lstm_las.cpp.o \
+	$(BUILD_DIR)/layers/capsnet.cpp.o \
+	$(BUILD_DIR)/layers/coordconv.cpp.o \
+	$(BUILD_DIR)/layers/squeeze_excitation.cpp.o \
+	$(BUILD_DIR)/layers/gnn.cpp.o \
+	$(BUILD_DIR)/layers/mixture_of_experts.cpp.o
 
 $(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@

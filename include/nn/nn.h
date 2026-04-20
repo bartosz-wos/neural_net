@@ -41,6 +41,10 @@
 #include "utils/focal_loss.h"
 #include "optimizers/one_cycle_lr.h"
 #include "layers/capsnet.h"
+#include "layers/coordconv.h"
+#include "layers/squeeze_excitation.h"
+#include "layers/gnn.h"
+#include "layers/mixture_of_experts.h"
 #include "layers/lstm_las.h"
 
 #endif
