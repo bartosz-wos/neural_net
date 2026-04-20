@@ -25,7 +25,7 @@ double OneCycleLR::get_lr() const {
         if (s >= total_steps_) return min_lr_;
         double pct = (s - warmup_steps_) / static_cast<double>(total_steps_ - warmup_steps_);
         if (anneal_strategy_ == "cos") {
-            double cos_val = (1.0 + std::cos(std::acos(-1.0) * pct)) / 2.0;
+            double cos_val = (1.0 - std::cos(std::acos(-1.0) * pct)) / 2.0;
             return min_lr_ + (max_lr_ - min_lr_) * cos_val;
         } else {
             return min_lr_;
@@ -39,7 +39,7 @@ double OneCycleLR::get_lr() const {
         // Anneal phase
         double pct = (s - warmup_steps_) / static_cast<double>(total_steps_ - warmup_steps_);
         if (anneal_strategy_ == "cos") {
-            double cos_val = (1.0 + std::cos(std::acos(-1.0) * pct)) / 2.0;
+            double cos_val = (1.0 - std::cos(std::acos(-1.0) * pct)) / 2.0;
             return min_lr_ + (max_lr_ - min_lr_) * cos_val;
         } else {
             double lin = max_lr_ - (max_lr_ - min_lr_) * std::clamp(pct, 0.0, 1.0);
