@@ -1,8 +1,8 @@
 #include "nn/nn.h"
-#include "nn/layers/layer_norm.h"
+#include "nn/layers/normalization/layer_norm.h"
 // removed (via nn.h)
-#include "nn/layers/batch_norm.h"
-#include "nn/layers/flatten.h"
+#include "nn/layers/normalization/batch_norm.h"
+#include "nn/layers/dense/flatten.h"
 // removed (via nn.h)
 #include "nn/utils/grid_search.h"
 #include <iostream>

@@ -1,7 +1,7 @@
 #ifndef LAYER_NORMALIZATION_H
 #define LAYER_NORMALIZATION_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Layer Normalization: normalize over features (like Transformer pre-norm)
 // y = gamma * (x - mu) / sqrt(var + eps) + beta

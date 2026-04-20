@@ -1,5 +1,5 @@
 #include "transformer.h"
-#include "layer_norm.h"
+#include "../normalization/layer_norm.h"
 #include <cmath>
 #include <algorithm>
 #include <iostream>

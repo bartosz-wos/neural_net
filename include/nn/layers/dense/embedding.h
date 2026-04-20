@@ -1,7 +1,7 @@
 #ifndef EMBEDDING_H
 #define EMBEDDING_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Learnable embedding table: maps token IDs to dense vectors
 class Embedding : public Layer {

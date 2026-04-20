@@ -1,7 +1,7 @@
 #ifndef GRU_H
 #define GRU_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Gated Recurrent Unit — update gate, reset gate, candidate hidden state.
 // Forward modes: single-step (stateful) and full-sequence (unrolled).

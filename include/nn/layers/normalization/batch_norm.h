@@ -1,7 +1,7 @@
 #ifndef BATCH_NORM_H
 #define BATCH_NORM_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 
 class BatchNorm1D : public Layer {

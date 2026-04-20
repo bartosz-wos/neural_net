@@ -1,7 +1,7 @@
 #ifndef CAPSNET_H
 #define CAPSNET_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Capsule layer: each capsule outputs a vector with dynamic routing by agreement.
 class CapsuleLayer : public Layer {

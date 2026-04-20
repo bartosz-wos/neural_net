@@ -1,7 +1,7 @@
 #ifndef FLATTEN_H
 #define FLATTEN_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Flattens spatial dimensions into a single channel
 // Input: (batch, spatial_features) or (batch, channels, H, W) stored as (batch, channels*H*W)

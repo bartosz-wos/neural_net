@@ -1,7 +1,7 @@
 #ifndef CONV_LAYER_H
 #define CONV_LAYER_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 class Conv2D : public Layer {
 public:

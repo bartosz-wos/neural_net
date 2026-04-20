@@ -1,7 +1,7 @@
 #ifndef WEIGHT_NORM_H
 #define WEIGHT_NORM_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // WeightNorm wrapper: normalizes layer weights by their L2 norm.
 // Optionally includes a learned per-output-channel scaling factor.

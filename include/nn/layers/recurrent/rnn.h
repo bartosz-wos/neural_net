@@ -1,7 +1,7 @@
 #ifndef RNN_H
 #define RNN_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 
 class SimpleRNN : public Layer {

@@ -2,9 +2,9 @@
 #define LSTM_LAS_H
 
 #include "../core/layer.h"
-#include "lstm.h"
-#include "layer_norm.h"
-#include "embedding.h"
+#include "recurrent/lstm.h"
+#include "normalization/layer_norm.h"
+#include "dense/embedding.h"
 
 // Listen-Attend-Spell: LSTM-based seq2seq with attention.
 // Encoder: bidirectional LSTM processes source sequence.

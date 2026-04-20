@@ -1,6 +1,6 @@
 #include "nn/utils/tokenizer.h"
-#include "nn/layers/embedding.h"
-#include "nn/layers/rnn.h"
+#include "nn/layers/dense/embedding.h"
+#include "nn/layers/recurrent/rnn.h"
 // removed (via nn.h)
 #include "nn/nn.h"
 #include <iostream>

@@ -1,7 +1,7 @@
 #ifndef POOL_LAYER_H
 #define POOL_LAYER_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 class MaxPool2D : public Layer {
 public:

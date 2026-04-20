@@ -9,7 +9,12 @@ BUILD_DIR = build
 all: nn_demo xor_big multiclass cnn_xor cnn_multiclass rnn_airline lstm_airline embedding_demo extensions transformer_demo
 
 $(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)/core $(BUILD_DIR)/activations $(BUILD_DIR)/optimizers $(BUILD_DIR)/layers $(BUILD_DIR)/utils
+	mkdir -p $(BUILD_DIR)/core $(BUILD_DIR)/activations $(BUILD_DIR)/optimizers \
+	$(BUILD_DIR)/layers/attention $(BUILD_DIR)/layers/recurrent \
+	$(BUILD_DIR)/layers/normalization $(BUILD_DIR)/layers/convolutions \
+	$(BUILD_DIR)/layers/pooling $(BUILD_DIR)/layers/dense \
+	$(BUILD_DIR)/layers/generative $(BUILD_DIR)/layers/graph \
+	$(BUILD_DIR)/layers/composite $(BUILD_DIR)/utils
 
 # Core
 $(BUILD_DIR)/core/tensor.cpp.o: include/nn/core/tensor.cpp | $(BUILD_DIR)
@@ -63,70 +68,78 @@ $(BUILD_DIR)/utils/isolation_forest.cpp.o: include/nn/utils/isolation_forest.cpp
 $(BUILD_DIR)/utils/lightgbm_style.cpp.o: include/nn/utils/lightgbm_style.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Layers
-$(BUILD_DIR)/layers/conv_layer.cpp.o: include/nn/layers/conv_layer.cpp | $(BUILD_DIR)
+# Layers — convolutions
+$(BUILD_DIR)/layers/convolutions/conv_layer.cpp.o: include/nn/layers/convolutions/conv_layer.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/pool_layer.cpp.o: include/nn/layers/pool_layer.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/lstm.cpp.o: include/nn/layers/lstm.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/rnn.cpp.o: include/nn/layers/rnn.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/embedding.cpp.o: include/nn/layers/embedding.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/layer_norm.cpp.o: include/nn/layers/layer_norm.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/batch_norm.cpp.o: include/nn/layers/batch_norm.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/flatten.cpp.o: include/nn/layers/flatten.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/transformer.cpp.o: include/nn/layers/transformer.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/layers/pooling/pool_layer.cpp.o: include/nn/layers/pooling/pool_layer.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/conv1d.cpp.o: include/nn/layers/conv1d.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/coordconv.cpp.o: include/nn/layers/coordconv.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — recurrent
+$(BUILD_DIR)/layers/recurrent/lstm.cpp.o: include/nn/layers/recurrent/lstm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/recurrent/rnn.cpp.o: include/nn/layers/recurrent/rnn.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/recurrent/gru.cpp.o: include/nn/layers/recurrent/gru.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/recurrent/lstm_bidirectional.cpp.o: include/nn/layers/recurrent/lstm_bidirectional.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — dense
+$(BUILD_DIR)/layers/dense/embedding.cpp.o: include/nn/layers/dense/embedding.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/dense/flatten.cpp.o: include/nn/layers/dense/flatten.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — normalization
+$(BUILD_DIR)/layers/normalization/batch_norm.cpp.o: include/nn/layers/normalization/batch_norm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/normalization/layer_norm.cpp.o: include/nn/layers/normalization/layer_norm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/normalization/weight_norm.cpp.o: include/nn/layers/normalization/weight_norm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — attention
+$(BUILD_DIR)/layers/attention/transformer.cpp.o: include/nn/layers/attention/transformer.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/attention/layer_output_tracker.cpp.o: include/nn/layers/attention/layer_output_tracker.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — composite
 $(BUILD_DIR)/layers/skip_connection.cpp.o: include/nn/layers/skip_connection.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/multi_output_model.cpp.o: include/nn/layers/multi_output_model.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/gru.cpp.o: include/nn/layers/gru.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/weight_norm.cpp.o: include/nn/layers/weight_norm.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/spatial_dropout.cpp.o: include/nn/layers/spatial_dropout.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/weight_init.cpp.o: include/nn/layers/weight_init.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/lstm_bidirectional.cpp.o: include/nn/layers/lstm_bidirectional.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/resnet.cpp.o: include/nn/layers/resnet.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/seq2seq_attention.cpp.o: include/nn/layers/seq2seq_attention.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/vae.cpp.o: include/nn/layers/vae.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/cnn_models.cpp.o: include/nn/layers/cnn_models.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/memory_network.cpp.o: include/nn/layers/memory_network.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/squeezenet.cpp.o: include/nn/layers/squeezenet.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/layer_output_tracker.cpp.o: include/nn/layers/layer_output_tracker.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/densenet.cpp.o: include/nn/layers/densenet.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/mobilenet_v2.cpp.o: include/nn/layers/mobilenet_v2.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/lstm_las.cpp.o: include/nn/layers/lstm_las.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/layers/squeezenet.cpp.o: include/nn/layers/squeezenet.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/capsnet.cpp.o: include/nn/layers/capsnet.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/coordconv.cpp.o: include/nn/layers/coordconv.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/layers/memory_network.cpp.o: include/nn/layers/memory_network.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/squeeze_excitation.cpp.o: include/nn/layers/squeeze_excitation.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-$(BUILD_DIR)/layers/gnn.cpp.o: include/nn/layers/gnn.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/layers/seq2seq_attention.cpp.o: include/nn/layers/seq2seq_attention.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/mixture_of_experts.cpp.o: include/nn/layers/mixture_of_experts.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/lstm_las.cpp.o: include/nn/layers/lstm_las.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — generative
+$(BUILD_DIR)/layers/generative/vae.cpp.o: include/nn/layers/generative/vae.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/generative/capsnet.cpp.o: include/nn/layers/generative/capsnet.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Layers — graph
+$(BUILD_DIR)/layers/graph/gnn.cpp.o: include/nn/layers/gnn.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 LIB_OBJS = \
@@ -152,38 +165,35 @@ LIB_OBJS = \
 	$(BUILD_DIR)/utils/random_forest.cpp.o \
 	$(BUILD_DIR)/utils/isolation_forest.cpp.o \
 	$(BUILD_DIR)/utils/lightgbm_style.cpp.o \
-	$(BUILD_DIR)/layers/conv_layer.cpp.o \
-	$(BUILD_DIR)/layers/pool_layer.cpp.o \
-	$(BUILD_DIR)/layers/lstm.cpp.o \
-	$(BUILD_DIR)/layers/rnn.cpp.o \
-	$(BUILD_DIR)/layers/embedding.cpp.o \
-	$(BUILD_DIR)/layers/layer_norm.cpp.o \
-	$(BUILD_DIR)/layers/batch_norm.cpp.o \
-	$(BUILD_DIR)/layers/flatten.cpp.o \
-	$(BUILD_DIR)/layers/transformer.cpp.o \
+	$(BUILD_DIR)/layers/convolutions/conv_layer.cpp.o \
+	$(BUILD_DIR)/layers/pooling/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/conv1d.cpp.o \
+	$(BUILD_DIR)/layers/coordconv.cpp.o \
+	$(BUILD_DIR)/layers/recurrent/lstm.cpp.o \
+	$(BUILD_DIR)/layers/recurrent/rnn.cpp.o \
+	$(BUILD_DIR)/layers/recurrent/gru.cpp.o \
+	$(BUILD_DIR)/layers/recurrent/lstm_bidirectional.cpp.o \
+	$(BUILD_DIR)/layers/dense/embedding.cpp.o \
+	$(BUILD_DIR)/layers/dense/flatten.cpp.o \
+	$(BUILD_DIR)/layers/normalization/batch_norm.cpp.o \
+	$(BUILD_DIR)/layers/normalization/layer_norm.cpp.o \
+	$(BUILD_DIR)/layers/normalization/weight_norm.cpp.o \
+	$(BUILD_DIR)/layers/attention/transformer.cpp.o \
+	$(BUILD_DIR)/layers/attention/layer_output_tracker.cpp.o \
 	$(BUILD_DIR)/layers/skip_connection.cpp.o \
 	$(BUILD_DIR)/layers/multi_output_model.cpp.o \
-	$(BUILD_DIR)/layers/gru.cpp.o \
-	$(BUILD_DIR)/layers/weight_norm.cpp.o \
-	$(BUILD_DIR)/layers/spatial_dropout.cpp.o \
-	$(BUILD_DIR)/layers/weight_init.cpp.o \
-	$(BUILD_DIR)/layers/lstm_bidirectional.cpp.o \
 	$(BUILD_DIR)/layers/resnet.cpp.o \
-	$(BUILD_DIR)/layers/seq2seq_attention.cpp.o \
-	$(BUILD_DIR)/layers/vae.cpp.o \
-	$(BUILD_DIR)/layers/cnn_models.cpp.o \
-	$(BUILD_DIR)/layers/memory_network.cpp.o \
-	$(BUILD_DIR)/layers/squeezenet.cpp.o \
-	$(BUILD_DIR)/layers/layer_output_tracker.cpp.o \
 	$(BUILD_DIR)/layers/densenet.cpp.o \
 	$(BUILD_DIR)/layers/mobilenet_v2.cpp.o \
-	$(BUILD_DIR)/layers/lstm_las.cpp.o \
-	$(BUILD_DIR)/layers/capsnet.cpp.o \
-	$(BUILD_DIR)/layers/coordconv.cpp.o \
+	$(BUILD_DIR)/layers/squeezenet.cpp.o \
+	$(BUILD_DIR)/layers/memory_network.cpp.o \
 	$(BUILD_DIR)/layers/squeeze_excitation.cpp.o \
-	$(BUILD_DIR)/layers/gnn.cpp.o \
-	$(BUILD_DIR)/layers/mixture_of_experts.cpp.o
+	$(BUILD_DIR)/layers/seq2seq_attention.cpp.o \
+	$(BUILD_DIR)/layers/mixture_of_experts.cpp.o \
+	$(BUILD_DIR)/layers/lstm_las.cpp.o \
+	$(BUILD_DIR)/layers/generative/vae.cpp.o \
+	$(BUILD_DIR)/layers/generative/capsnet.cpp.o \
+	$(BUILD_DIR)/layers/graph/gnn.cpp.o
 
 $(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@

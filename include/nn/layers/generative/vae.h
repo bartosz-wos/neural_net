@@ -1,7 +1,7 @@
 #ifndef VAE_H
 #define VAE_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 #include <random>
 

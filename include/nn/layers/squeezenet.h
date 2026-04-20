@@ -2,9 +2,9 @@
 #define SQUEEZENET_H
 
 #include "../core/layer.h"
-#include "conv_layer.h"
-#include "pool_layer.h"
-#include "flatten.h"
+#include "convolutions/conv_layer.h"
+#include "pooling/pool_layer.h"
+#include "dense/flatten.h"
 
 // SqueezeNet: Fire module — squeeze 1x1 conv followed by expand 1x1 + 3x3 conv.
 // Very parameter-efficient, similar accuracy to AlexNet with 50x fewer params.

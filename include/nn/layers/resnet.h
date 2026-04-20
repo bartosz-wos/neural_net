@@ -2,7 +2,7 @@
 #define RESNET_H
 
 #include "../core/layer.h"
-#include "conv_layer.h"
+#include "convolutions/conv_layer.h"
 
 // ResNet-style residual block — two conv layers with skip connection.
 class ResBlock : public Layer {

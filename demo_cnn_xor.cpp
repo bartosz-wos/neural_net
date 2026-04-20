@@ -1,5 +1,5 @@
 #include "nn/nn.h"
-#include "nn/layers/conv_layer.h"
+#include "nn/layers/convolutions/conv_layer.h"
 // removed (via nn.h)
 #include <iostream>
 #include <vector>

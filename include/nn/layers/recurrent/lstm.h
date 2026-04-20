@@ -1,7 +1,7 @@
 #ifndef LSTM_H
 #define LSTM_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 
 class LSTM : public Layer {

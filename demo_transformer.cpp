@@ -1,4 +1,4 @@
-#include "nn/layers/transformer.h"
+#include "nn/layers/attention/transformer.h"
 #include <iostream>
 #include <cstdlib>
 #include <ctime>

@@ -3,17 +3,17 @@
 #include <fstream>
 #include <cstdint>
 #include <cstring>
-#include "../layers/batch_norm.h"
-#include "../layers/layer_norm.h"
-#include "../layers/conv_layer.h"
-#include "../layers/embedding.h"
-#include "../layers/lstm.h"
+#include "../layers/normalization/batch_norm.h"
+#include "../layers/normalization/layer_norm.h"
+#include "../layers/convolutions/conv_layer.h"
+#include "../layers/dense/embedding.h"
+#include "../layers/recurrent/lstm.h"
 #include "../layers/skip_connection.h"
-#include "../layers/pool_layer.h"
-#include "../layers/flatten.h"
-#include "../layers/transformer.h"
+#include "../layers/pooling/pool_layer.h"
+#include "../layers/dense/flatten.h"
+#include "../layers/attention/transformer.h"
 #include "../layers/conv1d.h"
-#include "../layers/rnn.h"
+#include "../layers/recurrent/rnn.h"
 #include <iostream>
 
 void Model::add_layer(Layer* layer) {

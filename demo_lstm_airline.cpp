@@ -1,5 +1,5 @@
 #include "nn/nn.h"
-#include "nn/layers/lstm.h"
+#include "nn/layers/recurrent/lstm.h"
 #include "nn/optimizers/optimizer.h"
 #include <iostream>
 #include <fstream>

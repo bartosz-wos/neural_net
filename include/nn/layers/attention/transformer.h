@@ -1,8 +1,8 @@
 #ifndef TRANSFORMER_H
 #define TRANSFORMER_H
 
-#include "../core/layer.h"
-#include "layer_norm.h"
+#include "../../core/layer.h"
+#include "../../layers/normalization/layer_norm.h"
 #include <vector>
 
 class MultiHeadAttention : public Layer {

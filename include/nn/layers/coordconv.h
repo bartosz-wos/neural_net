@@ -2,7 +2,7 @@
 #define COORDCONV_H
 
 #include "../core/layer.h"
-#include "conv_layer.h"
+#include "convolutions/conv_layer.h"
 
 // CoordConv: appends (x, y) coordinate channels to input feature maps.
 // For an H×W input, two channels are added: x and y normalized to [-1, 1].

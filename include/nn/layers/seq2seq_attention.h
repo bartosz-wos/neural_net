@@ -2,7 +2,7 @@
 #define SEQ2SEQ_ATTENTION_H
 
 #include "../core/layer.h"
-#include "lstm.h"
+#include "recurrent/lstm.h"
 #include <vector>
 
 // AttentionLayer — content-based attention (Bahdanau-style).

@@ -1,5 +1,5 @@
 #include "layer_output_tracker.h"
-#include "../core/model.h"
+#include "../../core/model.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>

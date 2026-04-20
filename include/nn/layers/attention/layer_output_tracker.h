@@ -1,8 +1,8 @@
 #ifndef LAYER_OUTPUT_TRACKER_H
 #define LAYER_OUTPUT_TRACKER_H
 
-#include "../core/layer.h"
-#include "../core/model.h"
+#include "../../core/layer.h"
+#include "../../core/model.h"
 #include <vector>
 #include <string>
 #include <fstream>

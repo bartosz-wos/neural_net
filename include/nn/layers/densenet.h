@@ -2,8 +2,8 @@
 #define DENSENET_H
 
 #include "../core/layer.h"
-#include "conv_layer.h"
-#include "pool_layer.h"
+#include "convolutions/conv_layer.h"
+#include "pooling/pool_layer.h"
 
 class DenseBlock : public Layer {
 public:

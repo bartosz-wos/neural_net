@@ -1,4 +1,4 @@
-#include "conv_layer.h"
+#include "convolutions/conv_layer.h"
 
 // Conv2D with dilated (atrous) convolution.
 // dilation_rate: spacing between kernel elements (dilation=1 → standard conv).

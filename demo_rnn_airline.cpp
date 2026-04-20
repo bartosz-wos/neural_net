@@ -1,5 +1,5 @@
 #include "nn/nn.h"
-#include "nn/layers/rnn.h"
+#include "nn/layers/recurrent/rnn.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>

@@ -2,8 +2,8 @@
 #define SQUEEZE_EXCITATION_H
 
 #include "../core/layer.h"
-#include "pool_layer.h"
-#include "conv_layer.h"
+#include "pooling/pool_layer.h"
+#include "convolutions/conv_layer.h"
 
 // Squeeze-Excitation block (Hu et al. 2018).
 // Global average pool → FC → ReLU → FC → Sigmoid (channel attention).

@@ -8,37 +8,28 @@ A minimal but functional C++ neural network framework with automatic differentia
 neural_net/
 ├── include/nn/
 │   ├── nn.h                        # umbrella: #include "nn/nn.h"
-│   ├── tensor.h / tensor.cpp       # matrix ops, elementwise, transpose, reshape
-│   ├── layer.h  / layer.cpp        # Dense, Activation wrapper template
-│   ├── model.h  / model.cpp        # sequential model container
-│   ├── activations/                # all activation functions
-│   │   ├── activations.h
-│   │   └── activations.cpp
-│   ├── optimizers/                 # optimizers + schedulers
-│   │   ├── optimizer.h/.cpp
-│   │   ├── optimizer_extended.h/.cpp
-│   │   ├── scheduler.h
-│   │   └── optimizer_sgd_adam.h
-│   ├── layers/                     # all layer types
-│   │   ├── conv_layer.h/.cpp      # Conv2D (im2col, dilation)
-│   │   ├── conv1d.h               # Conv1D
-│   │   ├── dilated_conv2d.h       # DilatedConv2D subclass
-│   │   ├── pool_layer.h/.cpp      # MaxPool2D, AvgPool2D
-│   │   ├── lstm.h/.cpp            # LSTM
-│   │   ├── rnn.h/.cpp             # SimpleRNN
-│   │   ├── embedding.h/.cpp       # word embeddings
-│   │   ├── layer_norm.h/.cpp      # LayerNorm + Dropout
-│   │   ├── batch_norm.h/.cpp       # BatchNorm1D
-│   │   ├── flatten.h/.cpp         # Flatten
-│   │   ├── transformer.h/.cpp      # MHA, TransformerBlock, PositionalEncoding
-│   │   └── dataloader.h           # Dataset, TensorDataset, DataLoader
+│   ├── core/                       # Tensor, Layer, Model
+│   ├── activations/               # ReLU, Sigmoid, Tanh, Softmax, GELU, ...
+│   ├── optimizers/                # SGD, Adam, RMSprop, AdamW, OneCycleLR, SWA
+│   ├── utils/                     # GridSearchCV, tokenizer, gradient check
+│   ├── layers/
+│   │   ├── attention/            # MultiHeadAttention, TransformerBlock, LayerOutputTracker
+│   │   ├── convolutions/        # Conv2D (im2col), Conv1D, DilatedConv2D, CoordConv
+│   │   ├── pooling/             # MaxPool2D, AvgPool2D
+│   │   ├── recurrent/            # LSTM, SimpleRNN, GRU, BidirectionalLSTM
+│   │   ├── dense/               # Embedding, Flatten
+│   │   ├── normalization/       # BatchNorm1D, LayerNorm, WeightNorm
+│   │   ├── composite/           # SkipConnection, MultiOutputModel, ResNet, Seq2SeqAttention
+│   │   ├── generative/          # VAE, CapsuleNet
+│   │   └── graph/               # GCN, GAT, GraphNetwork
 │   └── utils/
-│       ├── grid_search.h/.cpp     # GridSearchCV
-│       └── tokenizer.h/.cpp       # char-level tokenizer
-├── demo*.cpp                        # demos
+│       ├── ensemble/             # AdaBoost, RandomForest, IsolationForest, GradientBoosting, XGBoostStyle, LightGBMStyle
+│       ├── loss/                 # FocalLoss, LabelSmoothing, ElasticNet
+│       ├── training/             # ClipGradNorm, OneCycleLR, TimingBenchmark, LayerOutputTracker
+│       └── numerical/            # NumericalStability, SerializationRoundtrip
+├── demo*.cpp                       # demos
 ├── Makefile
-├── README.md
-└── EXPANSION_QUEUE.md               # pending features
+└── EXPANSION_QUEUE.md
 ```
 
 ## Usage
@@ -68,24 +59,32 @@ make <target>  # build specific demo
 
 **Core**
 - `tensor` — matrix ops, elementwise, transpose, reshape, reductions, Hadamard
-- `layer` — Dense (Xavier init) + Activation wrapper template; `init_weights(scheme)`
+- `layer` — Dense (Xavier init) + Activation wrapper template
 - `model` — sequential container with train/evaluate/save/load
 
 **Activations** — ReLU, Sigmoid, Tanh, Softmax, LeakyReLU, ELU, Softplus, GELU, Swish
 
 **Layers**
-- Conv2D (im2col, padding, strides, dilation), Conv1D, DilatedConv2D
+- Conv2D (im2col, padding, strides, dilation), Conv1D, DilatedConv2D, CoordConv
 - MaxPool2D, AvgPool2D
-- LSTM (full BPTT), SimpleRNN
+- LSTM (full BPTT), SimpleRNN, GRU, BidirectionalLSTM
 - Embedding (lookup table with gradient accumulation)
-- LayerNorm, BatchNorm1D, Dropout
+- LayerNorm, BatchNorm1D, WeightNorm, Dropout
 - TransformerBlock, MultiHeadAttention, PositionalEncoding
+- SkipConnection, ResNet (ResNet18/34/50/101), DenseNet, SqueezeNet, MobileNetV2
+- MemN2N (Memory Network), ListenAttendSpell (LAS), MoE (Mixture of Experts)
+- GCN, GAT (graph neural networks)
+- VAE (Variational Autoencoder), CapsuleNet
 
-**Optimizers** — SGD, Adam, RMSprop, AdamW, SGD+Nesterov, `clip_grad_norm_()`
+**Optimizers** — SGD, Adam, RMSprop, AdamW, SGD+Nesterov, clip_grad_norm_
 
-**Schedulers** — StepLR, ExponentialLR, ReduceLROnPlateau, CosineAnnealingLR
+**Schedulers** — StepLR, ExponentialLR, ReduceLROnPlateau, CosineAnnealingLR, OneCycleLR, SWA
 
-**Training Tools** — GridSearchCV, DataLoader + Dataset, create_mlp_ex()
+**Training Tools** — GridSearchCV, DataLoader + Dataset, TimingBenchmark, LayerOutputTracker
+
+**Losses** — FocalLoss, LabelSmoothingCrossEntropy, ElasticNet
+
+**Ensemble** — AdaBoost, RandomForest, IsolationForest, GradientBoosting, XGBoostStyle, LightGBMStyle
 
 ## Demos
 
