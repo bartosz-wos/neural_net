@@ -14,6 +14,7 @@ Tensor Softmax::operator()(const Tensor& t) const {
             result[i][j] = std::exp(t[i][j] - max_val);
             sum_exp += result[i][j];
         }
+        sum_exp = std::max(sum_exp, 1e-300);  // guard: all exp underflow → 0
         for (size_t j = 0; j < t.cols; ++j) {
             result[i][j] /= sum_exp;
         }
@@ -28,7 +29,7 @@ double Softmax::cross_entropy_loss(const Tensor& logits, const Tensor& labels) {
     for (size_t i = 0; i < probs.rows; ++i) {
         for (size_t j = 0; j < probs.cols; ++j) {
             if (labels[i][j] > 0) {
-                loss -= std::log(probs[i][j] + 1e-12);
+                loss -= std::log(probs[i][j] + 1e-7);
                 break; // one-hot, so break after the 1
             }
         }
@@ -67,7 +68,7 @@ double softmax_cross_entropy(const Tensor& logits, const Tensor& labels) {
         if (target < 0) { // try class index format
             target = static_cast<int>(labels[i][0]);
         }
-        double log_prob = logits[i][target] - max_logit - std::log(sum_exp);
+        double log_prob = logits[i][target] - max_logit - std::log(std::max(sum_exp, 1e-300));
         total_loss -= log_prob;
     }
     return total_loss / static_cast<double>(N);
@@ -116,7 +117,11 @@ Tensor ELU::operator()(const Tensor& t) const {
 }
 
 Tensor Softplus::operator()(const Tensor& t) const {
-    return t.apply([](double x) { return std::log(1.0 + std::exp(x)); });
+    return t.apply([](double x) {
+        // Clamp large positive x to avoid exp overflow
+        if (x > 700) x = 700;
+        return std::log(1.0 + std::exp(x));
+    });
 }
 
 static const double GELU_A = std::sqrt(2.0 / std::acos(-1.0));
@@ -155,6 +160,8 @@ double Swish::derivative(double x) const {
 
 Tensor Mish::operator()(const Tensor& t) const {
     return t.apply([](double x) {
+        // Clamp large x to avoid exp overflow in softplus
+        if (x > 700) x = 700;
         double sp = std::log(1.0 + std::exp(x)); // softplus
         return x * std::tanh(sp);
     });

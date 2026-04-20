@@ -27,7 +27,7 @@ public:
     double lr, beta1, beta2, epsilon;
     int t;
 
-    Adam(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8);
+    Adam(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-7);
     void step(Model& model) override;
 
 private:

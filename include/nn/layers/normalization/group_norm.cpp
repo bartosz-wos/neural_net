@@ -51,7 +51,7 @@ Tensor GroupNorm::forward(const Tensor& x) {
                 }
             }
             var /= count;
-            var = std::max(var, 1e-5f);
+            var = std::max(var, eps_);  // use instance epsilon as floor
 
             float sqrt_var = std::sqrt(var + eps_);
 

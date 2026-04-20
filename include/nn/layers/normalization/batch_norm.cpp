@@ -111,7 +111,9 @@ Tensor BatchNorm1D::backward(const Tensor& grad_output, double /* learning_rate 
         for (size_t b = 0; b < batch; ++b) {
             double x = last_x[b][f];
             double mu_f = last_mean[0][f];
-            double inv_std_f = 1.0 / std::sqrt(last_var[0][f] + eps);
+            double v = last_var[0][f];
+            v = std::max(v, eps);  // guard near-zero variance
+            double inv_std_f = 1.0 / std::sqrt(v + eps);
 
             double dz = grad_output[b][f] * gamma[0][f];
             // dL/dx = dz * inv_std + dvar * 2*(x-mu)/N + dmu/N

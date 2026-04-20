@@ -64,7 +64,9 @@ struct Softplus {
 struct GELU {
     Tensor operator()(const Tensor& t) const;
     double operator()(double x) const {
-        double cdf = 0.5 * (1.0 + std::tanh(std::sqrt(2.0 / std::acos(-1.0)) * (x + 0.044715 * x * x * x)));
+        // Clamp input for numerical stability (matches Tensor version)
+        double x_clamped = std::max(-4.0, std::min(4.0, x));
+        double cdf = 0.5 * (1.0 + std::tanh(std::sqrt(2.0 / std::acos(-1.0)) * (x_clamped + 0.044715 * x_clamped * x_clamped * x_clamped)));
         return x * cdf;
     }
     double derivative(double x) const;

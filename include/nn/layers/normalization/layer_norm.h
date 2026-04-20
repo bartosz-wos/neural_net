@@ -15,7 +15,7 @@ public:
     Tensor last_x;
     bool training;
 
-    LayerNorm(size_t features, double eps = 1e-5);
+    LayerNorm(size_t features, double eps = 1e-7);
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;

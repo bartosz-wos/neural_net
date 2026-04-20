@@ -13,7 +13,7 @@ public:
     Tensor grad_gamma_, grad_beta_, grad_x;
     bool training;
 
-    BatchNorm1D(size_t features, double eps = 1e-5, double momentum = 0.1);
+    BatchNorm1D(size_t features, double eps = 1e-7, double momentum = 0.1);
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output, double /* learning_rate */) override;
     void update_weights(double learning_rate) override;
