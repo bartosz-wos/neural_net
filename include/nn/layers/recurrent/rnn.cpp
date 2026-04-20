@@ -161,9 +161,8 @@ Tensor SimpleRNN::backward(const Tensor& grad_output, double /* learning_rate */
             for (int h = 0; h < hidden_size; ++h)
                 grad_b[h][0] += grad_pre[i][h];
 
-        // grad_h for previous step: grad_h += grad_pre * W_hh
-        // += because upstream grad_h (from output or next layer) carries additional signal
-        grad_h = grad_pre * W_hh + grad_h; // (N,H)*(H,H) = (N,H)
+        // grad_h for previous step: grad_h = grad_pre * W_hh
+        grad_h = grad_pre * W_hh; // (N,H)*(H,H) = (N,H)
 
         // grad_x_t = grad_pre * W_xh
         Tensor grad_x_t = grad_pre * W_xh; // (N,D)
