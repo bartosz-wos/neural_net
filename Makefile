@@ -41,6 +41,8 @@ $(BUILD_DIR)/utils/numerical_stability.cpp.o: include/nn/utils/numerical_stabili
 $(BUILD_DIR)/utils/timing_benchmark.cpp.o: include/nn/utils/timing_benchmark.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/serialization_roundtrip.cpp.o: include/nn/utils/serialization_roundtrip.cpp | $(BUILD_DIR)
+\n$(BUILD_DIR)/utils/label_smoothing.cpp.o: include/nn/utils/label_smoothing.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers

@@ -36,6 +36,7 @@
 #include "utils/numerical_stability.h"
 #include "utils/timing_benchmark.h"
 #include "utils/serialization_roundtrip.h"
+#include "utils/label_smoothing.h"
 #include "layers/lstm_las.h"
 
 #endif
