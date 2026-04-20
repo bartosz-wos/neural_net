@@ -23,6 +23,10 @@ public:
 private:
     Dense W_;
     Tensor last_output_;
+    Tensor last_input_;
+    Tensor last_AW_;
+    Tensor adj_norm_;
+    std::vector<std::vector<double>> relu_mask_;
 };
 
 class GATLayer : public Layer {
@@ -45,6 +49,10 @@ private:
     std::vector<Dense> W_heads_;
     std::vector<Dense> a_heads_;
     Tensor last_output_;
+    Tensor last_input_;
+    std::vector<Tensor> last_Wh_heads_;
+    Tensor last_alpha_;
+    Tensor adj_;
 };
 
 class GraphNetwork : public Layer {
@@ -65,6 +73,8 @@ private:
     std::vector<GATLayer> gat_layers_;
     bool use_gat_;
     Tensor last_output_;
+    Tensor last_input_;
+    Tensor last_adj_;
 };
 
 #endif
