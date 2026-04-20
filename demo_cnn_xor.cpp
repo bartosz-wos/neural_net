@@ -46,7 +46,7 @@ int main() {
     std::cout << "\n--- Predictions ---\n";
     int correct = 0;
     for (int i = 0; i < N; ++i) {
-        Tensor in = Tensor(std::vector<std::vector<double>>{X[i]});
+        Tensor in(1, X.cols, &X.data[i * X.cols]);
         Tensor pred = model.forward(in);
         double p = pred[0][0];
         int pred_label = (p > 0.5) ? 1 : 0;

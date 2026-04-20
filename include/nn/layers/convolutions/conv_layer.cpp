@@ -22,7 +22,7 @@ Conv2D::Conv2D(int in_ch, int out_ch, int kH, int kW, int H_in, int W_in,
 
     // Initialize weights with Xavier/Glorot
     int fan_in = in_channels * kH * kW;
-    int fan_out = out_channels * H_out * W_out;
+    int fan_out = out_channels * kH * kW;
     double scale = std::sqrt(2.0 / (fan_in + fan_out));
 
     std::mt19937 gen(42);

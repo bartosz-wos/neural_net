@@ -32,7 +32,7 @@ int main() {
     model.add_layer(new Activation<Sigmoid>(Sigmoid{}));
 
     // Quick forward test
-    Tensor sample = Tensor(std::vector<std::vector<double>>{X_data[0]});
+    Tensor sample(1, X_data[0].size(), X_data[0].data());
     try {
         Tensor out = model.forward(sample);
         std::cout << "Forward test passed. Output shape: " << out.rows << "x" << out.cols << "\n\n";
@@ -50,7 +50,7 @@ int main() {
 
     std::cout << "\n--- Predictions after training ---\n";
     for (size_t i = 0; i < X.rows; ++i) {
-        Tensor in = Tensor(std::vector<std::vector<double>>{X[i]});
+        Tensor in(1, X.cols, &X.data[i * X.cols]);
         Tensor pred = model.forward(in);
         double prob = pred[0][0];
         std::cout << "Input: [" << X[i][0] << ", " << X[i][1] << "] => ";

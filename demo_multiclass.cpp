@@ -32,7 +32,7 @@ int main() {
     std::cout << "\n--- Predictions ---\n";
     int correct = 0;
     for (size_t i = 0; i < X.rows; ++i) {
-        Tensor in = Tensor(std::vector<std::vector<double>>{X[i]});
+        Tensor in(1, X.cols, &X.data[i * X.cols]);
         Tensor logits = model.forward(in);
         Tensor probs = Softmax()(logits);
 

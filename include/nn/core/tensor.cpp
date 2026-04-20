@@ -2,10 +2,23 @@
 #include <stdexcept>
 
 Tensor::Tensor(size_t r, size_t c) : rows(r), cols(c) {
-    data.assign(r, std::vector<double>(c, 0.0));
+    data.resize(r * c);
 }
 
-Tensor::Tensor(const std::vector<std::vector<double>>& d) : data(d), rows(d.size()), cols(d.empty() ? 0 : d[0].size()) {}
+Tensor::Tensor(const std::vector<std::vector<double>>& d)
+    : rows(d.size()), cols(d.empty() ? 0 : d[0].size()) {
+    data.resize(rows * cols);
+    for (size_t i = 0; i < rows; ++i)
+        for (size_t j = 0; j < cols; ++j)
+            data[i * cols + j] = d[i][j];
+}
+
+Tensor::Tensor(size_t r, size_t c, const double* flat_data)
+    : rows(r), cols(c) {
+    data.resize(r * c);
+    for (size_t idx = 0; idx < r * c; ++idx)
+        data[idx] = flat_data[idx];
+}
 
 Tensor Tensor::zeros(size_t r, size_t c) {
     return Tensor(r, c);
@@ -13,43 +26,43 @@ Tensor Tensor::zeros(size_t r, size_t c) {
 
 Tensor Tensor::random(size_t r, size_t c, double scale) {
     Tensor t(r, c);
-    for (size_t i = 0; i < r; ++i)
-        for (size_t j = 0; j < c; ++j)
-            t.data[i][j] = ((double)rand() / RAND_MAX) * scale;
+    size_t total = r * c;
+    for (size_t idx = 0; idx < total; ++idx)
+        t.data[idx] = ((double)rand() / RAND_MAX) * scale;
     return t;
 }
 
 Tensor Tensor::operator+(const Tensor& other) const {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
     Tensor res(rows, cols);
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            res.data[i][j] = data[i][j] + other.data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        res.data[idx] = data[idx] + other.data[idx];
     return res;
 }
 
 Tensor Tensor::operator-(const Tensor& other) const {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
     Tensor res(rows, cols);
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            res.data[i][j] = data[i][j] - other.data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        res.data[idx] = data[idx] - other.data[idx];
     return res;
 }
 
 Tensor& Tensor::operator+=(const Tensor& other) {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            data[i][j] += other.data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        data[idx] += other.data[idx];
     return *this;
 }
 
 Tensor& Tensor::operator-=(const Tensor& other) {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            data[i][j] -= other.data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        data[idx] -= other.data[idx];
     return *this;
 }
 
@@ -60,15 +73,15 @@ Tensor Tensor::operator*(const Tensor& other) const {
     for (size_t i = 0; i < rows; ++i)
         for (size_t k = 0; k < cols; ++k)
             for (size_t j = 0; j < other.cols; ++j)
-                res.data[i][j] += data[i][k] * other.data[k][j];
+                res[i][j] += (*this)[i][k] * other[k][j];
     return res;
 }
 
 Tensor Tensor::operator*(double scalar) const {
     Tensor res(rows, cols);
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            res.data[i][j] = data[i][j] * scalar;
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        res.data[idx] = data[idx] * scalar;
     return res;
 }
 
@@ -76,47 +89,39 @@ Tensor Tensor::transpose() const {
     Tensor res(cols, rows);
     for (size_t i = 0; i < rows; ++i)
         for (size_t j = 0; j < cols; ++j)
-            res.data[j][i] = data[i][j];
+            res[j][i] = (*this)[i][j];
     return res;
 }
 
 Tensor Tensor::hadamard(const Tensor& other) const {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Hadamard dimension mismatch");
     Tensor res(rows, cols);
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            res.data[i][j] = data[i][j] * other.data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        res.data[idx] = data[idx] * other.data[idx];
     return res;
 }
 
 double Tensor::sum() const {
     double s = 0.0;
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            s += data[i][j];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        s += data[idx];
     return s;
 }
 
 double Tensor::max() const {
-    double m = data[0][0];
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            if (data[i][j] > m) m = data[i][j];
+    double m = data[0];
+    size_t total = rows * cols;
+    for (size_t idx = 1; idx < total; ++idx)
+        if (data[idx] > m) m = data[idx];
     return m;
 }
 
 void Tensor::fill(double val) {
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t j = 0; j < cols; ++j)
-            data[i][j] = val;
-}
-
-std::vector<double>& Tensor::operator[](size_t i) {
-    return data[i];
-}
-
-const std::vector<double>& Tensor::operator[](size_t i) const {
-    return data[i];
+    size_t total = rows * cols;
+    for (size_t idx = 0; idx < total; ++idx)
+        data[idx] = val;
 }
 
 Tensor Tensor::get_row(size_t i) const {

@@ -34,7 +34,7 @@ public:
     LayerNorm ln1, ln2;
     Tensor W1, b1, W2, b2;
     Tensor grad_W1, grad_b1, grad_W2, grad_b2;
-    Tensor last_x, last_attn_out, last_ffn_out;
+    Tensor last_x, last_attn_out, last_ffn_out, last_ffn_pregelu;
 
     TransformerBlock(size_t d_model, size_t num_heads);
     Tensor forward(const Tensor& input) override;

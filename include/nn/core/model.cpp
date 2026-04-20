@@ -40,8 +40,8 @@ void Model::train(const Tensor& X, const Tensor& y, double learning_rate, int ep
     for (int epoch = 0; epoch < epochs; ++epoch) {
         double total_loss = 0.0;
         for (size_t i = 0; i < X.rows; ++i) {
-            Tensor sample = Tensor(std::vector<std::vector<double>>{X[i]});
-            Tensor label = Tensor(std::vector<std::vector<double>>{y[i]});
+            Tensor sample(1, X.cols, &X.data[i * X.cols]);
+            Tensor label(1, y.cols, &y.data[i * y.cols]);
 
             // Forward
             Tensor prediction = forward(sample);
@@ -77,8 +77,8 @@ void Model::train_cross_entropy(const Tensor& X, const Tensor& y, double learnin
     for (int epoch = 0; epoch < epochs; ++epoch) {
         double total_loss = 0.0;
         for (size_t i = 0; i < X.rows; ++i) {
-            Tensor sample = Tensor(std::vector<std::vector<double>>{X[i]});
-            Tensor label = Tensor(std::vector<std::vector<double>>{y[i]});
+            Tensor sample(1, X.cols, &X.data[i * X.cols]);
+            Tensor label(1, y.cols, &y.data[i * y.cols]);
 
             // Forward pass to get logits
             Tensor logits = forward(sample);
@@ -106,8 +106,8 @@ void Model::train_cross_entropy(const Tensor& X, const Tensor& y, double learnin
 double Model::evaluate(const Tensor& X, const Tensor& y) {
     double total_loss = 0.0;
     for (size_t i = 0; i < X.rows; ++i) {
-        Tensor sample = Tensor(std::vector<std::vector<double>>{X[i]});
-        Tensor label = Tensor(std::vector<std::vector<double>>{y[i]});
+        Tensor sample(1, X.cols, &X.data[i * X.cols]);
+        Tensor label(1, y.cols, &y.data[i * y.cols]);
         Tensor prediction = forward(sample);
         double loss = 0.0;
         for (size_t j = 0; j < prediction.cols; ++j) {
@@ -225,8 +225,8 @@ void Model::train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs) 
     for (int epoch = 0; epoch < epochs; ++epoch) {
         double total_loss = 0.0;
         for (size_t i = 0; i < X.rows; ++i) {
-            Tensor sample = Tensor(std::vector<std::vector<double>>{X[i]});
-            Tensor label = Tensor(std::vector<std::vector<double>>{y[i]});
+            Tensor sample(1, X.cols, &X.data[i * X.cols]);
+            Tensor label(1, y.cols, &y.data[i * y.cols]);
 
             // Forward
             Tensor prediction = forward(sample);

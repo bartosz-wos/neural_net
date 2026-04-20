@@ -39,7 +39,7 @@ int main() {
 
     std::cout << "\n--- Predictions ---\n";
     for (size_t i = 0; i < X.rows; ++i) {
-        Tensor in = Tensor(std::vector<std::vector<double>>{X[i]});
+        Tensor in(1, X.cols, &X.data[i * X.cols]);
         Tensor pred = model.forward(in);
         double p = pred[0][0];
         std::cout << "[" << X[i][0] << ", " << X[i][1] << "] => " << p

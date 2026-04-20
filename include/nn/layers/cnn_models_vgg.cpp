@@ -15,9 +15,9 @@ Tensor VGGBlock::forward(const Tensor& x) {
     Tensor cur = x;
     for (int i = 0; i < num_convs_; i++) {
         cur = convs_[i].forward(cur);
-        for (auto& row : cur.data)
-            for (auto& val : row)
-                val = std::max(0.0, val);
+        for (size_t i = 0; i < cur.rows; ++i)
+        for (size_t j = 0; j < cur.cols; ++j)
+            cur[i][j] = std::max(0.0, cur[i][j]);
     }
     return cur;
 }
@@ -97,15 +97,15 @@ Tensor ResNeXtBlock::forward(const Tensor& x) {
 
     Conv2D bneck(in_channels_, inner_channels, 1, 1, 1, 0);
     Tensor out = bneck.forward(x);
-    for (auto& row : out.data)
-        for (auto& val : row)
-            val = std::max(0.0, val);
+    for (size_t i = 0; i < out.rows; ++i)
+        for (size_t j = 0; j < out.cols; ++j)
+            out[i][j] = std::max(0.0, out[i][j]);
 
     Conv2D gconv(inner_channels, inner_channels, 3, 1, 1, 0);
     out = gconv.forward(out);
-    for (auto& row : out.data)
-        for (auto& val : row)
-            val = std::max(0.0, val);
+    for (size_t i = 0; i < out.rows; ++i)
+        for (size_t j = 0; j < out.cols; ++j)
+            out[i][j] = std::max(0.0, out[i][j]);
 
     Conv2D final(in_channels_, out_ch, 1, 1, 1, 0);
     out = final.forward(out);
