@@ -31,7 +31,7 @@ NumericalStabilityTest::TestResult NumericalStabilityTest::test_activations() {
     r.name = "activation_extreme_inputs";
     r.passed = true;
 
-    ReLU relu; Sigmoid sigmoid; Tanh tanh;
+    ReLU relu; (void)relu; Sigmoid sigmoid; (void)sigmoid; Tanh tanh; (void)tanh;
 
     // Test with very large positive/negative values
     std::vector<double> extremes = {1e10, -1e10, 1e308, -1e308, 1e-308, -1e-308};
