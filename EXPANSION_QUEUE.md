@@ -5,19 +5,20 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-_(round 9 queue — to be filled)_
+- `group_norm` — GroupNorm (divide channels into groups, normalize within group)
+- `mixup_cutmix` — MixUp and CutMix data augmentation
+- `unet` — U-Net (encoder-decoder with skip connections for segmentation)
+- `cnn_models_vgg` — VGG-11/13/16/19 + ResNeXt block (block with grouped convolutions)
+- `triplet_loss_siamese` — TripletLoss + SiameseNetwork (metric learning, contrastive loss)
 
 ## Done
 
-- **elastic_net** ✅ — `ElasticNet` (L1+L2 combined penalty), coordinate descent solver, soft-thresholding
-- **random_forest** ✅ — `RandomForest` (bagging + random feature subset, info gain / MSE splits), majority vote / mean
-- **isolation_forest** ✅ — `IsolationForest` (random splits, anomaly score = 2^{-avg_path/c(n)}), binary anomaly predictions
-- **lightgbm_style** ✅ — `HistogramBoosting` (feature binning, histogram-based gradient boosting, best-first leaf growth)
-
+- **round-9-refactor** ✅ — reorganized layers/ into subdirectories (attention, recurrent, normalization, convolutions, pooling, dense, generative, graph)
+- **elastic_net** ✅, **random_forest** ✅, **isolation_forest** ✅, **lightgbm_style** ✅
 - **tabular_ensemble** ✅, **adaboost** ✅, **gradient_boosting** ✅, **xgboost_style** ✅
 - **coordconv** ✅, **gnn** ✅, **squeeze_excitation** ✅, **mixture_of_experts** ✅
 - **capsnet** ✅, **clip_grad_norm** ✅, **one_cycle_lr** ✅, **focal_loss** ✅, **label_smoothing** ✅
-- **densenet**, **mobilenet_v2**, **serialization_roundtrip_test**, **lstm_las**, **memory_network**, **squeezenet**, **numerical_stability_tests**, **layer_timing_benchmark**, **layer_output_tracker**
+- **densenet** ✅, **mobilenet_v2** ✅, **serialization_roundtrip_test** ✅, **lstm_las** ✅, **memory_network** ✅, **squeezenet** ✅, **numerical_stability_tests** ✅, **layer_timing_benchmark** ✅, **layer_output_tracker** ✅
 
 ## Pre-queue Done
 

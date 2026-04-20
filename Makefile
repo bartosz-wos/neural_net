@@ -67,6 +67,10 @@ $(BUILD_DIR)/utils/isolation_forest.cpp.o: include/nn/utils/isolation_forest.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/lightgbm_style.cpp.o: include/nn/utils/lightgbm_style.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/mixup_cutmix.cpp.o: include/nn/utils/mixup_cutmix.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/triplet_loss_siamese.cpp.o: include/nn/utils/triplet_loss_siamese.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers — convolutions
 $(BUILD_DIR)/layers/convolutions/conv_layer.cpp.o: include/nn/layers/convolutions/conv_layer.cpp | $(BUILD_DIR)
@@ -100,6 +104,12 @@ $(BUILD_DIR)/layers/normalization/batch_norm.cpp.o: include/nn/layers/normalizat
 $(BUILD_DIR)/layers/normalization/layer_norm.cpp.o: include/nn/layers/normalization/layer_norm.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/layers/normalization/weight_norm.cpp.o: include/nn/layers/normalization/weight_norm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/normalization/group_norm.cpp.o: include/nn/layers/normalization/group_norm.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/unet.cpp.o: include/nn/layers/unet.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/layers/cnn_models_vgg.cpp.o: include/nn/layers/cnn_models_vgg.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers — attention
@@ -165,6 +175,8 @@ LIB_OBJS = \
 	$(BUILD_DIR)/utils/random_forest.cpp.o \
 	$(BUILD_DIR)/utils/isolation_forest.cpp.o \
 	$(BUILD_DIR)/utils/lightgbm_style.cpp.o \
+	$(BUILD_DIR)/utils/mixup_cutmix.cpp.o \
+	$(BUILD_DIR)/utils/triplet_loss_siamese.cpp.o \
 	$(BUILD_DIR)/layers/convolutions/conv_layer.cpp.o \
 	$(BUILD_DIR)/layers/pooling/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/conv1d.cpp.o \
@@ -178,6 +190,7 @@ LIB_OBJS = \
 	$(BUILD_DIR)/layers/normalization/batch_norm.cpp.o \
 	$(BUILD_DIR)/layers/normalization/layer_norm.cpp.o \
 	$(BUILD_DIR)/layers/normalization/weight_norm.cpp.o \
+	$(BUILD_DIR)/layers/normalization/group_norm.cpp.o \
 	$(BUILD_DIR)/layers/attention/transformer.cpp.o \
 	$(BUILD_DIR)/layers/attention/layer_output_tracker.cpp.o \
 	$(BUILD_DIR)/layers/skip_connection.cpp.o \
@@ -193,7 +206,9 @@ LIB_OBJS = \
 	$(BUILD_DIR)/layers/lstm_las.cpp.o \
 	$(BUILD_DIR)/layers/generative/vae.cpp.o \
 	$(BUILD_DIR)/layers/generative/capsnet.cpp.o \
-	$(BUILD_DIR)/layers/graph/gnn.cpp.o
+	$(BUILD_DIR)/layers/graph/gnn.cpp.o \
+	$(BUILD_DIR)/layers/unet.cpp.o \
+	$(BUILD_DIR)/layers/cnn_models_vgg.cpp.o
 
 $(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@

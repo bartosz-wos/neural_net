@@ -27,6 +27,8 @@
 #include "utils/random_forest.h"
 #include "utils/isolation_forest.h"
 #include "utils/lightgbm_style.h"
+#include "utils/mixup_cutmix.h"
+#include "utils/triplet_loss_siamese.h"
 
 // Layers — convolutional
 #include "layers/convolutions/conv_layer.h"
@@ -48,6 +50,7 @@
 #include "layers/normalization/batch_norm.h"
 #include "layers/normalization/layer_norm.h"
 #include "layers/normalization/weight_norm.h"
+#include "layers/normalization/group_norm.h"
 
 // Layers — attention
 #include "layers/attention/transformer.h"
@@ -72,5 +75,7 @@
 
 // Layers — graph
 #include "layers/gnn.h"
+#include "layers/unet.h"
+#include "layers/cnn_models_vgg.h"
 
 #endif
