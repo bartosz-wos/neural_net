@@ -9,6 +9,13 @@ class SWAOptimizer : public Optimizer {
 public:
     SWAOptimizer(Optimizer* inner, size_t start_after_steps = 0);
     void step(Model& model) override;
+    // Update batch normalization running statistics from training data.
+    // After swap_to_averaged(), the averaged weights are applied but BN running
+    // stats are stale. Call this with representative training batches (model in
+    // training mode) to update BN running mean/var via forward passes.
+    // NOTE: Call with model set to training mode before calling.
+    void update_bn_stats(Model& model, const std::vector<Tensor>& training_inputs);
+
     void swap_to_averaged(Model& model);
     void record(Model& model);
     size_t averaged_count() const { return step_count_ > start_after_ ? step_count_ - start_after_ : 0; }

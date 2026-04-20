@@ -47,6 +47,8 @@ private:
     SparseDispatcher dispatcher_;
     Tensor last_output_;
     double load_balance_loss_;
+    Tensor gate_values_;
+    std::vector<Tensor> expert_outputs_;
 };
 
 #endif

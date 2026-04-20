@@ -1,5 +1,6 @@
 #include "swa.h"
 #include "../core/model.h"
+#include "../layers/normalization/batch_norm.h"
 #include <cmath>
 
 SWAOptimizer::SWAOptimizer(Optimizer* inner, size_t start_after_steps)
@@ -53,6 +54,24 @@ void SWAOptimizer::step(Model& model) {
             }
     }
     ++step_count_;
+}
+
+void SWAOptimizer::update_bn_stats(Model& model, const std::vector<Tensor>& training_inputs) {
+    // After swap_to_averaged(), BN running stats are stale.
+    // This method runs forward passes on training data to update BN running stats.
+    // Call with model in training mode. Usage:
+    //   swa.swap_to_averaged(model);
+    //   model.set_training(true);
+    //   swa.update_bn_stats(model, training_batches);
+    //   model.set_training(false);
+    for (const Tensor& input : training_inputs) {
+        for (auto& layer : model.layers) {
+            if (auto* bn = dynamic_cast<BatchNorm1D*>(layer.get())) {
+                bn->set_training(true);
+                bn->forward(input);
+            }
+        }
+    }
 }
 
 void SWAOptimizer::swap_to_averaged(Model& model) {

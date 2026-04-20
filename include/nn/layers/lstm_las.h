@@ -55,7 +55,10 @@ class LASDecoder : public Layer {
 public:
     LASDecoder(size_t input_dim, size_t hidden_size,
                const Tensor& encoder_hidden, size_t encoder_seq_len);
-    Tensor forward(const Tensor& input) override;
+    // Overload that accepts encoder output for attention
+    Tensor forward(const Tensor& input);
+    Tensor forward(const Tensor& input, const Tensor& encoder_output);
+    const Tensor& last_output() const { return last_output_; }
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;
     void zero_grad() override;
@@ -74,6 +77,7 @@ private:
     size_t hidden_size_;
     Tensor last_output_;
     Tensor last_context_;
+    Tensor last_input_;  // cached decoder input for backward
 };
 
 class ListenAttendSpell : public Layer {

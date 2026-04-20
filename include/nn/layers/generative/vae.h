@@ -42,6 +42,12 @@ private:
     Tensor z_placeholder_; // sampled latent for reparameterization
     Tensor last_recon_;    // reconstruction output
 
+    // Cached activations for backward pass
+    Tensor last_h_;        // encoder ReLU output (enc_fc1_ output)
+    Tensor last_mu_;       // encoder mean output
+    Tensor last_logvar_;   // encoder logvar output
+    Tensor last_h_dec_;    // decoder ReLU output (dec_fc1_ output)
+
     Tensor reparameterize(const Tensor& mu, const Tensor& logvar);
 };
 

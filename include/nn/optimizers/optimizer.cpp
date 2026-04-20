@@ -48,8 +48,8 @@ void Adam::step(Model& model) {
             Tensor& v = v_vec[i];
 
             // bias-corrected moments (computed once per param tensor)
-            double b1_corr = 1.0 - std::pow(beta1, t);
-            double b2_corr = 1.0 - std::pow(beta2, t);
+            double b1_corr = (beta1 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta1, t));
+            double b2_corr = (beta2 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta2, t));
 
             // elementwise: m = beta1*m + (1-beta1)*grad; v = beta2*v + (1-beta2)*grad*grad
             for (size_t r = 0; r < param->rows; ++r) {

@@ -142,8 +142,14 @@ LASDecoder::LASDecoder(size_t input_dim, size_t hidden_size,
       last_output_(1, input_dim) {}
 
 Tensor LASDecoder::forward(const Tensor& input) {
-    // Attend
-    Tensor context = attention_.forward(input, encoder_hidden_, encoder_hidden_);
+    // Delegates to forward(input, encoder_hidden_) using stored encoder_hidden_
+    return forward(input, encoder_hidden_);
+}
+
+Tensor LASDecoder::forward(const Tensor& input, const Tensor& encoder_output) {
+    last_input_ = input;
+    // Attend over encoder output: query=input, keys=values=encoder_output
+    Tensor context = attention_.forward(input, encoder_output, encoder_output);
 
     // Concat [input; context]
     Tensor concat(1, hidden_size_ + input.cols);
@@ -209,9 +215,11 @@ ListenAttendSpell::ListenAttendSpell(size_t vocab_size, size_t embedding_dim,
 
 Tensor ListenAttendSpell::forward(const Tensor& input, const Tensor& target) {
     (void)target;
+    // Encode input sequence
     Tensor enc_out = encoder_.forward(input);
-    last_output_ = output_layer_.forward(decoder_.forward(input));
-    (void)enc_out;
+    // Decoder attends over encoder output
+    decoder_.forward(input, enc_out);
+    last_output_ = output_layer_.forward(decoder_.last_output());
     return last_output_;
 }
 
