@@ -48,6 +48,12 @@ $(BUILD_DIR)/utils/clip_grad_norm.cpp.o: include/nn/utils/clip_grad_norm.cpp | $
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 $(BUILD_DIR)/utils/focal_loss.cpp.o: include/nn/utils/focal_loss.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/tabular_ensemble.cpp.o: include/nn/utils/tabular_ensemble.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/adaboost.cpp.o: include/nn/utils/adaboost.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+$(BUILD_DIR)/utils/gradient_boosting.cpp.o: include/nn/utils/gradient_boosting.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Layers
 $(BUILD_DIR)/layers/conv_layer.cpp.o: include/nn/layers/conv_layer.cpp | $(BUILD_DIR)
@@ -131,6 +137,9 @@ LIB_OBJS = \
 	$(BUILD_DIR)/utils/serialization_roundtrip.cpp.o \
 	$(BUILD_DIR)/utils/clip_grad_norm.cpp.o \
 	$(BUILD_DIR)/utils/focal_loss.cpp.o \
+	$(BUILD_DIR)/utils/tabular_ensemble.cpp.o \
+	$(BUILD_DIR)/utils/adaboost.cpp.o \
+	$(BUILD_DIR)/utils/gradient_boosting.cpp.o
 	$(BUILD_DIR)/layers/conv_layer.cpp.o \
 	$(BUILD_DIR)/layers/pool_layer.cpp.o \
 	$(BUILD_DIR)/layers/lstm.cpp.o \

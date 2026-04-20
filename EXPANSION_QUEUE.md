@@ -5,24 +5,19 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-- **spectral_norm**: Spectral normalization for weight matrices — stabilizes GAN training. `spectral_norm_(W, n_power_iters=1)` utility
-- **pixel_shuffle**: Pixel shuffle (depth-to-space) for super-resolution upscaling. `PixelShuffle` with subpixel_conv
-- **wgan_gp**: Wasserstein GAN with gradient penalty (WGAN-GP). `WGAN_GP` loss with gradient penalty term, `discriminator_optimizer_step()`
-- **attention_pooling**: Attention-based pooling — learnable query, key, value projection + softmax similarity. `AttentionPooling` layer
+- **tabular_ensemble**: Tabular data Ensemble base — dataset loader for tabular CSV, train/test split, minmax normalization. `TabularDataset`, `TabularLoader`
+- **decision_stump**: Decision stump (1-level decision tree) as weak learner. `DecisionStump` with Gini/entropy split search
+- **adaboost**: AdaBoost — sequential boosting with sample reweighting, weighted vote. `AdaBoost` with `DecisionStump` weak learners
+- **gradient_boosting**: Generic Gradient Boosting — sequential learners fit negative gradient of loss, `GradientBoosting` with customizable loss (MSE, cross-entropy)
+- **xgboost_style**: XGBoost-style boosting — regularization term (γT + λ/2 * ||w||^2), approximate histogram binning, gradient statistics per node. `XGBoostTree`, `XGBoostClassifier`
 
 ## Done
 
-- **coordconv** ✅ — `CoordConv2D` injects x,y normalized coords as channels before conv
-- **gnn** ✅ — `GCNLayer` (normalized adjacency), `GATLayer` (multi-head attention with LeakyReLU), `GraphNetwork`
-- **squeeze_excitation** ✅ — `SEBlock` (GAP→FC→ReLU→FC→Sigmoid), `SEResNetBlock` residual with channel attention
-- **mixture_of_experts** ✅ — `MoELayer` with gating + top-k dispatch, `SparseDispatcher` with load balancing loss
-
-- **capsnet** ✅ — `CapsuleLayer` with dynamic routing, `CapsNet` encoder-decoder
-- **clip_grad_norm** ✅ — `clip_grad_norm_()` by global norm
-- **one_cycle_lr** ✅ — `OneCycleLR` warmup + cosine annealing
-- **focal_loss** ✅ — `FocalLoss` with γ focusing parameter
-- **label_smoothing** ✅ — `LabelSmoothingCrossEntropy`
-
+- **coordconv** ✅
+- **gnn** ✅
+- **squeeze_excitation** ✅
+- **mixture_of_experts** ✅
+- **capsnet** ✅, **clip_grad_norm** ✅, **one_cycle_lr** ✅, **focal_loss** ✅, **label_smoothing** ✅
 - **densenet**, **mobilenet_v2**, **serialization_roundtrip_test**, **lstm_las**, **memory_network**, **squeezenet**, **numerical_stability_tests**, **layer_timing_benchmark**, **layer_output_tracker**
 
 ## Pre-queue Done
