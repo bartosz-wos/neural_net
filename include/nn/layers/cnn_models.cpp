@@ -32,11 +32,37 @@ Tensor VGGBlock::forward(const Tensor& input) {
             // Batch norm along channels (assuming channels first layout)
             size_t C = bn_gamma_[i].rows;
             size_t S = last_output_.cols / C;
+            // Compute batch statistics
+            Tensor batch_mean(1, C), batch_var(1, C);
+            for (size_t c = 0; c < C; ++c) {
+                double m = 0.0;
+                for (size_t b = 0; b < last_output_.rows; ++b) {
+                    for (size_t s = 0; s < S; ++s)
+                        m += last_output_[b][c * S + s];
+                }
+                m /= (last_output_.rows * S);
+                batch_mean[0][c] = m;
+                double v = 0.0;
+                for (size_t b = 0; b < last_output_.rows; ++b) {
+                    for (size_t s = 0; s < S; ++s) {
+                        double d = last_output_[b][c * S + s] - m;
+                        v += d * d;
+                    }
+                }
+                v /= (last_output_.rows * S);
+                batch_var[0][c] = v;
+            }
+            // Update running stats (momentum=0.01)
+            double mom = 0.01;
+            for (size_t c = 0; c < C; ++c) {
+                running_mean_[i][c][0] = (1 - mom) * running_mean_[i][c][0] + mom * batch_mean[0][c];
+                running_var_[i][c][0] = (1 - mom) * running_var_[i][c][0] + mom * batch_var[0][c];
+            }
             Tensor normalized(last_output_.rows, last_output_.cols);
             for (size_t b = 0; b < last_output_.rows; ++b) {
                 for (size_t c = 0; c < C; ++c) {
-                    double mean = running_mean_[i][c][0];
-                    double var = running_var_[i][c][0] + 1e-5;
+                    double mean = batch_mean[0][c];
+                    double var = batch_var[0][c] + 1e-5;
                     double gamma = bn_gamma_[i][c][0];
                     double beta = bn_beta_[i][c][0];
                     for (size_t s = 0; s < S; ++s) {

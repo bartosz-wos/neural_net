@@ -3,6 +3,20 @@
 #include <random>
 #include <stdexcept>
 
+Conv2D::Conv2D()
+    : in_channels(0), out_channels(0),
+      kernel_h(1), kernel_w(1),
+      stride_h(1), stride_w(1),
+      pad_h(0), pad_w(0),
+      dilation_h(1), dilation_w(1),
+      H(0), W(0), H_out(0), W_out(0)
+{
+    weights = Tensor(0, 0);
+    bias = Tensor(0, 0);
+    grad_weights = Tensor(0, 0);
+    grad_bias = Tensor(0, 0);
+}
+
 Conv2D::Conv2D(int in_ch, int out_ch, int kH, int kW, int H_in, int W_in,
                int stride_h, int stride_w, int pad_h, int pad_w,
                int dilation_h, int dilation_w)

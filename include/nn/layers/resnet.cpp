@@ -29,16 +29,16 @@ Tensor ResBlock::forward(const Tensor& input) {
 }
 
 Tensor ResBlock::backward(const Tensor& grad_output, double learning_rate) {
-    // Gradient through residual connection
-    Tensor grad = grad_output; // same shape
-    // Gradient w.r.t. conv2 output, backprop through conv2
-    grad = conv2_.backward(grad, learning_rate);
-    // Gradient w.r.t. conv1 output (but also add from residual)
+    // Backprop through conv2, then conv1
+    Tensor grad = conv2_.backward(grad_output, learning_rate);
     grad = conv1_.backward(grad, learning_rate);
-    // Add gradient from residual connection
-    for (size_t i = 0; i < grad.rows; ++i)
-        for (size_t j = 0; j < grad.cols; ++j)
-            grad[i][j] += grad_output[i][j];
+    // Residual gradient: dL/dx += grad_output * 1 (identity = 1)
+    // Only add if shapes match (identity path was used)
+    if (grad.rows == grad_output.rows && grad.cols == grad_output.cols) {
+        for (size_t i = 0; i < grad.rows; ++i)
+            for (size_t j = 0; j < grad.cols; ++j)
+                grad[i][j] += grad_output[i][j];
+    }
     return grad;
 }
 

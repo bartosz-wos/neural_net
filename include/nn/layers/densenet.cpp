@@ -5,7 +5,7 @@ DenseBlock::DenseBlock(size_t in_channels, size_t growth_rate, size_t num_layers
     : growth_rate_(growth_rate), num_layers_(num_layers) {
 
     for (size_t i = 0; i < num_layers_; ++i) {
-        fc_layers_.emplace_back(1, growth_rate);
+        fc_layers_.emplace_back(in_channels, growth_rate_);  // Fixed: Dense(in_channels, growth_rate)
         concat_buffers_.emplace_back(1, 1);
     }
     last_output_ = Tensor(1, in_channels);
@@ -20,7 +20,12 @@ Tensor DenseBlock::forward(const Tensor& input) {
 
     size_t current_ch = in_ch;
     for (size_t l = 0; l < num_layers_; ++l) {
-        Tensor out = fc_layers_[l].forward(Tensor(1, current_ch));
+        // Extract current_ch columns as input to FC layer (all batch rows)
+        Tensor fc_input(batch, current_ch);
+        for (size_t b = 0; b < batch; ++b)
+            for (size_t j = 0; j < current_ch; ++j)
+                fc_input[b][j] = last_output_[b][j];
+        Tensor out = fc_layers_[l].forward(fc_input);
         for (size_t b = 0; b < out.rows; ++b)
             for (size_t j = 0; j < out.cols; ++j)
                 out[b][j] = std::max(0.0, out[b][j]);

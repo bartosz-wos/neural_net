@@ -120,8 +120,9 @@ void SGDNesterov::step(Model& model) {
     }
 }
 void WeightDecay::step(Model& model) {
-    if (weight_decay_ > 0) {
-        // Add L2 penalty: weight -= wd * weight  (applied before optimizer step)
+    // Only apply L2 if inner optimizer does NOT handle weight decay internally.
+    // This prevents double weight decay when wrapping AdamW.
+    if (weight_decay_ > 0 && !inner_->handles_weight_decay()) {
         for (auto& layer : model.layers) {
             for (Tensor* p : layer->parameters()) {
                 if (p->rows == 0) continue;

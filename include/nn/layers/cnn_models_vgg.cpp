@@ -23,10 +23,6 @@ Tensor VGGBlock::forward(const Tensor& x) {
 }
 
 Tensor VGGBlock::backward(const Tensor& grad_output, double lr) {
-    // Backward through pool (if VGGBlock owns one — note: vgg.cpp VGGBlock doesn't use pool)
-    // VGG11/VGG16 delegate to model_.backward(), so this is only for standalone VGGBlock usage.
-    // For the composite VGG11/VGG16, gradients flow through model_.backward() correctly.
-    // Standalone VGGBlock: backprop through convs in reverse, then ReLU.
     (void)grad_output; (void)lr;
     return Tensor(grad_output.rows, grad_output.cols);
 }
@@ -94,35 +90,86 @@ Tensor VGG16::forward(const Tensor& x) { return model_.forward(x); }
 Tensor VGG16::backward(const Tensor& grad, double lr) { return model_.backward(grad, lr); }
 
 ResNeXtBlock::ResNeXtBlock(int in_channels, int bottleneck_width, int cardinality, int stride)
-    : in_channels_(in_channels), cardinality_(cardinality), bottleneck_width_(bottleneck_width), stride_(stride) {}
+    : in_channels_(in_channels), cardinality_(cardinality), bottleneck_width_(bottleneck_width), stride_(stride) {
+    int inner_channels = bottleneck_width_ * cardinality_;
+    int out_ch = inner_channels * 2;
+    bneck_ = Conv2D(in_channels_, inner_channels, 1, 1, 1, 0);
+    gconv_ = Conv2D(inner_channels, inner_channels, 3, 1, 1, 0);
+    final_ = Conv2D(inner_channels, out_ch, 1, 1, 1, 0);
+}
 
 Tensor ResNeXtBlock::forward(const Tensor& x) {
     int inner_channels = bottleneck_width_ * cardinality_;
     int out_ch = inner_channels * 2;
 
-    Conv2D bneck(in_channels_, inner_channels, 1, 1, 1, 0);
-    Tensor out = bneck.forward(x);
+    Tensor out = bneck_.forward(x);
     for (size_t i = 0; i < out.rows; ++i)
         for (size_t j = 0; j < out.cols; ++j)
             out[i][j] = std::max(0.0, out[i][j]);
 
-    Conv2D gconv(inner_channels, inner_channels, 3, 1, 1, 0);
-    out = gconv.forward(out);
+    out = gconv_.forward(out);
     for (size_t i = 0; i < out.rows; ++i)
         for (size_t j = 0; j < out.cols; ++j)
             out[i][j] = std::max(0.0, out[i][j]);
 
-    Conv2D final(in_channels_, out_ch, 1, 1, 1, 0);
-    out = final.forward(out);
+    out = final_.forward(out);
 
     if (stride_ == 1 && in_channels_ == out_ch) {
-        out = out + x;
+        for (size_t i = 0; i < out.rows; ++i)
+            for (size_t j = 0; j < out.cols; ++j)
+                out[i][j] += x[i][j];
     }
     return out;
 }
 
-Tensor ResNeXtBlock::backward(const Tensor& grad_output, double) {
-    return grad_output;
+Tensor ResNeXtBlock::backward(const Tensor& grad_output, double lr) {
+    Tensor grad = grad_output;
+    grad = final_.backward(grad, lr);
+    // ReLU backward on gconv output
+    for (size_t i = 0; i < grad.rows; ++i)
+        for (size_t j = 0; j < grad.cols; ++j)
+            grad[i][j] = grad[i][j] > 0 ? grad[i][j] : 0.0;
+    grad = gconv_.backward(grad, lr);
+    // ReLU backward on bneck output
+    for (size_t i = 0; i < grad.rows; ++i)
+        for (size_t j = 0; j < grad.cols; ++j)
+            grad[i][j] = grad[i][j] > 0 ? grad[i][j] : 0.0;
+    grad = bneck_.backward(grad, lr);
+    // Residual gradient: identity contribution
+    if (stride_ == 1 && in_channels_ == grad_output.cols / (bneck_.get_weights().rows)) {
+        for (size_t i = 0; i < grad.rows; ++i)
+            for (size_t j = 0; j < grad.cols; ++j)
+                grad[i][j] += grad_output[i][j];
+    }
+    return grad;
+}
+
+void ResNeXtBlock::update_weights(double lr) {
+    bneck_.update_weights(lr);
+    gconv_.update_weights(lr);
+    final_.update_weights(lr);
+}
+
+void ResNeXtBlock::zero_grad() {
+    bneck_.zero_grad();
+    gconv_.zero_grad();
+    final_.zero_grad();
+}
+
+std::vector<Tensor*> ResNeXtBlock::parameters() {
+    std::vector<Tensor*> r;
+    for (Tensor* p : bneck_.parameters()) r.push_back(p);
+    for (Tensor* p : gconv_.parameters()) r.push_back(p);
+    for (Tensor* p : final_.parameters()) r.push_back(p);
+    return r;
+}
+
+std::vector<Tensor*> ResNeXtBlock::gradients() {
+    std::vector<Tensor*> r;
+    for (Tensor* g : bneck_.gradients()) r.push_back(g);
+    for (Tensor* g : gconv_.gradients()) r.push_back(g);
+    for (Tensor* g : final_.gradients()) r.push_back(g);
+    return r;
 }
 
 ResNeXt29::ResNeXt29(int num_classes, int in_channels, int cardinality, int bottleneck_width) {

@@ -11,6 +11,9 @@ class Optimizer {
 public:
     virtual ~Optimizer() = default;
     virtual void step(Model& model) = 0;
+    // Returns true if this optimizer already applies weight decay internally.
+    // Used by WeightDecay wrapper to avoid double weight decay.
+    virtual bool handles_weight_decay() const { return false; }
     // Clip all gradients to max_norm (L2 norm). Returns the total gradient norm before clipping.
     static double clip_grad_norm_(Model& model, double max_norm);
 };

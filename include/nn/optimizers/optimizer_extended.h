@@ -23,6 +23,7 @@ public:
           double eps = 1e-7, double wd = 0.01)
         : lr(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(0) {}
     void step(Model& model) override;
+    bool handles_weight_decay() const override { return true; }
 private:
     std::map<void*, std::vector<Tensor>> m_state;
     std::map<void*, std::vector<Tensor>> v_state;

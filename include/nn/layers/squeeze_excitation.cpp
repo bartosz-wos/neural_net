@@ -36,7 +36,7 @@ Tensor SEBlock::forward(const Tensor& input) {
             z[i][j] = 1.0 / (1.0 + std::exp(-z[i][j])); // sigmoid
 
     last_excitation_ = z; // (batch, channels)
-    return last_excitation_;
+    return scale_channels(input, z);  // apply SE attention to input channels
 }
 
 Tensor SEBlock::backward(const Tensor& grad_output, double learning_rate) {

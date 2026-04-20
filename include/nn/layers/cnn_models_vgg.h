@@ -24,7 +24,7 @@ public:
     std::string name() const override { return "VGGBlock"; }
 
 private:
-    std::vector<Conv2D> convs_;
+    std::vector<Conv2D> convs_;  // stored for training
     int num_convs_;
 };
 
@@ -77,21 +77,20 @@ public:
 
     Tensor forward(const Tensor& x) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double) override {}
+    void update_weights(double learning_rate) override;
     Tensor get_weights() const override { return Tensor(0, 0); }
     Tensor get_gradients() const override { return Tensor(0, 0); }
-    std::vector<Tensor*> parameters() override { return {}; }
-    std::vector<Tensor*> gradients() override { return {}; }
-    void zero_grad() override {}
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    void zero_grad() override;
     std::string name() const override { return "ResNeXtBlock"; }
 
 private:
+    Conv2D bneck_, gconv_, final_;  // stored members (not temporaries)
     int in_channels_;
-    int out_channels_;
     int cardinality_;
     int bottleneck_width_;
     int stride_;
-    std::vector<Conv2D> group_convs_;
 };
 
 class ResNeXt29 : public Layer {

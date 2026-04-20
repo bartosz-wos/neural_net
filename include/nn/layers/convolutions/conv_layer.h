@@ -22,6 +22,7 @@ public:
     Tensor last_input; // stored as (N, in_channels*H*W)
     Tensor col;        // im2col matrix: (in_channels*kernel_h*kernel_w, N*H_out*W_out)
 
+    Conv2D();  // default constructor (for use as class member)
     Conv2D(int in_ch, int out_ch, int kH, int kW, int H_in, int W_in,
            int stride_h = 1, int stride_w = 1, int pad_h = 0, int pad_w = 0,
            int dilation_h = 1, int dilation_w = 1);
