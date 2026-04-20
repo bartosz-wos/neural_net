@@ -207,13 +207,10 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
             for (int h = 0; h < hidden_size; ++h)
                 d_tanh_c[i][h] = 1.0 - tanh_c[i][h] * tanh_c[i][h];
 
-        // Gradient from next hidden and output
-        // dL/dh_t from grad_h plus potential output grad? Here grad_h is upstream.
-        // dL/dc_t: comes from h_t and from next cell (c_{t+1}). For now we compute contribution to c_t from h_t only.
-        Tensor grad_c(N, hidden_size); // dL/dc_t (partial via h_t and later c_{t+1})
-        for (int i = 0; i < N; ++i)
-            for (int h = 0; h < hidden_size; ++h)
-                grad_c[i][h] = 0.0; // will be accumulated below
+        // dL/dc_t: comes from h_t (via o_t * tanh) and from next cell (c_{t+1} via forget gate).
+        // We accumulate it here; the contribution from the next cell's forget gate is added
+        // at the end of this BPTT step when we propagate grad_c backward.
+        Tensor grad_c(N, hidden_size);
 
         // First, compute grad from h_t: dL/dh_t = grad_h (already)
         // dL/do_t = dL/dh_t * tanh(c_t)
