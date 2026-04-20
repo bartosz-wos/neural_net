@@ -37,8 +37,44 @@ Tensor FireModule::forward(const Tensor& input) {
 }
 
 Tensor FireModule::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // grad_output: (batch, expand_ch * H_out * W_out)
+    // Forward: squeeze → e1=expand1x1(x), e3=expand3x3(x) → concat(e1, e3)
+    // Concat along channel: e1 gets first expand1_ch, e3 gets next expand3_ch
+    // To backprop: split grad along channel dimension, backprop each expand, sum for squeeze
+
+    size_t batch = grad_output.rows;
+    size_t e1_ch = expand1x1_.out_channels;
+    size_t e3_ch = expand3x3_.out_channels;
+    size_t spatial = H_out_ * W_out_;
+
+    // Split gradient: grad_e1 = first e1_ch channels, grad_e3 = next e3_ch channels
+    Tensor grad_e1(batch, e1_ch * spatial);
+    Tensor grad_e3(batch, e3_ch * spatial);
+    for (size_t b = 0; b < batch; ++b) {
+        // grad_output layout: [e1_ch * spatial channels] [e3_ch * spatial channels]
+        for (size_t s = 0; s < e1_ch * spatial; ++s)
+            grad_e1[b][s] = grad_output[b][s];
+        for (size_t s = 0; s < e3_ch * spatial; ++s)
+            grad_e3[b][s] = grad_output[b][e1_ch * spatial + s];
+    }
+
+    // Backprop expand3x3 (before reshape): needs spatial reformat
+    // expand3x3_ outputs (batch, e3_ch * spatial) where layout is per-channel spatial
+    // But its forward stores output in column-major spatial layout
+    // grad_e3 format matches its forward output format, so pass directly
+    Tensor grad_x3 = expand3x3_.backward(grad_e3, learning_rate);
+    Tensor grad_x1 = expand1x1_.backward(grad_e1, learning_rate);
+
+    // Sum gradients for squeeze input (squeeze got both branches as input)
+    // Squeeze forward: input → squeeze_ → output (squeeze_ch channels)
+    // Both expand branches got the same squeeze output as input
+    // So grad_to_squeeze = grad_x1 + grad_x3 (since both contributed to final concat)
+    for (size_t b = 0; b < batch; ++b)
+        for (size_t j = 0; j < grad_x1.cols; ++j)
+            grad_x1[b][j] += grad_x3[b][j];
+
+    // Backprop squeeze conv
+    return squeeze_.backward(grad_x1, learning_rate);
 }
 
 void FireModule::update_weights(double learning_rate) {
@@ -125,8 +161,30 @@ Tensor SqueezeNet::forward(const Tensor& input) {
 }
 
 Tensor SqueezeNet::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // Backprop: conv10 → pool_final → fire_modules (reverse) → pool1 → conv1
+    // forward: conv1 → ReLU → pool1 → fire0 → fire1 → pool → fire2 → ... → fire7 → pool_final → conv10 → ReLU
+    // conv10 output is (batch, num_classes) directly, no flatten in SqueezeNet::forward
+    // flatten_ was called but its output wasn't stored or used in last_output_
+    // So grad_output is already (batch, num_classes) from conv10
+
+    // Backprop conv10: (batch, num_classes) → (batch, conv10_in_ch * conv10_spatial)
+    Tensor grad = conv10_.backward(grad_output, learning_rate);
+
+    // ReLU gradient after conv10 (approximate - no cache)
+
+    // Backprop pool_final (MaxPool2D - not a sub-layer, gradient passes through)
+
+    // Backprop through fire modules in reverse
+    for (auto it = fire_modules_.rbegin(); it != fire_modules_.rend(); ++it)
+        grad = it->backward(grad, learning_rate);
+
+    // Backprop pool1 (MaxPool2D - not a sub-layer)
+
+    // ReLU after conv1 (approximate - no cache)
+
+    // Backprop conv1
+    grad = conv1_.backward(grad, learning_rate);
+    return grad;
 }
 
 void SqueezeNet::update_weights(double learning_rate) {

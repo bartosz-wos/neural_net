@@ -33,6 +33,10 @@ Tensor GCNLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
         for (size_t j = 0; j < N; ++j)
             adj_norm[i][j] = d[i][0] * adj[i][j] * d[j][0];
 
+    adj_norm_ = adj_norm; // store for backward
+
+    // AXW: (N,N) @ (N, in_features) @ (in_features, out_features)
+
     // AXW: (N,N) @ (N, in_features) @ (in_features, out_features)
     // Step 1: AX = adj_norm @ input
     Tensor AX(N, input.cols);
@@ -65,8 +69,47 @@ Tensor GCNLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
 }
 
 Tensor GCNLayer::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // grad_output: (num_nodes, out_features)
+    // Forward: input → AX = adj_norm @ input → AW = AX @ W → ReLU → output
+    // Backprop: dL/dAW (ReLU) → dL/dAX = dL/dAW @ W^T → dL/dinput = adj_norm^T @ dL/dAX
+    // ReLU gradient: elementwise multiply by relu_mask (AW > 0)
+    size_t N = grad_output.rows;
+    const Tensor& W = W_.get_weights();
+
+    // Apply ReLU mask to grad_output to get grad w.r.t. AW
+    // relu_mask_[i][j] = 1 if last_AW_[i][j] > 0, else 0
+    Tensor grad_AW(N, W.cols);
+    for (size_t i = 0; i < N; ++i)
+        for (size_t j = 0; j < (size_t)W.cols; ++j)
+            grad_AW[i][j] = (i < relu_mask_.size() && j < relu_mask_[i].size() && relu_mask_[i][j])
+                            ? grad_output[i][j] : 0.0;
+
+    // dL/dAX = grad_AW @ W^T
+    Tensor grad_AX(N, W.rows);
+    for (size_t i = 0; i < N; ++i)
+        for (size_t j = 0; j < W.rows; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < W.cols; ++k)
+                sum += grad_AW[i][k] * W[j][k];
+            grad_AX[i][j] = sum;
+        }
+
+    // dL/dinput = adj_norm^T @ grad_AX
+    Tensor grad_input(N, W.rows);
+    for (size_t i = 0; i < N; ++i)
+        for (size_t j = 0; j < W.rows; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < N; ++k)
+                sum += adj_norm_[k][i] * grad_AX[k][j];
+            grad_input[i][j] = sum;
+        }
+
+    // Update W via Dense's backward on the projected input
+    // W_.backward expects grad_wrt_output (grad_AW) and computes grad_wrt_input = grad_AW @ W^T
+    // Then updates W using last_input_ (which was the AX input)
+    W_.backward(grad_AW, learning_rate);
+
+    return grad_input;
 }
 
 void GCNLayer::update_weights(double learning_rate) {

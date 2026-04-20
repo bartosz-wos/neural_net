@@ -24,8 +24,8 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
-    Conv2D conv_;
     size_t in_channels_, H_in_, W_in_;
+    Conv2D conv_;
     Tensor x_coord_, y_coord_; // precomputed coordinate maps
     Tensor last_output_;
 };

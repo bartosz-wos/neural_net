@@ -49,8 +49,24 @@ Tensor CoordConv2D::forward(const Tensor& input) {
 }
 
 Tensor CoordConv2D::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // Backprop through Conv2D
+    Tensor grad_aug = conv_.backward(grad_output, learning_rate);
+
+    size_t batch = grad_aug.rows;
+    size_t spatial = H_in_ * W_in_;
+
+    // Remove the 2 coordinate channels to get grad_input
+    Tensor grad_input(batch, in_channels_ * spatial);
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t s = 0; s < spatial; ++s) {
+            size_t out_off = s * (in_channels_ + 2) + 2; // skip x,y coord channels
+            size_t in_off = s * in_channels_;
+            for (size_t c = 0; c < in_channels_; ++c)
+                grad_input[b][in_off + c] = grad_aug[b][out_off + c];
+        }
+    }
+    (void)learning_rate;
+    return grad_input;
 }
 
 void CoordConv2D::update_weights(double learning_rate) {

@@ -208,8 +208,19 @@ Tensor DenseNet::forward(const Tensor& input) {
 }
 
 Tensor DenseNet::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // Backprop through fc, then transitions and blocks in reverse
+    Tensor grad = fc_.backward(grad_output, learning_rate);
+
+    // Backprop through transition layers and dense blocks in reverse
+    for (size_t b = blocks_.size(); b > 0; --b) {
+        if (b - 1 < transitions_.size())
+            grad = transitions_[b - 1].backward(grad, learning_rate);
+        grad = blocks_[b - 1].backward(grad, learning_rate);
+    }
+
+    // Backprop through stem
+    grad = stem_.backward(grad, learning_rate);
+    return grad;
 }
 
 void DenseNet::update_weights(double learning_rate) {
