@@ -2,12 +2,39 @@
 #include <cmath>
 #include <algorithm>
 
+// === EmbeddingNormalizer ===
+
+Tensor EmbeddingNormalizer::forward(const Tensor& x) {
+    int batch = (int)x.rows;
+    int dim = (int)x.cols;
+    Tensor out(batch, dim);
+
+    for (int b = 0; b < batch; b++) {
+        double norm = 0.0;
+        for (int i = 0; i < dim; i++) {
+            norm += x[b][i] * x[b][i];
+        }
+        norm = std::sqrt(norm);
+        if (norm < 1e-8) norm = 1.0;
+        for (int i = 0; i < dim; i++) {
+            out[b][i] = x[b][i] / norm;
+        }
+    }
+    return out;
+}
+
+Tensor EmbeddingNormalizer::backward(const Tensor& grad_output, double) {
+    return grad_output;
+}
+
+// === SiameseNetwork ===
+
 Tensor SiameseNetwork::forward(const Tensor& x) {
     if (base_network_ == nullptr) return x;
     return base_network_->forward(x);
 }
 
-Tensor SiameseNetwork::backward(const Tensor& grad_output, double /* learning_rate */) {
+Tensor SiameseNetwork::backward(const Tensor& grad_output, double) {
     return grad_output;
 }
 
@@ -22,16 +49,41 @@ std::pair<Tensor, Tensor> SiameseNetwork::forward_pair(const Tensor& x1, const T
     return {e1, e2};
 }
 
+// === TripletLoss ===
+
+Tensor TripletLoss::normalize_embeddings(const Tensor& embeddings) const {
+    int batch = (int)embeddings.rows;
+    int dim = (int)embeddings.cols;
+    Tensor out(batch, dim);
+
+    for (int b = 0; b < batch; b++) {
+        double norm = 0.0;
+        for (int i = 0; i < dim; i++) {
+            norm += embeddings[b][i] * embeddings[b][i];
+        }
+        norm = std::sqrt(norm);
+        if (norm < 1e-8) norm = 1.0;
+        for (int i = 0; i < dim; i++) {
+            out[b][i] = embeddings[b][i] / norm;
+        }
+    }
+    return out;
+}
+
 float TripletLoss::forward(const Tensor& anchor, const Tensor& positive, const Tensor& negative) {
     int batch = (int)anchor.rows;
     int embedding_dim = (int)anchor.cols;
+
+    Tensor a = normalize_ ? normalize_embeddings(anchor) : anchor;
+    Tensor p = normalize_ ? normalize_embeddings(positive) : positive;
+    Tensor n = normalize_ ? normalize_embeddings(negative) : negative;
 
     float total_loss = 0.0f;
     for (int b = 0; b < batch; b++) {
         float d_ap = 0.0f, d_an = 0.0f;
         for (int i = 0; i < embedding_dim; i++) {
-            float diff_p = anchor[b][i] - positive[b][i];
-            float diff_n = anchor[b][i] - negative[b][i];
+            float diff_p = a[b][i] - p[b][i];
+            float diff_n = a[b][i] - n[b][i];
             d_ap += diff_p * diff_p;
             d_an += diff_n * diff_n;
         }
@@ -42,11 +94,31 @@ float TripletLoss::forward(const Tensor& anchor, const Tensor& positive, const T
     return total_loss / batch;
 }
 
+// === ContrastiveLoss ===
+
+Tensor ContrastiveLoss::normalize_embeddings(const Tensor& embeddings) const {
+    int batch = (int)embeddings.rows;
+    int dim = (int)embeddings.cols;
+    Tensor out(batch, dim);
+
+    for (int b = 0; b < batch; b++) {
+        double norm = 0.0;
+        for (int i = 0; i < dim; i++) {
+            norm += embeddings[b][i] * embeddings[b][i];
+        }
+        norm = std::sqrt(norm);
+        if (norm < 1e-8) norm = 1.0;
+        for (int i = 0; i < dim; i++) {
+            out[b][i] = embeddings[b][i] / norm;
+        }
+    }
+    return out;
+}
+
 float ContrastiveLoss::euclidean_distance(const Tensor& a, const Tensor& b) {
-    int batch = (int)a.rows;
-    int emb_dim = (int)a.cols;
+    int dim = (int)a.cols;
     float dist = 0.0f;
-    for (int i = 0; i < emb_dim; i++) {
+    for (int i = 0; i < dim; i++) {
         float diff = a[0][i] - b[0][i];
         dist += diff * diff;
     }
@@ -54,13 +126,17 @@ float ContrastiveLoss::euclidean_distance(const Tensor& a, const Tensor& b) {
 }
 
 float ContrastiveLoss::forward(const Tensor& emb1, const Tensor& emb2, float label) {
-    float d = euclidean_distance(emb1, emb2);
+    Tensor e1 = normalize_ ? normalize_embeddings(emb1) : emb1;
+    Tensor e2 = normalize_ ? normalize_embeddings(emb2) : emb2;
+    float d = euclidean_distance(e1, e2);
     if (label > 0.5f) {
         return d * d;
     } else {
         return std::max(0.0f, margin_ - d) * std::max(0.0f, margin_ - d);
     }
 }
+
+// === HardTripletMiner ===
 
 TripletBatch HardTripletMiner::mine(const std::vector<Tensor>& embeddings,
                                      const std::vector<int>& labels) {
@@ -70,7 +146,6 @@ TripletBatch HardTripletMiner::mine(const std::vector<Tensor>& embeddings,
 
     std::vector<float> dists(n * n, 0.0f);
 
-    // Compute all pairwise distances (each embedding is one row)
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
             float d = 0.0f;
@@ -82,9 +157,7 @@ TripletBatch HardTripletMiner::mine(const std::vector<Tensor>& embeddings,
         }
     }
 
-    // For each anchor, find hardest positive and hardest negative
     for (int a = 0; a < n; a++) {
-        // Find hardest positive (same label, furthest distance)
         float max_d_pos = -1.0f;
         int hardest_pos = -1;
         for (int p = 0; p < n; p++) {
@@ -96,7 +169,6 @@ TripletBatch HardTripletMiner::mine(const std::vector<Tensor>& embeddings,
             }
         }
 
-        // Find hardest negative (different label, closest distance)
         float min_d_neg = 1e9f;
         int hardest_neg = -1;
         for (int neg = 0; neg < n; neg++) {
