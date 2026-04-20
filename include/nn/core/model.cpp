@@ -328,7 +328,6 @@ void Model::summary() const {
             name = "SimpleRNN";
         } else if (dynamic_cast<SkipConnection*>(layer.get())) {
             name = "SkipConnection";
-            name = "Conv1D";
         } else if (dynamic_cast<MaxPool2D*>(layer.get())) {
             name = "MaxPool2D";
         } else if (dynamic_cast<Flatten*>(layer.get())) {

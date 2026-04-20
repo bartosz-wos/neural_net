@@ -62,11 +62,8 @@ Tensor Dense::backward(const Tensor& grad_output, double /* learning_rate */) {
     // Compute gradient w.r.t. weights: grad_output^T * input  -> (out, in)
     Tensor grad_w = grad_output.transpose() * last_input;  // (out, batch) * (batch, in) = (out, in)
 
-    // Accumulate gradients
-    grad_weights = grad_weights + grad_w;
-
     // Compute gradient w.r.t. bias: sum over batch
-    Tensor grad_b = Tensor(1, grad_output.cols);
+    Tensor grad_b(1, grad_output.cols);
     for (size_t j = 0; j < grad_output.cols; ++j) {
         double sum = 0.0;
         for (size_t i = 0; i < grad_output.rows; ++i) {
@@ -74,7 +71,10 @@ Tensor Dense::backward(const Tensor& grad_output, double /* learning_rate */) {
         }
         grad_b[0][j] = sum;
     }
-    grad_bias = grad_bias + grad_b;
+
+    // Accumulate gradients (+= for correct accumulation over multiple backward passes)
+    grad_weights += grad_w;
+    grad_bias += grad_b;
 
     // Compute gradient w.r.t. input for next layer: grad_output * weights
     Tensor grad_input = grad_output * weights;

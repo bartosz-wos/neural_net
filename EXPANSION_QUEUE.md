@@ -5,6 +5,9 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
+- `code_review_3` — Third pass: remaining utils, remaining layers, demos — inspect for correctness, fix any bugs found
+- `code_review_2` — Second pass: optimizers, schedulers, recurrent layers (lstm, rnn, gru, bidirectional), attention-adjacent layers — inspect for correctness, fix any bugs found
+- `code_review_1` — First pass: core (tensor, layer, model), activations, normalizations (batch_norm, weight_norm, group_norm), convolutions — inspect for correctness, fix any bugs found
 - `group_norm` — GroupNorm (divide channels into groups, normalize within group)
 - `mixup_cutmix` — MixUp and CutMix data augmentation
 - `unet` — U-Net (encoder-decoder with skip connections for segmentation)

@@ -37,6 +37,22 @@ Tensor Tensor::operator-(const Tensor& other) const {
     return res;
 }
 
+Tensor& Tensor::operator+=(const Tensor& other) {
+    if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
+    for (size_t i = 0; i < rows; ++i)
+        for (size_t j = 0; j < cols; ++j)
+            data[i][j] += other.data[i][j];
+    return *this;
+}
+
+Tensor& Tensor::operator-=(const Tensor& other) {
+    if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Tensor dimensions mismatch");
+    for (size_t i = 0; i < rows; ++i)
+        for (size_t j = 0; j < cols; ++j)
+            data[i][j] -= other.data[i][j];
+    return *this;
+}
+
 Tensor Tensor::operator*(const Tensor& other) const {
     if (cols != other.rows) throw std::invalid_argument("Tensor multiplication dimension mismatch");
     Tensor res(rows, other.cols);

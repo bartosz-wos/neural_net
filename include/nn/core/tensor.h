@@ -17,7 +17,9 @@ public:
     static Tensor zeros(size_t r, size_t c);
     static Tensor random(size_t r, size_t c, double scale);
     Tensor operator+(const Tensor& other) const;
+    Tensor& operator+=(const Tensor& other);
     Tensor operator-(const Tensor& other) const;
+    Tensor& operator-=(const Tensor& other);
     Tensor operator*(const Tensor& other) const;
     Tensor operator*(double scalar) const;
     Tensor transpose() const;
