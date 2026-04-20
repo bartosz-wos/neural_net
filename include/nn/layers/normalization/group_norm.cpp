@@ -70,11 +70,82 @@ Tensor GroupNorm::backward(const Tensor& grad_output, double /* learning_rate */
     grad_gamma_.fill(0.0);
     grad_beta_.fill(0.0);
 
-    // Simplified gradient: pass through
     Tensor grad_x(grad_output.rows, grad_output.cols);
-    for (int n = 0; n < batch; n++)
-        for (int f = 0; f < features; f++)
-            grad_x[n][f] = grad_output[n][f];
+    grad_x.fill(0.0);
+
+    for (int n = 0; n < batch; n++) {
+        for (int g = 0; g < num_groups_; g++) {
+            int channels_per_group = num_channels_ / num_groups_;
+            int channel_start = g * channels_per_group;
+            int channel_end = channel_start + channels_per_group;
+            int count = channels_per_group * last_spatial_;
+
+            // Recompute mean and variance from cached input
+            float mean = 0.0f;
+            for (int c = channel_start; c < channel_end; c++) {
+                for (int s = 0; s < last_spatial_; s++) {
+                    mean += last_x_[n][c * last_spatial_ + s];
+                }
+            }
+            mean /= count;
+
+            float var = 0.0f;
+            for (int c = channel_start; c < channel_end; c++) {
+                for (int s = 0; s < last_spatial_; s++) {
+                    float diff = last_x_[n][c * last_spatial_ + s] - mean;
+                    var += diff * diff;
+                }
+            }
+            var /= count;
+
+            float sqrt_var = std::sqrt(var + eps_);
+            float inv_var = 1.0f / sqrt_var;
+            float inv_var3 = inv_var * inv_var * inv_var;  // for dL/dvar chain
+
+            // dL/dgamma and dL/dbeta (accumulate across spatial)
+            for (int c = channel_start; c < channel_end; c++) {
+                for (int s = 0; s < last_spatial_; s++) {
+                    int idx = c * last_spatial_ + s;
+                    float x_norm = (last_x_[n][idx] - mean) * inv_var;
+                    grad_gamma_[0][c] += grad_output[n][idx] * x_norm;
+                    grad_beta_[0][c]  += grad_output[n][idx];
+                }
+            }
+
+            // Compute dL/dvar and dL/dmean for the group
+            // dL/dvar = sum( dL/dy * gamma * (x - mean) * (-0.5) * inv_var^3 )
+            // dL/dmean = sum( dL/dy * gamma * (-inv_var) ) + dL/dvar * (-2) * sum(x - mean) / count
+            //           = sum( dL/dy * gamma * (-inv_var) )  (second term = 0 since sum(x-mean)=0)
+            float dL_dvar = 0.0f;
+            float dL_dmean = 0.0f;
+            for (int c = channel_start; c < channel_end; c++) {
+                for (int s = 0; s < last_spatial_; s++) {
+                    int idx = c * last_spatial_ + s;
+                    float diff = last_x_[n][idx] - mean;
+                    float grad_y = grad_output[n][idx] * gamma_[0][c];
+                    dL_dvar  += grad_y * diff * (-0.5f) * inv_var3;
+                    dL_dmean += grad_y * (-inv_var);
+                }
+            }
+
+            // dL/dx for each element:
+            // dx_norm = grad_y * inv_var
+            // dx_var  = dL_dvar * 2 * diff / count
+            // dx_mean = dL_dmean / count
+            // dx = dx_norm + dx_var + dx_mean
+            for (int c = channel_start; c < channel_end; c++) {
+                for (int s = 0; s < last_spatial_; s++) {
+                    int idx = c * last_spatial_ + s;
+                    float diff = last_x_[n][idx] - mean;
+                    float grad_y = grad_output[n][idx] * gamma_[0][c];
+                    float dx_norm = grad_y * inv_var;
+                    float dx_var  = dL_dvar * 2.0f * diff / static_cast<float>(count);
+                    float dx_mean = dL_dmean / static_cast<float>(count);
+                    grad_x[n][idx] = dx_norm + dx_var + dx_mean;
+                }
+            }
+        }
+    }
 
     return grad_x;
 }

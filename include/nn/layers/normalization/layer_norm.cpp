@@ -82,7 +82,8 @@ Tensor LayerNorm::backward(const Tensor& grad_output, double /* learning_rate */
         for (size_t f = 0; f < features; ++f) {
             dMu -= dNorm[0][f] * inv_var;
         }
-        dMu += dVar * -2.0 * last_mean[0][b] / features;
+        // NOTE: the sum(x - mean) term vanishes (equals 0 by definition of mean),
+        // so no correction needed here. The old code incorrectly used last_mean[0][b].
 
         for (size_t f = 0; f < features; ++f) {
             double dx_norm = dNorm[0][f] * inv_var;

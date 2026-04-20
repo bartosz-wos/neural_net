@@ -28,7 +28,7 @@ double Softmax::cross_entropy_loss(const Tensor& logits, const Tensor& labels) {
     for (size_t i = 0; i < probs.rows; ++i) {
         for (size_t j = 0; j < probs.cols; ++j) {
             if (labels[i][j] > 0) {
-                loss -= std::log(probs[i][j] + 1e-15);
+                loss -= std::log(probs[i][j] + 1e-12);
                 break; // one-hot, so break after the 1
             }
         }
@@ -129,8 +129,11 @@ Tensor GELU::operator()(const Tensor& t) const {
 }
 
 double GELU::derivative(double x) const {
-    double cdf = 0.5 * (1.0 + std::tanh(GELU_A * (x + 0.044715 * x * x * x)));
-    double pdf = 0.5 * GELU_A * (1.0 - std::tanh(GELU_A * (x + 0.044715 * x * x * x)) * std::tanh(GELU_A * (x + 0.044715 * x * x * x))) * (1.0 + 3.0 * 0.044715 * x * x);
+    double arg = GELU_A * (x + 0.044715 * x * x * x);
+    double tanh_val = std::tanh(arg);
+    double tanh_sq = tanh_val * tanh_val;  // sech²(arg) = 1 - tanh²
+    double cdf = 0.5 * (1.0 + tanh_val);
+    double pdf = 0.5 * GELU_A * (1.0 - tanh_sq) * (1.0 + 3.0 * 0.044715 * x * x);
     return cdf + x * pdf;
 }
 
