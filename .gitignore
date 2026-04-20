@@ -1,0 +1,8 @@
+build/
+*.o
+*.nn
+*.pdf
+*.log
+*.aux
+*.out
+*.synctex.gz
