@@ -33,8 +33,8 @@
 // Layers — convolutional
 #include "layers/convolutions/conv_layer.h"
 #include "layers/pooling/pool_layer.h"
-#include "layers/conv1d.h"
-#include "layers/coordconv.h"
+#include "layers/utility/conv1d.h"
+#include "layers/utility/coordconv.h"
 
 // Layers — recurrent
 #include "layers/recurrent/lstm.h"
@@ -56,26 +56,31 @@
 #include "layers/attention/transformer.h"
 #include "layers/attention/layer_output_tracker.h"
 
-// Layers — composite (architecture blocks)
-#include "layers/skip_connection.h"
-#include "layers/multi_output_model.h"
-#include "layers/resnet.h"
-#include "layers/densenet.h"
-#include "layers/mobilenet_v2.h"
-#include "layers/squeezenet.h"
-#include "layers/memory_network.h"
-#include "layers/squeeze_excitation.h"
-#include "layers/seq2seq_attention.h"
-#include "layers/mixture_of_experts.h"
-#include "layers/lstm_las.h"
+// Layers — architectures (full model definitions)
+#include "layers/architectures/resnet.h"
+#include "layers/architectures/unet.h"
+#include "layers/architectures/squeezenet.h"
+#include "layers/architectures/densenet.h"
+#include "layers/architectures/mobilenet_v2.h"
+#include "layers/architectures/memory_network.h"
+#include "layers/architectures/mixture_of_experts.h"
+#include "layers/architectures/multi_output_model.h"
+#include "layers/architectures/lstm_las.h"
+#include "layers/architectures/seq2seq_attention.h"
+#include "layers/architectures/cnn_models.h"
+#include "layers/architectures/cnn_models_vgg.h"
+
+// Layers — utility
+#include "layers/utility/skip_connection.h"
+#include "layers/utility/squeeze_excitation.h"
+#include "layers/utility/dataloader.h"
+#include "layers/utility/weight_init.h"
 
 // Layers — generative
 #include "layers/generative/vae.h"
 #include "layers/generative/capsnet.h"
 
 // Layers — graph
-#include "layers/gnn.h"
-#include "layers/unet.h"
-#include "layers/cnn_models_vgg.h"
+#include "layers/architectures/gnn.h"
 
 #endif

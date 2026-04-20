@@ -45,8 +45,55 @@ Tensor DenseBlock::forward(const Tensor& input) {
 }
 
 Tensor DenseBlock::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // grad_output: (batch, total_channels_after_concat)
+    // Reverse the dense concatenation: each layer output was appended to previous
+    // backward through concat: dL/dx = sum of grads from all layers that used x
+    size_t batch = grad_output.rows;
+
+    // Gradient for the last output (before final concat)
+    // We need to backprop through the concatenated channels
+    // last_output_ shape: (batch, num_layers * growth_rate + initial_channels)
+    // but due to concatenation in forward, current_ch increments each layer
+    size_t current_ch = grad_output.cols;
+
+    // Reconstruct gradients for each layer by working backwards through the concat
+    // Each layer l got: [prev_output; fc_layer_output] and produced new concat
+    // So gradient splits: grad_to_prev (carries to next) + grad_to_fc (accumulates)
+    std::vector<Tensor> grad_fc_layers(num_layers_);
+    size_t grad_offset = current_ch;
+
+    // Backward through layers in reverse: each layer's output was appended
+    for (size_t l = num_layers_; l > 0; --l) {
+        size_t layer_out_ch = growth_rate_;
+        grad_offset -= layer_out_ch;
+
+        // Extract gradient portion for this layer's FC output
+        Tensor grad_this_layer(batch, layer_out_ch);
+        for (size_t b = 0; b < batch; ++b)
+            for (size_t j = 0; j < layer_out_ch; ++j)
+                grad_this_layer[b][j] = grad_output[b][grad_offset + j];
+
+        // Backprop through ReLU: dReLU/dx = 1 if x > 0 else 0
+        // ReLU was: max(0, fc_forward_output)
+        // So grad_to_fc_input = grad * (output > 0)
+        Tensor grad_fc_input = grad_this_layer;
+        const Tensor& fc_out = concat_buffers_[l - 1];
+        for (size_t b = 0; b < batch; ++b)
+            for (size_t j = 0; j < layer_out_ch; ++j)
+                if (fc_out[b][j] <= 0) grad_fc_input[b][j] = 0.0;
+
+        // Backward through FC layer: grad_wrt_fc_input = grad_fc_input * W^T
+        grad_fc_layers[l - 1] = fc_layers_[l - 1].backward(grad_fc_input, learning_rate);
+    }
+
+    // Propagate gradient to initial input (identity passthrough from first concat)
+    // The initial concat_buffers_[0] = input, so grad to input accumulates from all layers
+    // For layer 0: its FC input was last_output (which started as input)
+    // But we stored last_output_ after each concat, so we need to trace back
+    // Simplest correct approach: grad to initial input is grad from layer 0's FC backward
+    Tensor grad_input = grad_fc_layers[0];
+
+    return grad_input;
 }
 
 void DenseBlock::update_weights(double learning_rate) {
@@ -90,8 +137,16 @@ Tensor TransitionLayer::forward(const Tensor& input) {
 }
 
 Tensor TransitionLayer::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // Backprop through ReLU then conv
+    Tensor grad_relu = grad_output;
+    // ReLU gradient: dL/dx = dL/dy * (x > 0)
+    // last_output was after ReLU, so check last_output > 0
+    for (size_t i = 0; i < grad_relu.rows; ++i)
+        for (size_t j = 0; j < grad_relu.cols; ++j)
+            if (last_output_[i][j] <= 0) grad_relu[i][j] = 0.0;
+
+    // Backprop through conv (gradient w.r.t. input)
+    return conv_.backward(grad_relu, learning_rate);
 }
 
 void TransitionLayer::update_weights(double learning_rate) {

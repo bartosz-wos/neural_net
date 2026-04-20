@@ -1,7 +1,7 @@
 #ifndef SKIP_CONNECTION_H
 #define SKIP_CONNECTION_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // SkipConnection: wraps a layer as x + f(x) residual.
 // If dimensions of input and output differ, the skip path is projected

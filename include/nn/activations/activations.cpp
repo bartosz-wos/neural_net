@@ -143,7 +143,8 @@ double GELU::derivative(double x) const {
     double tanh_sq = tanh_val * tanh_val;  // sech²(arg) = 1 - tanh²
     double cdf = 0.5 * (1.0 + tanh_val);
     double pdf = 0.5 * GELU_A * (1.0 - tanh_sq) * (1.0 + 3.0 * 0.044715 * x_clamped * x_clamped);
-    return cdf + x * pdf;
+    // FIX (Bug 8): use x_clamped instead of unclamped x in the x*pdf term
+    return cdf + x_clamped * pdf;
 }
 
 Tensor Swish::operator()(const Tensor& t) const {
@@ -160,9 +161,10 @@ double Swish::derivative(double x) const {
 
 Tensor Mish::operator()(const Tensor& t) const {
     return t.apply([](double x) {
-        // Clamp large x to avoid exp overflow in softplus
-        if (x > 700) x = 700;
-        double sp = std::log(1.0 + std::exp(x)); // softplus
+        // Clamp to [-700, 700]: exp(700) ~ 1e304, log overflow past that
+        if (x > 700)      x = 700;
+        else if (x < -700) x = -700;
+        double sp = std::log(1.0 + std::exp(x)); // softplus, numerically stable both sides
         return x * std::tanh(sp);
     });
 }

@@ -48,8 +48,10 @@ Tensor LayerNorm::backward(const Tensor& grad_output, double /* learning_rate */
     size_t batch = grad_output.rows;
     size_t features = grad_output.cols;
 
-    grad_gamma_ = Tensor(1, features);
-    grad_beta_ = Tensor(1, features);
+    // FIX: Accumulate grad_gamma_ and grad_beta_ across multiple backward calls.
+    // Multiple backward passes (without zero_grad between) would otherwise double-count gradients.
+    if (grad_gamma_.rows == 0) grad_gamma_ = Tensor(1, features);
+    if (grad_beta_.rows == 0)  grad_beta_  = Tensor(1, features);
     grad_x = Tensor(batch, features);
 
     for (size_t f = 0; f < features; ++f) {

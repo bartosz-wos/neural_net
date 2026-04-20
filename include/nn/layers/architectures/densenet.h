@@ -1,17 +1,14 @@
-#ifndef GNN_H
-#define GNN_H
+#ifndef DENSENET_H
+#define DENSENET_H
 
-#include "../core/layer.h"
-#include <vector>
+#include "../../core/layer.h"
+#include "../convolutions/conv_layer.h"
+#include "../pooling/pool_layer.h"
 
-// Graph Neural Network layers.
-// GCNLayer: Graph Convolutional Network (Kipf & Welling 2017).
-// GATLayer: Graph Attention Network (Veličković et al. 2018) with multi-head attention.
-class GCNLayer : public Layer {
+class DenseBlock : public Layer {
 public:
-    GCNLayer(size_t in_features, size_t out_features);
+    DenseBlock(size_t in_channels, size_t growth_rate, size_t num_layers);
     Tensor forward(const Tensor& input) override;
-    Tensor forward_with_adj(const Tensor& input, const Tensor& adj);
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;
     void zero_grad() override;
@@ -21,20 +18,17 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
-    Dense W_;
+    size_t growth_rate_;
+    std::vector<Dense> fc_layers_;
+    size_t num_layers_;
+    std::vector<Tensor> concat_buffers_;
     Tensor last_output_;
-    Tensor last_input_;
-    Tensor last_AW_;
-    Tensor adj_norm_;
-    std::vector<std::vector<double>> relu_mask_;
 };
 
-class GATLayer : public Layer {
+class TransitionLayer : public Layer {
 public:
-    GATLayer(size_t in_features, size_t out_features, size_t num_heads = 4,
-              bool concat_heads = true);
+    TransitionLayer(size_t in_channels, size_t out_channels, size_t H, size_t W);
     Tensor forward(const Tensor& input) override;
-    Tensor forward_with_adj(const Tensor& input, const Tensor& adj);
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;
     void zero_grad() override;
@@ -44,22 +38,18 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
-    size_t num_heads_;
-    bool concat_heads_;
-    std::vector<Dense> W_heads_;
-    std::vector<Dense> a_heads_;
+    Conv2D conv_;
+    size_t out_channels_;
     Tensor last_output_;
-    Tensor last_input_;
-    std::vector<Tensor> last_Wh_heads_;
-    Tensor last_alpha_;
-    Tensor adj_;
+    size_t H_, W_;
 };
 
-class GraphNetwork : public Layer {
+class DenseNet : public Layer {
 public:
-    GraphNetwork(const std::vector<size_t>& hidden_dims, bool use_gat = false);
+    DenseNet(size_t initial_channels, size_t growth_rate,
+             const std::vector<size_t>& layers_per_block,
+             size_t num_classes, size_t H_in = 32, size_t W_in = 32);
     Tensor forward(const Tensor& input) override;
-    Tensor forward_with_adj(const Tensor& input, const Tensor& adj);
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;
     void zero_grad() override;
@@ -69,12 +59,11 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
-    std::vector<GCNLayer> gcn_layers_;
-    std::vector<GATLayer> gat_layers_;
-    bool use_gat_;
+    Conv2D stem_;
+    std::vector<DenseBlock> blocks_;
+    std::vector<TransitionLayer> transitions_;
+    Dense fc_;
     Tensor last_output_;
-    Tensor last_input_;
-    Tensor last_adj_;
 };
 
 #endif

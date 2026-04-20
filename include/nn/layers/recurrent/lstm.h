@@ -25,6 +25,15 @@ public:
     Tensor c_states;        // ( (seq_len+1)*N, hidden ) c_0..c_L, c_0=0
     Tensor last_output_;    // last forward output (batch, hidden)
 
+    // Reusable forward-pass buffers (avoid per-timestep heap allocation)
+    // Lazily initialized on first forward call to match actual batch size.
+    Tensor buf_x_t_;
+    Tensor buf_h_prev_;
+    Tensor buf_c_prev_;
+    Tensor buf_h_x_;
+    Tensor buf_gate_pre_;
+    Tensor buf_i_gate_, buf_f_gate_, buf_o_gate_, buf_g_cand_;
+
     LSTM(int input_dim, int hidden_size, int seq_len);
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;

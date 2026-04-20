@@ -1,7 +1,7 @@
 #ifndef DATALOADER_H
 #define DATALOADER_H
 
-#include "../core/tensor.h"
+#include "../../core/tensor.h"
 #include <vector>
 #include <random>
 #include <algorithm>
@@ -60,9 +60,11 @@ public:
     bool has_next() const { return pos_ < dataset_.size(); }
 
     std::pair<Tensor, Tensor> next_batch() {
+        // FIX (Bug 10): dataset_.get_sample(0) / get_target(0) -> use idx from indices_.
+        // Also: pre-compute column sizes before the loop, not from sample 0 each time.
         size_t N = std::min(batch_size_, dataset_.size() - pos_);
-        Tensor X_batch(N, dataset_.get_sample(0).cols);
-        Tensor y_batch(N, dataset_.get_target(0).cols);
+        Tensor X_batch(N, dataset_.get_sample(indices_[pos_]).cols);
+        Tensor y_batch(N, dataset_.get_target(indices_[pos_]).cols);
         for (size_t i = 0; i < N; ++i) {
             size_t idx = indices_[pos_ + i];
             for (size_t j = 0; j < X_batch.cols; ++j)

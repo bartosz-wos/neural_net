@@ -115,10 +115,12 @@ Tensor GRU::backward(const Tensor& grad_output, double /* learning_rate */) {
     size_t h = hidden_size_;
 
     // Single-step mode: return zero gradient for input (stateless step)
+    // FIX: h_ has shape (1, hidden_size) so batch = 1 for single-step.
+    // grad_input shape must be (batch, input_dim_) = (1, input_dim_).
     if (inputs_.rows == 0 || inputs_.cols == 0) {
         grad_W_zr_.fill(0.0); grad_U_zr_.fill(0.0); grad_b_zr_.fill(0.0);
         grad_W_h_.fill(0.0); grad_U_h_.fill(0.0); grad_b_h_.fill(0.0);
-        return Tensor(1, input_dim_);
+        return Tensor(1, input_dim_);  // shape: (1, input_dim_) — batch=1 for single-step
     }
 
     // --- Sequence mode (full BPTT) ---

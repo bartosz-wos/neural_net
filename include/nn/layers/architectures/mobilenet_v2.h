@@ -1,9 +1,9 @@
 #ifndef MOBILENET_V2_H
 #define MOBILENET_V2_H
 
-#include "../core/layer.h"
-#include "convolutions/conv_layer.h"
-#include "pooling/pool_layer.h"
+#include "../../core/layer.h"
+#include "../convolutions/conv_layer.h"
+#include "../pooling/pool_layer.h"
 
 // MobileNetV2: inverted residual blocks with linear bottleneck.
 // 1) Expand: 1x1 conv (in -> expansion_factor * in_channels)

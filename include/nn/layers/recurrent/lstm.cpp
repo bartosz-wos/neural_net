@@ -44,87 +44,98 @@ Tensor LSTM::forward(const Tensor& input) {
     // Allocate hidden and cell state caches: (seq_len+1)*N rows, hidden cols each
     h_states = Tensor((seq_len + 1) * N, hidden_size);
     c_states = Tensor((seq_len + 1) * N, hidden_size);
+    h_states.fill(0.0);
+    c_states.fill(0.0);
 
-    // Initialize h0, c0 = 0
-    for (int i = 0; i < N; ++i)
-        for (int h = 0; h < hidden_size; ++h) {
-            h_states[i][h] = 0.0;
-            c_states[i][h] = 0.0;
-        }
+    // Lazily initialize reusable buffers to match batch size N
+    if (buf_x_t_.rows != (size_t)N || buf_x_t_.cols != (size_t)input_dim) {
+        buf_x_t_    = Tensor(N, input_dim);
+        buf_h_prev_ = Tensor(N, hidden_size);
+        buf_c_prev_ = Tensor(N, hidden_size);
+        buf_h_x_    = Tensor(N, hidden_size + input_dim);
+        buf_gate_pre_ = Tensor(N, 4 * hidden_size);
+        buf_i_gate_ = Tensor(N, hidden_size);
+        buf_f_gate_ = Tensor(N, hidden_size);
+        buf_o_gate_ = Tensor(N, hidden_size);
+        buf_g_cand_ = Tensor(N, hidden_size);
+    }
 
     // Forward through time
     for (int t = 0; t < seq_len; ++t) {
-        // Build x_t (N, input_dim)
-        Tensor x_t(N, input_dim);
+        // Extract x_t in-place into buf_x_t_
         for (int i = 0; i < N; ++i)
             for (int d = 0; d < input_dim; ++d)
-                x_t[i][d] = inputs[i][t * input_dim + d];
+                buf_x_t_[i][d] = inputs[i][t * input_dim + d];
 
-        // Get h_prev = h_states[t*N + i]
-        Tensor h_prev(N, hidden_size);
+        // Extract h_prev in-place into buf_h_prev_
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                h_prev[i][h] = h_states[t * N + i][h];
+                buf_h_prev_[i][h] = h_states[t * N + i][h];
 
-        // Get c_prev = c_states[t*N + i]
-        Tensor c_prev(N, hidden_size);
+        // Extract c_prev in-place into buf_c_prev_
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                c_prev[i][h] = c_states[t * N + i][h];
+                buf_c_prev_[i][h] = c_states[t * N + i][h];
 
-        // Concatenate [h_prev, x_t] -> (N, hidden+input)
-        Tensor h_x(N, hidden_size + input_dim);
+        // Concatenate [h_prev, x_t] in-place into buf_h_x_
         for (int i = 0; i < N; ++i) {
-            for (int h = 0; h < hidden_size; ++h) h_x[i][h] = h_prev[i][h];
-            for (int d = 0; d < input_dim; ++d) h_x[i][hidden_size + d] = x_t[i][d];
+            for (int h = 0; h < hidden_size; ++h) buf_h_x_[i][h] = buf_h_prev_[i][h];
+            for (int d = 0; d < input_dim; ++d) buf_h_x_[i][hidden_size + d] = buf_x_t_[i][d];
         }
 
-        // Compute gate pre-activations: (N, 4*hidden) = h_x * W^T + b
-        Tensor gate_pre = h_x * W.transpose(); // (N, 4H)
-        for (int i = 0; i < N; ++i)
-            for (int g = 0; g < 4 * hidden_size; ++g)
-                gate_pre[i][g] += b[g][0];
-
-        // Split gates: i, f, o, g
-        Tensor i_gate(N, hidden_size), f_gate(N, hidden_size), o_gate(N, hidden_size), g_cand(N, hidden_size);
-        for (int i = 0; i < N; ++i) {
-            for (int h = 0; h < hidden_size; ++h) {
-                i_gate[i][h] = 1.0 / (1.0 + std::exp(-gate_pre[i][h])); // sigmoid
-                f_gate[i][h] = 1.0 / (1.0 + std::exp(-gate_pre[i][hidden_size + h]));
-                o_gate[i][h] = 1.0 / (1.0 + std::exp(-gate_pre[i][2 * hidden_size + h]));
-                g_cand[i][h] = std::tanh(gate_pre[i][3 * hidden_size + h]);
+        // Compute gate pre-activations: buf_h_x_ * W^T + b  ->  buf_gate_pre_
+        // buf_gate_pre_ = buf_h_x_ * W.transpose()
+        {
+            const Tensor& hx = buf_h_x_;
+            const Tensor& Wt = W;  // W is (4H, H+in), already stored as-is
+            int H4 = 4 * hidden_size;
+            int Hin = hidden_size + input_dim;
+            // buf_gate_pre_[i][g] = sum_k hx[i][k] * W[g][k]
+            for (int i = 0; i < N; ++i) {
+                for (int g = 0; g < H4; ++g) {
+                    double acc = b[g][0];
+                    for (int k = 0; k < Hin; ++k)
+                        acc += hx[i][k] * W[g][k];
+                    buf_gate_pre_[i][g] = acc;
+                }
             }
         }
 
-        // c_t = f_t * c_prev + i_t * g_cand
-        Tensor c_t(N, hidden_size);
+        // Apply activations in-place into gate buffers
+        for (int i = 0; i < N; ++i) {
+            for (int h = 0; h < hidden_size; ++h) {
+                buf_i_gate_[i][h] = 1.0 / (1.0 + std::exp(-buf_gate_pre_[i][h]));
+                buf_f_gate_[i][h] = 1.0 / (1.0 + std::exp(-buf_gate_pre_[i][hidden_size + h]));
+                buf_o_gate_[i][h] = 1.0 / (1.0 + std::exp(-buf_gate_pre_[i][2 * hidden_size + h]));
+                buf_g_cand_[i][h] = std::tanh(buf_gate_pre_[i][3 * hidden_size + h]);
+            }
+        }
+
+        // c_t = f * c_prev + i * g_cand  (overwrite buf_c_prev_ as c_t)
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                c_t[i][h] = f_gate[i][h] * c_prev[i][h] + i_gate[i][h] * g_cand[i][h];
+                buf_c_prev_[i][h] = buf_f_gate_[i][h] * buf_c_prev_[i][h]
+                                 + buf_i_gate_[i][h] * buf_g_cand_[i][h];
 
-        // h_t = o_t * tanh(c_t)
-        Tensor h_t(N, hidden_size);
+        // h_t = o * tanh(c_t)  (reuse buf_h_prev_ as h_t)
+        for (int i = 0; i < N; ++i)
+            for (int h = 0; h < hidden_size; ++h)
+                buf_h_prev_[i][h] = buf_o_gate_[i][h] * std::tanh(buf_c_prev_[i][h]);
+
+        // Store h_t and c_t into state caches
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h) {
-                double c_act = std::tanh(c_t[i][h]);
-                h_t[i][h] = o_gate[i][h] * c_act;
-            }
-
-        // Store h_t and c_t at index (t+1)*N + i
-        for (int i = 0; i < N; ++i)
-            for (int h = 0; h < hidden_size; ++h) {
-                h_states[(t+1) * N + i][h] = h_t[i][h];
-                c_states[(t+1) * N + i][h] = c_t[i][h];
+                h_states[(t+1) * N + i][h] = buf_h_prev_[i][h];
+                c_states[(t+1) * N + i][h] = buf_c_prev_[i][h];
             }
     }
 
-    // Output = final hidden state h_L
-    Tensor output(N, hidden_size);
+    // Output = final hidden state h_L  (reuse buf_h_prev_ as output)
     for (int i = 0; i < N; ++i)
         for (int h = 0; h < hidden_size; ++h)
-            output[i][h] = h_states[seq_len * N + i][h];
-    last_output_ = output;
-    return output;
+            buf_h_prev_[i][h] = h_states[seq_len * N + i][h];
+    last_output_ = buf_h_prev_;
+    return last_output_;
 }
 
 Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
@@ -147,18 +158,15 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
 
     // Backward through time: t = L-1 ... 0
     for (int t = seq_len - 1; t >= 0; --t) {
-        // Retrieve cached states
-        Tensor h_t(N, hidden_size), c_t(N, hidden_size), c_prev(N, hidden_size), h_prev(N, hidden_size);
-        for (int i = 0; i < N; ++i) {
-            for (int h = 0; h < hidden_size; ++h) {
-                h_t[i][h] = h_states[(t+1) * N + i][h];
-                c_t[i][h] = c_states[(t+1) * N + i][h];
-                h_prev[i][h] = h_states[t * N + i][h];
-                c_prev[i][h] = c_states[t * N + i][h];
-            }
-        }
+        // FIX: Create zero-copy views into cached state buffers.
+        // Use the public data pointer to construct lightweight references without allocation.
+        double* h_t_ptr  = h_states.data.data() + (t+1) * N * hidden_size;
+        double* c_t_ptr  = c_states.data.data() + (t+1) * N * hidden_size;
+        double* h_prev_ptr = h_states.data.data() + t * N * hidden_size;
+        double* c_prev_ptr = c_states.data.data() + t * N * hidden_size;
+        // h_t(row, col) = h_t_ptr[row * hidden_size + col], etc.
 
-        // Retrieve x_t
+        // Retrieve x_t (still needs a copy since we extract from packed inputs)
         Tensor x_t(N, input_dim);
         for (int i = 0; i < N; ++i)
             for (int d = 0; d < input_dim; ++d)
@@ -168,7 +176,7 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
         // Reconstruct h_x = [h_prev, x_t]
         Tensor h_x(N, hidden_size + input_dim);
         for (int i = 0; i < N; ++i) {
-            for (int h = 0; h < hidden_size; ++h) h_x[i][h] = h_prev[i][h];
+            for (int h = 0; h < hidden_size; ++h) h_x[i][h] = h_prev_ptr[i * hidden_size + h];
             for (int d = 0; d < input_dim; ++d) h_x[i][hidden_size + d] = x_t[i][d];
         }
         Tensor gate_pre = h_x * W.transpose();
@@ -201,7 +209,7 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
         Tensor tanh_c(N, hidden_size);
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                tanh_c[i][h] = std::tanh(c_t[i][h]);
+                tanh_c[i][h] = std::tanh(c_t_ptr[i * hidden_size + h]);
         Tensor d_tanh_c(N, hidden_size);
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
@@ -240,7 +248,7 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
         Tensor grad_f_pre(N, hidden_size);
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                grad_f_pre[i][h] = grad_c[i][h] * c_prev[i][h];
+                grad_f_pre[i][h] = grad_c[i][h] * c_prev_ptr[i * hidden_size + h];
 
         // Now, we need to add contribution of c_t to next cell c_{t+1} via forget gate?
         // Actually in BPTT for LSTM, we also need to propagate through the cell state chain.
@@ -330,15 +338,18 @@ Tensor LSTM::backward(const Tensor& grad_output, double /* learning_rate */) {
             for (int d = 0; d < input_dim; ++d)
                 grad_input[i][t * input_dim + d] += grad_x_t[i][d];
 
-        // Propagate grad_c backward through the forget gate for the cell-to-cell recurrent path.
-        // grad_c_{t-1} += grad_c_t * f_t (carry cell gradient to previous timestep)
+        // FIX (Bug 11): Save the original grad_c BEFORE applying forget gate.
+        // The current grad_c was used to compute gate gradients (i,f,o,g) above.
+        // grad_c_prev = grad_c * f_gate flows to the previous cell; the current
+        // grad_c stays intact for any downstream uses in this iteration.
+        Tensor grad_c_prev(N, hidden_size);
         for (int i = 0; i < N; ++i)
             for (int h = 0; h < hidden_size; ++h)
-                grad_c[i][h] *= f_gate[i][h];
+                grad_c_prev[i][h] = grad_c[i][h] * f_gate[i][h];
 
-        // grad_c for next iteration (t-1) carries the accumulated cell state gradient
         // grad_h for next iteration (t-1) comes from backprop through gates
         grad_h = grad_h_prev;
+        grad_c = grad_c_prev;
     }
 
     return grad_input;

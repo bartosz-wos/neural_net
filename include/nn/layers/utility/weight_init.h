@@ -1,7 +1,7 @@
 #ifndef WEIGHT_INIT_H
 #define WEIGHT_INIT_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Weight initialization strategies for different layer types and activations.
 // Usage: WeightInitializer::xavier_for_dense(weights, fan_in, fan_out, activation="relu")

@@ -8,11 +8,11 @@
 #include "../layers/convolutions/conv_layer.h"
 #include "../layers/dense/embedding.h"
 #include "../layers/recurrent/lstm.h"
-#include "../layers/skip_connection.h"
+#include "../layers/utility/skip_connection.h"
 #include "../layers/pooling/pool_layer.h"
 #include "../layers/dense/flatten.h"
 #include "../layers/attention/transformer.h"
-#include "../layers/conv1d.h"
+#include "../layers/utility/conv1d.h"
 #include "../layers/recurrent/rnn.h"
 #include <iostream>
 

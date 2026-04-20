@@ -1,7 +1,7 @@
 #ifndef CONV1D_H
 #define CONV1D_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // 1D convolution for 1D signal / sequence data.
 // Input: (batch, in_channels * seq_len) — col-major as channels × time

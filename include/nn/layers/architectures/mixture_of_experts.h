@@ -1,7 +1,7 @@
 #ifndef MIXTURE_OF_EXPERTS_H
 #define MIXTURE_OF_EXPERTS_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 
 // Mixture of Experts (MoE) with sparse gating.

@@ -1,7 +1,7 @@
 #ifndef SPATIAL_DROPOUT_H
 #define SPATIAL_DROPOUT_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 
 // Dropout1D for sequential data — drops entire time steps (feature channels).
 // Training: randomly zeros entire channels with probability p.

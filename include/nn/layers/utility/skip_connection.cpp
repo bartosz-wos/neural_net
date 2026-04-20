@@ -1,5 +1,5 @@
 #include "skip_connection.h"
-#include "convolutions/conv_layer.h"
+#include "../convolutions/conv_layer.h"
 #include <cassert>
 
 SkipConnection::SkipConnection(Layer* inner)

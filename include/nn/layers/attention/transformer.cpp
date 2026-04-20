@@ -42,6 +42,8 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
 
     // Compute Q, K, V: each (tokens, d_model)
     // Q = x @ W_q^T: (tokens, d_model) @ (d_model, d_model) = (tokens, d_model)
+    // NOTE: explicit loops needed here because x is (tokens, d_model) row-major,
+    // and W is (d_model, d_model) — matmul must process per-row for cache locality.
     Tensor Q(tokens, d_model), K(tokens, d_model), V(tokens, d_model);
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d_model; ++j) {
@@ -76,12 +78,18 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
     Tensor output_acc(tokens, d_model);
     output_acc.fill(0.0);
 
+    // FIX (Bug 7): Cache attention scores per head for backward reuse.
+    // Store pre-softmax (post-mask) scores; backward will softmax them in-place.
+    last_scores = Tensor(num_heads * tokens, tokens);
+
     for (size_t h = 0; h < num_heads; ++h) {
         // Q_h[h]: (d_k, tokens), K_h[h]: (d_k, tokens), V_h[h]: (d_k, tokens)
         // scores = Q_h[h]^T @ K_h[h]: (tokens, d_k) @ (d_k, tokens) = (tokens, tokens)
         Tensor Q_h_t = Q_h[h].transpose(); // (tokens, d_k)
         Tensor K_h_t = K_h[h].transpose(); // (tokens, d_k)
 
+        // Attention scores: Q_h_t @ K_h_t^T / sqrt(d_k)
+        // Per-head explicit loops preserve correct head isolation (h is fixed per iteration)
         Tensor scores(tokens, tokens);
         for (size_t i = 0; i < tokens; ++i) {
             for (size_t j = 0; j < tokens; ++j) {
@@ -101,6 +109,11 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
             }
         }
 
+        // FIX: Save pre-softmax scores into last_scores (row range per head)
+        for (size_t i = 0; i < tokens; ++i)
+            for (size_t j = 0; j < tokens; ++j)
+                last_scores[h * tokens + i][j] = scores[i][j];
+
         // Softmax over target (columns)
         for (size_t i = 0; i < tokens; ++i) {
             double max_s = scores[i][0];
@@ -115,7 +128,8 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
                 scores[i][j] /= sum_exp;
         }
 
-        // attn = scores @ V_h[h]^T: (tokens, tokens) @ (tokens, d_k) = (tokens, d_k)
+        // attn = scores @ V_h[h]^T: (T,T) @ (T,d_k) = (T,d_k) per head
+        // V_h_t[j][dk] = V_h[h][dk][j] = V[j][h*d_k+dk] — correct per-head value
         Tensor V_h_t = V_h[h].transpose(); // (tokens, d_k)
         Tensor attn(tokens, d_k);
         for (size_t i = 0; i < tokens; ++i) {
@@ -134,6 +148,8 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
     }
 
     // Final projection: output_acc @ W_o^T: (tokens, d_model) @ (d_model, d_model) = (tokens, d_model)
+    // NOTE: explicit loop — this is the largest matmul in the forward pass.
+    // Keeping explicit for clarity; can be replaced with Tensor::operator* when beneficial.
     Tensor output(tokens, d_model);
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d_model; ++j) {
@@ -210,18 +226,14 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
             for (size_t dk = 0; dk < d_k; ++dk)
                 grad_attn_h[t][dk] = grad_proj[t][h * d_k + dk];
 
-        // Compute attention scores: attn_scores = Q_h @ K_h^T / sqrt(d_k)
+        // FIX (Bug 7): Use cached pre-softmax scores from forward pass.
+        // attn_scores = last_scores row range for this head (pre-mask, pre-softmax)
         Tensor attn_scores(tokens, tokens);
-        for (size_t i = 0; i < tokens; ++i) {
-            for (size_t j = 0; j < tokens; ++j) {
-                double s = 0.0;
-                for (size_t dk = 0; dk < d_k; ++dk)
-                    s += Q_h[dk][i] * K_h[dk][j];
-                attn_scores[i][j] = s / std::sqrt((double)d_k + 1e-9);
-            }
-        }
+        for (size_t i = 0; i < tokens; ++i)
+            for (size_t j = 0; j < tokens; ++j)
+                attn_scores[i][j] = last_scores[h * tokens + i][j];
 
-        // Recompute softmax of attn_scores
+        // Softmax of cached scores
         Tensor attn_probs(tokens, tokens);
         for (size_t i = 0; i < tokens; ++i) {
             double max_s = attn_scores[i][0];
@@ -590,7 +602,7 @@ PositionalEncoding::PositionalEncoding(size_t max_len, size_t d_model) {
     pe = Tensor(max_len, d_model);
     for (size_t pos = 0; pos < max_len; ++pos) {
         for (size_t i = 0; i < d_model; ++i) {
-            double angle = pos / std::pow(10000.0, 2.0 * (i / 2.0) / d_model);
+            double angle = pos / std::pow(10000.0, 2.0 * (static_cast<double>(i) / 2.0) / d_model);
             pe[pos][i] = (i % 2 == 0) ? std::sin(angle) : std::cos(angle);
         }
     }
@@ -611,5 +623,7 @@ Tensor PositionalEncoding::forward(const Tensor& input) {
 }
 
 Tensor PositionalEncoding::backward(const Tensor& grad_output, double) {
-    return grad_output;
+    // FIX: PE has no parameters — gradients should not flow through the addition.
+    // Return zeros so that upstream layers don't receive spurious gradient contributions.
+    return Tensor::zeros(grad_output.rows, grad_output.cols);
 }

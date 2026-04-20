@@ -2,31 +2,6 @@
 #include <cmath>
 #include <algorithm>
 
-VGGBlock::VGGBlock(int in_channels, int out_channels, int num_convs, int pool_size)
-    : num_convs_(num_convs) {
-    int ch = in_channels;
-    for (int i = 0; i < num_convs; i++) {
-        convs_.emplace_back(ch, out_channels, 3, 1, 1, 0);
-        ch = out_channels;
-    }
-}
-
-Tensor VGGBlock::forward(const Tensor& x) {
-    Tensor cur = x;
-    for (int i = 0; i < num_convs_; i++) {
-        cur = convs_[i].forward(cur);
-        for (size_t r = 0; r < cur.rows; ++r)
-        for (size_t c = 0; c < cur.cols; ++c)
-            cur[r][c] = std::max(0.0, cur[r][c]);
-    }
-    return cur;
-}
-
-Tensor VGGBlock::backward(const Tensor& grad_output, double lr) {
-    (void)grad_output; (void)lr;
-    return Tensor(grad_output.rows, grad_output.cols);
-}
-
 VGG11::VGG11(int num_classes, int in_channels) {
     model_.add_layer(new Conv2D(in_channels, 64, 3, 1, 1, 0));
     model_.add_layer(new Activation<ReLU>(ReLU{}));

@@ -49,9 +49,11 @@ Tensor Dense::forward(const Tensor& input) {
     last_input = input;  // cache for backward
     Tensor result = input * weights.transpose();
     // Manually broadcast bias (1, out_features) to each batch row
-    for (size_t i = 0; i < result.rows; ++i) {
-        for (size_t j = 0; j < result.cols; ++j) {
-            result[i][j] += bias[0][j];
+    // FIX: bias[0][j] is the same for every row — eliminate the outer loop
+    for (size_t j = 0; j < result.cols; ++j) {
+        double bj = bias[0][j];
+        for (size_t i = 0; i < result.rows; ++i) {
+            result[i][j] += bj;
         }
     }
     return result;

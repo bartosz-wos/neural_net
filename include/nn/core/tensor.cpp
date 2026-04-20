@@ -21,7 +21,9 @@ Tensor::Tensor(size_t r, size_t c, const double* flat_data)
 }
 
 Tensor Tensor::zeros(size_t r, size_t c) {
-    return Tensor(r, c);
+    Tensor t(r, c);
+    t.fill(0.0);
+    return t;
 }
 
 Tensor Tensor::random(size_t r, size_t c, double scale) {
@@ -69,11 +71,17 @@ Tensor& Tensor::operator-=(const Tensor& other) {
 Tensor Tensor::operator*(const Tensor& other) const {
     if (cols != other.rows) throw std::invalid_argument("Tensor multiplication dimension mismatch");
     Tensor res(rows, other.cols);
-    res.fill(0.0);
-    for (size_t i = 0; i < rows; ++i)
-        for (size_t k = 0; k < cols; ++k)
-            for (size_t j = 0; j < other.cols; ++j)
-                res[i][j] += (*this)[i][k] * other[k][j];
+    // i-k-j: optimal cache locality for row-major storage.
+    // Inner loop over j accesses A[i][k] (sequential), B[k][j] (sequential within row),
+    // and C[i][j] (sequential write). Avoids stride jumps through B that i-j-k suffers.
+    for (size_t i = 0; i < rows; ++i) {
+        for (size_t k = 0; k < cols; ++k) {
+            double a_ik = (*this)[i][k];
+            for (size_t j = 0; j < other.cols; ++j) {
+                res[i][j] += a_ik * other[k][j];
+            }
+        }
+    }
     return res;
 }
 

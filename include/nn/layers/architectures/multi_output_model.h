@@ -1,7 +1,7 @@
 #ifndef MULTI_OUTPUT_MODEL_H
 #define MULTI_OUTPUT_MODEL_H
 
-#include "../core/model.h"
+#include "../../core/model.h"
 
 // MultiOutputModel: a model that can return outputs from intermediate layers.
 // Specify which layer indices to "tap" (collect outputs from) during forward pass.

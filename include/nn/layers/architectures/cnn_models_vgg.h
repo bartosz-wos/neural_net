@@ -1,32 +1,12 @@
 #ifndef CNN_MODELS_VGG_H
 #define CNN_MODELS_VGG_H
 
-#include "../core/layer.h"
-#include "../core/model.h"
-#include "convolutions/conv_layer.h"
-#include "pooling/pool_layer.h"
-#include "dense/flatten.h"
-#include "../activations/activations.h"
-
-// VGG Block: sequence of n conv layers with same channels, followed by pool
-class VGGBlock : public Layer {
-public:
-    VGGBlock(int in_channels, int out_channels, int num_convs, int pool_size = 2);
-
-    Tensor forward(const Tensor& x) override;
-    Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double) override {}
-    Tensor get_weights() const override { return Tensor(0, 0); }
-    Tensor get_gradients() const override { return Tensor(0, 0); }
-    std::vector<Tensor*> parameters() override { return {}; }
-    std::vector<Tensor*> gradients() override { return {}; }
-    void zero_grad() override {}
-    std::string name() const override { return "VGGBlock"; }
-
-private:
-    std::vector<Conv2D> convs_;  // stored for training
-    int num_convs_;
-};
+#include "../../core/layer.h"
+#include "../../core/model.h"
+#include "../convolutions/conv_layer.h"
+#include "../pooling/pool_layer.h"
+#include "../dense/flatten.h"
+#include "../../activations/activations.h"
 
 // VGG-11/13/16/19
 class VGG11 : public Layer {

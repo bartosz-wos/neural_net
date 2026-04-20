@@ -20,7 +20,7 @@ public:
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void update_weights(double learning_rate) override;
     Tensor get_weights() const override { return gamma; }
-    Tensor get_gradients() const override { return gamma; } // placeholder
+    Tensor get_gradients() const override { return grad_gamma_; } // placeholder
     Tensor grad_gamma_;
     Tensor grad_beta_;
     Tensor grad_x;

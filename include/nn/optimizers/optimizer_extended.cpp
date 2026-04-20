@@ -64,7 +64,7 @@ void AdamW::step(Model& model) {
             Tensor& m = m_vec[i];
             Tensor& v = v_vec[i];
 
-            // bias-corrected moments (computed once per param tensor)
+            // Bias correction: computed once per param tensor, NOT per element.
             double b1_corr = (beta1 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta1, t));
             double b2_corr = (beta2 >= 1.0 - 1e-8) ? 1.0 : (1.0 - std::pow(beta2, t));
 
@@ -75,10 +75,9 @@ void AdamW::step(Model& model) {
                     v[r][c_col] = beta2 * v[r][c_col] + (1 - beta2) * gg * gg;
                     double m_hat = m[r][c_col] / b1_corr;
                     double v_hat = v[r][c_col] / b2_corr;
-                    // 1. Weight decay applied to parameter directly (AdamW style)
-                    (*p)[r][c_col] -= lr * weight_decay * (*p)[r][c_col];
-                    // 2. Adam update on gradient (no weight decay term here)
-                    (*p)[r][c_col] -= lr * m_hat / (std::sqrt(v_hat) + epsilon);
+                    // AdamW: decoupled weight decay (Loshchilov & Hutter 2019)
+                    (*p)[r][c_col] -= lr * (m_hat / (std::sqrt(v_hat) + epsilon)
+                                           + weight_decay * (*p)[r][c_col]);
                 }
             }
         }

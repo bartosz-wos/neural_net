@@ -1,10 +1,10 @@
 #ifndef CNN_MODELS_H
 #define CNN_MODELS_H
 
-#include "../core/layer.h"
-#include "convolutions/conv_layer.h"
-#include "pooling/pool_layer.h"
-#include "dense/flatten.h"
+#include "../../core/layer.h"
+#include "../convolutions/conv_layer.h"
+#include "../pooling/pool_layer.h"
+#include "../dense/flatten.h"
 #include <vector>
 
 // === VGG Block ===

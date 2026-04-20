@@ -1,7 +1,7 @@
 #ifndef MEMORY_NETWORK_H
 #define MEMORY_NETWORK_H
 
-#include "../core/layer.h"
+#include "../../core/layer.h"
 #include <vector>
 #include <string>
 

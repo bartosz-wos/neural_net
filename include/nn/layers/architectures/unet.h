@@ -1,12 +1,12 @@
 #ifndef UNET_H
 #define UNET_H
 
-#include "../core/layer.h"
-#include "../core/model.h"
-#include "convolutions/conv_layer.h"
-#include "pooling/pool_layer.h"
-#include "dense/flatten.h"
-#include "../activations/activations.h"
+#include "../../core/layer.h"
+#include "../../core/model.h"
+#include "../convolutions/conv_layer.h"
+#include "../pooling/pool_layer.h"
+#include "../dense/flatten.h"
+#include "../../activations/activations.h"
 
 // U-Net: encoder-decoder with skip connections for image segmentation
 // Paper: https://arxiv.org/abs/1505.04597
