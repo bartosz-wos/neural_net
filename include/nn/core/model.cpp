@@ -300,24 +300,18 @@ void Model::summary() const {
         const auto& layer = layers[i];
         std::string name;
         size_t params = 0;
-        size_t out_rows = 0, out_cols = 0;
 
         if (auto* d = dynamic_cast<Dense*>(layer.get())) {
             name = "Dense";
             params = d->weights.rows * d->weights.cols + d->bias.rows * d->bias.cols;
-            out_rows = 0; out_cols = d->weights.rows;
         } else if (dynamic_cast<Conv2D*>(layer.get())) {
             name = "Conv2D";
-            // rough estimate
-            out_rows = 0; out_cols = 0;
         } else if (dynamic_cast<BatchNorm1D*>(layer.get())) {
             name = "BatchNorm1D";
             params = 0; // tracked separately
-            out_rows = 0; out_cols = 0;
         } else if (dynamic_cast<LayerNorm*>(layer.get())) {
             name = "LayerNorm";
             params = 0;
-            out_rows = 0; out_cols = 0;
         } else if (dynamic_cast<Dropout*>(layer.get())) {
             name = "Dropout";
         } else if (dynamic_cast<Embedding*>(layer.get())) {

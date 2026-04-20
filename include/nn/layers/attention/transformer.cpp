@@ -380,8 +380,8 @@ Tensor TransformerBlock::forward(const Tensor& input) {
 
     last_attn_out = attn_out;
 
-    // Residual in token space
-    Tensor residual = x - attn_tokens;
+    // Residual connection: x = x + attn_tokens (standard residual)
+    Tensor residual = x + attn_tokens;
 
     // LayerNorm
     Tensor norm1_out = ln1.forward(residual); // (tokens, d_model)
