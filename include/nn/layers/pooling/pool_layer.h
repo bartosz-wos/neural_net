@@ -76,6 +76,7 @@ public:
 
 private:
     int seq_out;
+    std::vector<std::vector<int>> counts_;  // [N * channels][seq_out] actual count per position
 };
 
 #endif

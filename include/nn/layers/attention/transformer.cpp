@@ -88,7 +88,7 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
                 double s = 0.0;
                 for (size_t dk = 0; dk < d_k; ++dk)
                     s += Q_h_t[i][dk] * K_h_t[j][dk];
-                scores[i][j] = s / std::sqrt((double)d_k);
+                scores[i][j] = s / std::sqrt((double)d_k + 1e-9);
             }
         }
 
@@ -217,7 +217,7 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
                 double s = 0.0;
                 for (size_t dk = 0; dk < d_k; ++dk)
                     s += Q_h[dk][i] * K_h[dk][j];
-                attn_scores[i][j] = s / std::sqrt((double)d_k);
+                attn_scores[i][j] = s / std::sqrt((double)d_k + 1e-9);
             }
         }
 
@@ -589,7 +589,7 @@ PositionalEncoding::PositionalEncoding(size_t max_len, size_t d_model) {
     pe = Tensor(max_len, d_model);
     for (size_t pos = 0; pos < max_len; ++pos) {
         for (size_t i = 0; i < d_model; ++i) {
-            double angle = pos / std::pow(10000.0, 2.0 * (i / 2) / d_model);
+            double angle = pos / std::pow(10000.0, 2.0 * (i / 2.0) / d_model);
             pe[pos][i] = (i % 2 == 0) ? std::sin(angle) : std::cos(angle);
         }
     }

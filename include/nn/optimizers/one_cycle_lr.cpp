@@ -8,15 +8,28 @@ OneCycleLR::OneCycleLR(double max_lr, size_t total_steps,
       total_steps_(total_steps),
       warmup_steps_(total_steps / 3),
       anneal_strategy_(anneal_strategy),
-      step_(0) {}
+      step_(0) {
+    if (total_steps < 3) warmup_steps_ = 0;  // guard div/0
+}
 
 void OneCycleLR::step() {
     ++step_;
-    // LR is computed on-the-fly from step_, no separate member needed
 }
 
 double OneCycleLR::get_lr() const {
     double s = static_cast<double>(step_);
+
+    if (warmup_steps_ == 0) {
+        // No warmup: go directly to anneal phase (or flat min_lr if already past total_steps)
+        if (s >= total_steps_) return min_lr_;
+        double pct = (s - warmup_steps_) / static_cast<double>(total_steps_ - warmup_steps_ + 1);
+        if (anneal_strategy_ == "cos") {
+            double cos_val = (1.0 + std::cos(std::acos(-1.0) * pct)) / 2.0;
+            return min_lr_ + (max_lr_ - min_lr_) * cos_val;
+        } else {
+            return min_lr_;
+        }
+    }
 
     if (s <= warmup_steps_) {
         // Warmup phase: linear increase
@@ -28,7 +41,6 @@ double OneCycleLR::get_lr() const {
             double cos_val = (1.0 + std::cos(std::acos(-1.0) * pct)) / 2.0;
             return min_lr_ + (max_lr_ - min_lr_) * cos_val;
         } else {
-            // Linear decay — clamp to [min_lr, max_lr]
             double lin = max_lr_ - (max_lr_ - min_lr_) * std::clamp(pct, 0.0, 1.0);
             return lin;
         }

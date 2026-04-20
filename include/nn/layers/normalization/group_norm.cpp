@@ -23,6 +23,9 @@ Tensor GroupNorm::forward(const Tensor& x) {
     if (num_groups_ == 0 || num_groups_ > (int)num_channels_) {
         throw std::invalid_argument("GroupNorm: num_groups must be > 0 and <= num_channels");
     }
+    if (num_channels_ % num_groups_ != 0) {
+        throw std::invalid_argument("GroupNorm: num_channels must be divisible by num_groups");
+    }
 
     last_x_ = x;
     last_spatial_ = spatial_per_channel;

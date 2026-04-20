@@ -80,8 +80,11 @@ void SWAOptimizer::swap_to_averaged(Model& model) {
     for (auto& layer : model.layers)
         for (Tensor* p : layer->parameters()) {
             for (size_t i = 0; i < p->rows; ++i)
-                for (size_t j = 0; j < p->cols; ++j)
+                for (size_t j = 0; j < p->cols; ++j) {
+                    // Save current params to shadow before overwriting
+                    shadow_weights_[idx][i][j] = (*p)[i][j];
                     (*p)[i][j] = averaged_weights_[idx][i][j];
+                }
             ++idx;
         }
 }
@@ -89,11 +92,14 @@ void SWAOptimizer::swap_to_averaged(Model& model) {
 void SWAOptimizer::record(Model& model) {
     if (!initialized_) return;
     size_t idx = 0;
+    double n = static_cast<double>(step_count_ - start_after_ + 1);
     for (auto& layer : model.layers)
         for (Tensor* p : layer->parameters()) {
             for (size_t i = 0; i < p->rows; ++i)
-                for (size_t j = 0; j < p->cols; ++j)
-                    averaged_weights_[idx][i][j] = (*p)[i][j];
+                for (size_t j = 0; j < p->cols; ++j) {
+                    double old_avg = averaged_weights_[idx][i][j];
+                    averaged_weights_[idx][i][j] = (old_avg * (n - 1) + (*p)[i][j]) / n;
+                }
             ++idx;
         }
 }

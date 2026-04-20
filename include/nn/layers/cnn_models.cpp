@@ -21,8 +21,9 @@ VGGBlock::VGGBlock(size_t in_channels, size_t filters[], size_t n_layers,
 
 Tensor VGGBlock::forward(const Tensor& input) {
     last_output_ = input;
-    size_t ch = last_output_.cols / (224 * 224); // infer H,W assuming 224
-    size_t H = 224, W = 224;
+    // Detect H, W from input: cols = in_channels * H * W
+    size_t ch = last_output_.cols / (H * W); // infer channels (not used further, but correct)
+    (void)ch; // suppress unused warning
 
     for (size_t i = 0; i < n_layers_; ++i) {
         last_output_ = convs_[i].forward(last_output_);
