@@ -16,6 +16,7 @@ public:
     std::vector<Tensor*> gradients() override;
     Tensor get_weights() const override { return Tensor(); }
     Tensor get_gradients() const override { return Tensor(); }
+    size_t dim_capsule() const { return dim_capsule_; }
 
 private:
     size_t num_capsules_, dim_capsule_, num_routing_, input_dim_;
@@ -50,6 +51,7 @@ private:
     Dense fc1_, fc2_, fc3_; // reconstruction decoder
     Tensor last_input_;
     Tensor last_capsule_output_;
+    size_t dim_capsule_;
 };
 
 #endif

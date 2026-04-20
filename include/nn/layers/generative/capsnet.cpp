@@ -124,7 +124,7 @@ CapsNet::CapsNet(size_t input_channels, size_t H, size_t W,
       fc1_(num_classes * dim_capsule, 512),
       fc2_(512, 1024),
       fc3_(1024, H * W * input_channels),
-      last_capsule_output_(1, 1) {}
+      last_capsule_output_(1, 1), dim_capsule_(dim_capsule) {}
 
 Tensor CapsNet::forward(const Tensor& input) {
     last_input_ = input;
@@ -144,14 +144,14 @@ Tensor CapsNet::forward(const Tensor& input) {
     last_capsule_output_ = digit_caps_.forward(x);
 
     // Compute length of each capsule vector as prediction confidence
-    size_t dim_capsule = 16; // NOTE: pass as param if needed
-    Tensor lengths(batch, last_capsule_output_.cols / dim_capsule);
+    size_t dim_caps = digit_caps_.dim_capsule();
+    Tensor lengths(batch, last_capsule_output_.cols / dim_caps);
     for (size_t b = 0; b < batch; ++b) {
         for (size_t c = 0; c < lengths.cols; ++c) {
             double norm_sq = 0.0;
-            for (size_t k = 0; k < dim_capsule; ++k)
-                norm_sq += last_capsule_output_[b][c * dim_capsule + k]
-                         * last_capsule_output_[b][c * dim_capsule + k];
+            for (size_t k = 0; k < dim_caps; ++k)
+                norm_sq += last_capsule_output_[b][c * dim_caps + k]
+                         * last_capsule_output_[b][c * dim_caps + k];
             lengths[b][c] = std::sqrt(norm_sq);
         }
     }
