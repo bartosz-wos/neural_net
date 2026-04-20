@@ -1,0 +1,41 @@
+#ifndef NN_H
+#define NN_H
+
+// Public umbrella header — all library components
+// Include path: -I<root>/include
+#include "core/tensor.h"
+#include "core/layer.h"
+#include "core/model.h"
+#include "activations/activations.h"
+#include "optimizers/optimizer.h"
+#include "optimizers/optimizer_extended.h"
+#include "optimizers/scheduler.h"
+#include "utils/grid_search.h"
+#include "layers/conv_layer.h"
+#include "layers/pool_layer.h"
+#include "layers/lstm.h"
+#include "layers/rnn.h"
+#include "layers/embedding.h"
+#include "layers/layer_norm.h"
+#include "layers/batch_norm.h"
+#include "layers/flatten.h"
+#include "layers/transformer.h"
+#include "layers/conv1d.h"
+#include "layers/skip_connection.h"
+#include "layers/multi_output_model.h"
+#include "layers/gru.h"
+#include "layers/weight_norm.h"
+#include "layers/dataloader.h"
+#include "utils/tokenizer.h"
+#include "utils/gradient_check.h"
+#include "layers/densenet.h"
+#include "layers/mobilenet_v2.h"
+#include "layers/squeezenet.h"
+#include "layers/layer_output_tracker.h"
+#include "layers/memory_network.h"
+#include "utils/numerical_stability.h"
+#include "utils/timing_benchmark.h"
+#include "utils/serialization_roundtrip.h"
+#include "layers/lstm_las.h"
+
+#endif
