@@ -5,19 +5,27 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-_(empty — round 4 complete)_
+- **capsnet**: Capsule Network — capsules with dynamic routing by agreement, Mask-R佛教练, reconstruction loss. `CapsuleLayer`, `CapsNet`
+- **coordconv**: CoordConv — appends (x,y) coordinate channels to input feature maps. `CoordConv2D`
+- **gnn**: Graph Neural Network — GCN layer (Aggregate→Combine with adjacency), GAT (multi-head attention). `GCNLayer`, `GATLayer`, `GraphNetwork`
+- **squeeze_excitation**: Squeeze-Excitation block — global avg pool → FC → ReLU → FC → Sigmoid, channel attention. `SEBlock`, `SEResNetBlock`
+- **mixture_of_experts**: Mixture of Experts — sparse gating, load balancing loss, top-k routing. `MoELayer`, `SparseDispatcher`
+- **focal_loss**: Focal Loss — for class-imbalanced classification. γ focus parameter, α weighting. `FocalLoss`
+- **clip_grad_norm**: Gradient clipping by global norm — `clip_grad_norm_(params, max_norm)` utility
+- **one_cycle_lr**: OneCycleLR scheduler — super-convergence: warmup → max_lr → anneal. `OneCycleLR`
+- **label_smoothing**: Label smoothing cross-entropy — soft targets instead of hard labels. `LabelSmoothingCrossEntropy`
 
 ## Done
 
-- **densenet** ✅ — `DenseBlock` (dense concat connections), `TransitionLayer` (compression), `DenseNet` encoder
-- **mobilenet_v2** ✅ — `InvertedResidual` (expand→depthwise→project), ReLU6, skip conn, `MobileNetV2`
-- **serialization_roundtrip_test** ✅ — `SerializationRoundtripTest` with save→load→verify, multi-input, stress test
-- **lstm_las** ✅ — `LASEncoder`, `LASSelfAttention`, `LASDecoder`, `ListenAttendSpell`
-- **memory_network** ✅ — MemN2N with `EmbeddingLayer`, hop layers, attention over memory slots
-- **squeezenet** ✅ — `FireModule` (squeeze 1x1 → expand 1x1+3x3), `SqueezeNet` model
-- **numerical_stability_tests** ✅ — NaN/Inf stress, softmax overflow, boundary ops, gradient clipping, activation extremes
-- **layer_timing_benchmark** ✅ — `TimingBenchmark` with per-layer ms profiling, `run_model()`, CSV export
-- **layer_output_tracker** ✅ — monitors activation min/max/mean/std/%zero per step, vanishing/exploding detection, CSV logging
+- **densenet** ✅
+- **mobilenet_v2** ✅
+- **serialization_roundtrip_test** ✅
+- **lstm_las** ✅
+- **memory_network** ✅
+- **squeezenet** ✅
+- **numerical_stability_tests** ✅
+- **layer_timing_benchmark** ✅
+- **layer_output_tracker** ✅
 
 - **resnet_blocks**, **vae**, **lstm_bidirectional**, **spatial_dropout**, **weight_init_schemes**, **gru_layer**, **seq2seq_attention**, **swa**, **build_cnn_models**, **normalize_weights**
 - **gradient_check**, **weight_decay_wrapper**, **multi_output_model**, **skip_connection**, **1d_pooling**, **mish_activation**, **early_stopping**, **model_summary**, **binary_serialization**, **softmax_cross_entropy_logits**
