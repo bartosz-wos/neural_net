@@ -27,7 +27,7 @@ Tensor LabelSmoothingCrossEntropy::forward(const Tensor& logits, const Tensor& t
 
     // Cross entropy with smooth targets: -sum y_smooth * log_softmax
     // Compute softmax
-    Tensor probs = Softmax::softmax(logits);
+    Tensor probs = Softmax()(logits);
 
     double loss = 0.0;
     for (size_t b = 0; b < batch; ++b) {
@@ -36,7 +36,9 @@ Tensor LabelSmoothingCrossEntropy::forward(const Tensor& logits, const Tensor& t
                 loss -= smooth_targets[b][j] * std::log(probs[b][j]);
         }
     }
-    return Tensor(1, 1, loss / batch);
+    Tensor loss_tensor(1, 1);
+    loss_tensor(0, 0) = loss / batch;
+    return loss_tensor;
 }
 
 Tensor LabelSmoothingCrossEntropy::backward(const Tensor& logits, const Tensor& targets) {
@@ -45,7 +47,7 @@ Tensor LabelSmoothingCrossEntropy::backward(const Tensor& logits, const Tensor& 
     size_t K = logits.cols;
 
     // Gradient: (softmax - smooth_targets) / batch
-    Tensor probs = Softmax::softmax(logits);
+    Tensor probs = Softmax()(logits);
     Tensor grad(batch, K);
     for (size_t b = 0; b < batch; ++b)
         for (size_t j = 0; j < K; ++j)
