@@ -1,14 +1,18 @@
 #include "mixup_cutmix.h"
 #include <algorithm>
 #include <cmath>
+#include <random>
 
 MixupResult Mixup::apply(const Tensor& X, const Tensor& y) {
-    std::uniform_real_distribution<float> dist(0.3f, 0.7f);
+    // Sample lambda from Beta(alpha, alpha) — standard MixUp formulation
+    // Beta(a,b) sampled as X/(X+Y) with X~Gamma(a,1), Y~Gamma(b,1)
+    std::gamma_distribution<double> dist_alpha(alpha_);
+    double g1 = dist_alpha(rng_);
+    double g2 = dist_alpha(rng_);
+    float lambda = static_cast<float>(g1 / (g1 + g2));
 
     int N = (int)X.rows;
     int total_features = (int)X.cols;
-
-    float lambda = dist(rng_);
 
     // Pick random index for mixing partner
     std::uniform_int_distribution<int> idx_dist(0, N - 1);
@@ -33,17 +37,19 @@ MixupResult Mixup::apply(const Tensor& X, const Tensor& y) {
 }
 
 CutMixResult CutMix::apply(const Tensor& X, const Tensor& y, int C, int H, int W) {
-    std::uniform_real_distribution<float> dist(0.3f, 0.7f);
+    // Sample lambda from Beta(alpha, alpha) — same as MixUp
+    std::gamma_distribution<double> g_alpha(alpha_);
+    double g1 = g_alpha(rng_);
+    double g2 = g_alpha(rng_);
+    float lambda = static_cast<float>(g1 / (g1 + g2));
 
     int N = (int)X.rows;
-    int spatial = C * H * W;
 
-    float lambda = dist(rng_);
-
-    // Sample bounding box area = lambda * H * W
-    float area = lambda * H * W;
-    int target_h = std::uniform_int_distribution<int>(1, (int)std::sqrt(area) * 2)(rng_);
-    int target_w = (int)(area / target_h);
+    // Sample bounding box dimensions from lambda proportional area
+    // Standard CutMix: w = sqrt(λ) * W, h = sqrt(λ) * H (aspect ratio preserved)
+    float sqrt_lambda = std::sqrt(lambda);
+    int target_h = std::max(1, (int)(sqrt_lambda * H));
+    int target_w = std::max(1, (int)(sqrt_lambda * W));
     target_h = std::min(target_h, H);
     target_w = std::min(target_w, W);
 
