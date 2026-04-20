@@ -5,19 +5,16 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-- **catboost_style**: CatBoost-style boosting — ordered boosting (anti-leakage), symmetric trees, `PerceptronCriterion` for classification, `CatBoostClassifier`
-- **random_forest**: Random Forest — bagging + random feature subset at each split. `RandomForest` with parallel trees, majority vote
-- **isolation_forest**: Isolation Forest — anomaly detection via random splits, anomaly score = 2^{-(avg_depth / c(n))}. `IsolationForest`
-- **lightgbm_style**: LightGBM-style — histogram-based binning (feature binning for speed), leaf-wise growth (best-first), `HistogramBoosting`
-- **elastic_net**: ElasticNet regularization — combined L1 (Lasso) + L2 (Ridge) penalty on weights, `ElasticNet` utility
+_(round 9 queue — to be filled)_
 
 ## Done
 
-- **tabular_ensemble** ✅ — `TabularDataset`, `DecisionStump` (Gini-split search)
-- **adaboost** ✅ — `AdaBoost` with sample reweighting + weighted vote
-- **gradient_boosting** ✅ — `GradientBoosting`, `RegressionTree`
-- **xgboost_style** ✅ — `XGBoostTree` (λ, γ, min_child_weight), `XGBoostClassifier`
+- **elastic_net** ✅ — `ElasticNet` (L1+L2 combined penalty), coordinate descent solver, soft-thresholding
+- **random_forest** ✅ — `RandomForest` (bagging + random feature subset, info gain / MSE splits), majority vote / mean
+- **isolation_forest** ✅ — `IsolationForest` (random splits, anomaly score = 2^{-avg_path/c(n)}), binary anomaly predictions
+- **lightgbm_style** ✅ — `HistogramBoosting` (feature binning, histogram-based gradient boosting, best-first leaf growth)
 
+- **tabular_ensemble** ✅, **adaboost** ✅, **gradient_boosting** ✅, **xgboost_style** ✅
 - **coordconv** ✅, **gnn** ✅, **squeeze_excitation** ✅, **mixture_of_experts** ✅
 - **capsnet** ✅, **clip_grad_norm** ✅, **one_cycle_lr** ✅, **focal_loss** ✅, **label_smoothing** ✅
 - **densenet**, **mobilenet_v2**, **serialization_roundtrip_test**, **lstm_las**, **memory_network**, **squeezenet**, **numerical_stability_tests**, **layer_timing_benchmark**, **layer_output_tracker**
