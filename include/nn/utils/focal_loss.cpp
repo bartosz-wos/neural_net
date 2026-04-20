@@ -69,9 +69,10 @@ Tensor FocalLoss::backward(const Tensor& logits, const Tensor& targets) {
         double p_t = probs[b][label];
         p_t = std::max(1e-7, std::min(p_t, 1.0 - 1e-7));
 
-        double pt_gamma = std::pow(1.0 - p_t, gamma_);
-        double dFL_dpt = -alpha_ * (gamma_ * std::pow(1.0 - p_t, gamma_ - 1.0) * p_t * std::log(p_t)
-                                    + pt_gamma / p_t);
+        double dFL_dpt = alpha_ * std::pow(1.0 - p_t, gamma_ - 1.0) * (gamma_ * std::log(p_t) + 1.0);
+        // For target class (indicator=1): gradient = dFL_dpt * (1 - p_t)
+        // For non-target class (indicator=0): gradient = -dFL_dpt * p_j
+        // The code below uses (indicator - p_j) which gives the correct result with dFL_dpt above
 
         for (size_t j = 0; j < K; ++j) {
             double indicator = (j == label) ? 1.0 : 0.0;

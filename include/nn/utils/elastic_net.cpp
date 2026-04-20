@@ -63,9 +63,10 @@ Tensor ElasticNet::fit(const Tensor& X, const Tensor& y, const Tensor& weights_i
             residual /= XtX[j][j];
 
             // Soft thresholding: S_α(x) = sign(x) * max(|x| - α, 0)
-            double L1_pen = alpha_ * l1_ratio_;
-            if (residual > L1_pen) w[0][j] = (residual - L1_pen) / (XtX[j][j] + alpha_ * (1.0 - l1_ratio_));
-            else if (residual < -L1_pen) w[0][j] = (residual + L1_pen) / (XtX[j][j] + alpha_ * (1.0 - l1_ratio_));
+            // L1 penalty normalized by XtX diagonal entry for consistency
+            double L1_pen = alpha_ * l1_ratio_ / XtX[j][j];
+            if (residual > L1_pen) w[0][j] = (residual - L1_pen) / (1.0 + alpha_ * (1.0 - l1_ratio_) / XtX[j][j]);
+            else if (residual < -L1_pen) w[0][j] = (residual + L1_pen) / (1.0 + alpha_ * (1.0 - l1_ratio_) / XtX[j][j]);
             else w[0][j] = 0.0;
         }
     }

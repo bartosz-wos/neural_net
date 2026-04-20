@@ -221,7 +221,10 @@ NumericalStabilityTest::TestResult NumericalStabilityTest::test_gradient_flow() 
         for (size_t j = 0; j < 64; ++j)
             if (x[0][j] <= 0) grad[0][j] = 0.0;
 
-        double grad_norm = std::sqrt(max_abs(grad) * max_abs(grad) / 64.0);
+        double sum_sq = 0.0;
+        for (size_t j = 0; j < 64; ++j)
+            sum_sq += grad[0][j] * grad[0][j];
+        double grad_norm = std::sqrt(sum_sq / 64.0);
         if (d == depth && grad_norm < 1e-10) {
             r.passed = false;
             r.message = "Gradients vanishing at depth " + std::to_string(d);

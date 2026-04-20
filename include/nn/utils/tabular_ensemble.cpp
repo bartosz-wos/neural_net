@@ -9,7 +9,7 @@
 TabularDataset::TabularDataset(const std::string& csv_path,
                                bool has_header, bool normalize,
                                double train_ratio, size_t label_col, char sep)
-    : n_features_(0), n_samples_(0) {
+    : n_features_(0), n_samples_(0), train_ratio_(train_ratio) {
 
     std::ifstream f(csv_path);
     if (!f.is_open()) return;
@@ -74,7 +74,7 @@ TabularDataset::TabularDataset(const std::string& csv_path,
 TabularDataset::Split TabularDataset::split() const {
     Split s;
     size_t n = n_samples_;
-    size_t train_n = static_cast<size_t>(n * 0.8);
+    size_t train_n = static_cast<size_t>(n * train_ratio_);
 
     s.X_train = Tensor(train_n, n_features_);
     s.y_train = Tensor(train_n, 1);

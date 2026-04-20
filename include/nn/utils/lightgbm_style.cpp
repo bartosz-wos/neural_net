@@ -23,18 +23,24 @@ void HistogramBoosting::build_histogram(const Tensor& X, const Tensor& grad,
     size_t n = X.rows, d = X.cols;
     out.assign(d * max_bins_, HistogramBin());
 
+    // Precompute v_min/v_max per feature (outside sample loop)
+    std::vector<double> v_min(d), v_max(d);
+    for (size_t j = 0; j < d; ++j) {
+        v_min[j] = X[0][j];
+        v_max[j] = X[0][j];
+        for (size_t k = 1; k < n; ++k) {
+            v_min[j] = std::min(v_min[j], X[k][j]);
+            v_max[j] = std::max(v_max[j], X[k][j]);
+        }
+    }
+
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < d; ++j) {
             // Bin feature j
             double v = X[i][j];
-            double v_min = X[0][j], v_max = X[0][j];
-            for (size_t k = 1; k < n; ++k) {
-                v_min = std::min(v_min, X[k][j]);
-                v_max = std::max(v_max, X[k][j]);
-            }
             size_t bin = 0;
-            if (v_max > v_min)
-                bin = static_cast<size_t>((v - v_min) / (v_max - v_min) * (max_bins_ - 1));
+            if (v_max[j] > v_min[j])
+                bin = static_cast<size_t>((v - v_min[j]) / (v_max[j] - v_min[j]) * (max_bins_ - 1));
             bin = std::min(bin, max_bins_ - 1);
 
             size_t idx = j * max_bins_ + bin;

@@ -12,7 +12,7 @@ Tensor SkipConnection::forward(const Tensor& input) {
     // Determine output size: out is (batch, inner_out_features)
     // If out.cols != input.cols, we need a projection
     if (out.cols != input.cols) {
-        // Create projection on first forward pass
+        // Recompute projection whenever dims change (not just first pass)
         size_t in_feat = input.cols;
         size_t out_feat = out.cols;
         shortcut_ = std::make_unique<Dense>(in_feat, out_feat);

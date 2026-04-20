@@ -57,7 +57,7 @@ public:
 
     // Returns {X_batch, y_batch} stacked as (batch_size, features/targets)
     // Stops early if not enough samples remain for a full batch
-    bool has_next() const { return pos_ + batch_size_ <= dataset_.size(); }
+    bool has_next() const { return pos_ < dataset_.size(); }
 
     std::pair<Tensor, Tensor> next_batch() {
         size_t N = std::min(batch_size_, dataset_.size() - pos_);

@@ -110,8 +110,23 @@ Tensor ResNet::forward(const Tensor& input) {
 }
 
 Tensor ResNet::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output; (void)learning_rate;
-    return Tensor(1, 1);
+    // Backprop through fc layer
+    Tensor grad_fc = fc_.backward(grad_output, learning_rate);
+    // Unflatten gradient to stage output shape
+    size_t batch = grad_fc.rows;
+    size_t stage_cols = stages_.back().out_channels()
+                        * stages_.back().H_out() * stages_.back().W_out();
+    Tensor grad_stage(batch, stage_cols);
+    for (size_t i = 0; i < batch; ++i)
+        for (size_t j = 0; j < stage_cols; ++j)
+            grad_stage[i][j] = grad_fc[i][j];
+    // Backprop through stages in reverse order
+    Tensor grad = grad_stage;
+    for (auto it = stages_.rbegin(); it != stages_.rend(); ++it)
+        grad = it->backward(grad, learning_rate);
+    // Backprop through stem
+    grad = stem_.backward(grad, learning_rate);
+    return grad;
 }
 
 void ResNet::update_weights(double learning_rate) {

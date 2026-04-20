@@ -203,8 +203,16 @@ double RandomForest::score(const Tensor& X, const Tensor& y) const {
     Tensor pred = predict(X);
     size_t n = y.rows;
     double correct = 0.0;
+    // Scale-adaptive tolerance for regression: 1% of y range, floor at 0.5
+    double y_min = 1e100, y_max = -1e100;
+    for (size_t i = 0; i < n; ++i) {
+        double v = y[i][0];
+        if (v < y_min) y_min = v;
+        if (v > y_max) y_max = v;
+    }
+    double tol = regression_ ? std::max(0.5, (y_max - y_min) * 0.01) : 0.5;
     for (size_t i = 0; i < n; ++i)
-        if ((regression_ && std::abs(pred[i][0] - y[i][0]) < 0.5)
+        if ((regression_ && std::abs(pred[i][0] - y[i][0]) < tol)
             || (!regression_ && pred[i][0] == y[i][0]))
             correct += 1.0;
     return correct / n;

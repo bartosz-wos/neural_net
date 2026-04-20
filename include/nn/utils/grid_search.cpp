@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <cassert>
 
 std::vector<std::map<std::string, std::string>> GridSearchCV::cartesian_product(
     const std::vector<std::map<std::string, std::string>>& grids
@@ -65,6 +66,8 @@ GridSearchResult GridSearchCV::fit(
         double score = 0.0;
         // Simple accuracy on validation set
         Tensor pred = model.forward(X_val);
+        assert(pred.rows == y_val.rows && "GridSearch: pred and y_val must have same row count");
+        assert(pred.cols == y_val.cols && "GridSearch: pred and y_val must have same col count");
         int correct = 0;
         size_t n = X_val.rows;
         for (size_t i = 0; i < n; ++i) {

@@ -17,6 +17,9 @@ public:
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
     void zero_grad() override;
+    size_t H_out() const { return H_out_; }
+    size_t W_out() const { return W_out_; }
+    size_t out_channels() const { return out_channels_; }
 
 private:
     Conv2D conv1_, conv2_;

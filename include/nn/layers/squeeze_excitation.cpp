@@ -2,7 +2,7 @@
 #include <cmath>
 
 SEBlock::SEBlock(size_t in_channels, size_t reduction)
-    : fc1_(1, std::max(in_channels / reduction, size_t(1))),
+    : fc1_(in_channels, std::max(in_channels / reduction, size_t(1))),
       fc2_(std::max(in_channels / reduction, size_t(1)), in_channels),
       in_channels_(in_channels), reduction_(reduction),
       last_excitation_(1, in_channels) {}

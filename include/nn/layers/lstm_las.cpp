@@ -17,8 +17,12 @@ Tensor LASEncoder::forward(const Tensor& input) {
         for (size_t j = 0; j < input_dim_; ++j)
             timestep[0][j] = input[t][j];
 
-        lstm_layers_[0].forward(timestep);
-        h_states_[t][0] = lstm_layers_[0].last_output_[0][0];
+        // Pass through all LSTM layers
+        Tensor layer_output = timestep;
+        for (size_t l = 0; l < num_layers_; ++l)
+            layer_output = lstm_layers_[l].forward(layer_output);
+        for (size_t h = 0; h < hidden_size_; ++h)
+            h_states_[t][h] = layer_output[0][h];
     }
     return h_states_;
 }

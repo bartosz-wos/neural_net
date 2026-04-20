@@ -112,7 +112,7 @@ Tensor MaxPool1D::forward(const Tensor& input) {
                         if (val > max_val) { max_val = val; max_idx = t; }
                     }
                 }
-                int col_idx = n * channels * seq_out + c * seq_out + t_out;
+                int col_idx = n * seq_out + t_out;
                 output[n][c * seq_out + t_out] = max_val;
                 max_indices_[c][col_idx] = max_idx;
             }
@@ -128,7 +128,7 @@ Tensor MaxPool1D::backward(const Tensor& grad_output, double /* learning_rate */
     for (int n = 0; n < N; ++n) {
         for (int c = 0; c < channels; ++c) {
             for (int t_out = 0; t_out < seq_out; ++t_out) {
-                int col_idx = n * channels * seq_out + c * seq_out + t_out;
+                int col_idx = n * seq_out + t_out;
                 int max_idx = max_indices_[c][col_idx];
                 if (max_idx >= 0) {
                     grad_input[n][c * seq_len + max_idx] += grad_output[n][c * seq_out + t_out];
@@ -182,7 +182,7 @@ Tensor AvgPool1D::backward(const Tensor& grad_output, double /* learning_rate */
                 for (int k = 0; k < kernel_size; ++k) {
                     int t = t_out * stride + k;
                     if (t < seq_len) {
-                        grad_input[n][c * seq_len + t] += grad_val / kernel_size;
+                        grad_input[n][c * seq_len + t] += grad_val * norm;
                     }
                 }
             }

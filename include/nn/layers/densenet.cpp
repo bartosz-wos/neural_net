@@ -136,7 +136,6 @@ Tensor DenseNet::forward(const Tensor& input) {
     Tensor x = stem_.forward(input);
     size_t batch = x.rows;
     size_t ch = x.cols;
-    x = Tensor(batch, ch);
 
     for (size_t b = 0; b < blocks_.size(); ++b) {
         x = blocks_[b].forward(x);

@@ -28,6 +28,7 @@ public:
 private:
     Tensor X_, y_;
     size_t n_features_, n_samples_;
+    double train_ratio_;
 };
 
 // Decision stump: 1-level decision tree as weak learner for boosting

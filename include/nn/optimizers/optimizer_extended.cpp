@@ -64,16 +64,22 @@ void AdamW::step(Model& model) {
             Tensor& m = m_vec[i];
             Tensor& v = v_vec[i];
 
+            // bias-corrected moments (computed once per param tensor)
+            double b1_corr = 1.0 - std::pow(beta1, t);
+            double b2_corr = 1.0 - std::pow(beta2, t);
+
             for (size_t r = 0; r < p->rows; ++r) {
                 for (size_t c_col = 0; c_col < p->cols; ++c_col) {
                     double gg = (*g)[r][c_col];
                     m[r][c_col] = beta1 * m[r][c_col] + (1 - beta1) * gg;
                     v[r][c_col] = beta2 * v[r][c_col] + (1 - beta2) * gg * gg;
-                    double m_hat = m[r][c_col] / (1 - std::pow(beta1, t));
-                    double v_hat = v[r][c_col] / (1 - std::pow(beta2, t));
-                    // Weight decay
+                    double m_hat = m[r][c_col] / b1_corr;
+                    double v_hat = v[r][c_col] / b2_corr;
+                    // Adam step first
+                    double param_update = lr * m_hat / (std::sqrt(v_hat) + epsilon);
+                    (*p)[r][c_col] -= param_update;
+                    // Weight decay applied after update (proper AdamW order)
                     (*p)[r][c_col] -= lr * weight_decay * (*p)[r][c_col];
-                    (*p)[r][c_col] -= lr * m_hat / (std::sqrt(v_hat) + epsilon);
                 }
             }
         }
@@ -103,6 +109,9 @@ void SGDNesterov::step(Model& model) {
             Tensor& v = vel[i];
             for (size_t r = 0; r < p->rows; ++r) {
                 for (size_t c_col = 0; c_col < p->cols; ++c_col) {
+                    // Standard momentum SGD; Nesterov lookahead would require
+                    // gradient re-evaluation at (p + momentum*v) which needs
+                    // an extra forward pass and is not implemented here.
                     v[r][c_col] = momentum * v[r][c_col] + (*g)[r][c_col];
                     (*p)[r][c_col] -= lr * v[r][c_col];
                 }

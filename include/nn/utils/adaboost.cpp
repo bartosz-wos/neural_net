@@ -43,7 +43,7 @@ Tensor AdaBoost::predict(const Tensor& X) const {
         double sum = 0.0;
         for (size_t t = 0; t < stumps_.size(); ++t) {
             Tensor pred = stumps_[t].predict(X.get_row(i));
-            sum += alphas_[t] * pred[i][0];
+            sum += alphas_[t] * pred[0][0];
         }
         out[i][0] = (sum >= 0) ? 1.0 : -1.0;
     }
