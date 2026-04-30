@@ -36,6 +36,26 @@ struct Softmax {
     static Tensor cross_entropy_grad(const Tensor& logits, const Tensor& labels);
 };
 
+struct LogSoftmax {
+    // Applies log-softmax row-wise: log(softmax(x)) = x - max - log(sum(exp(x - max)))
+    // Numerically stable: subtracts max logit before exp to prevent overflow
+    Tensor operator()(const Tensor& t) const;
+};
+
+// PReLU: Parametric ReLU — learnable negative slope (default 0.01)
+// From "Delving Deep into Rectifiers" (He et al., 2015)
+struct PReLU {
+    double alpha;
+    explicit PReLU(double init_alpha = 0.01) : alpha(init_alpha) {}
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const {
+        // Clamp for numerical stability
+        double x_clamped = std::max(-100.0, std::min(100.0, x));
+        return x_clamped >= 0 ? x_clamped : alpha * x_clamped;
+    }
+    double derivative(double x) const { return x >= 0 ? 1.0 : alpha; }
+};
+
 // LeakyReLU: slope for negative side (default 0.01)
 struct LeakyReLU {
     double slope;
@@ -76,6 +96,17 @@ struct GELU {
 struct Swish {
     Tensor operator()(const Tensor& t) const;
     double operator()(double x) const { return x / (1.0 + std::exp(-x)); }
+    double derivative(double x) const;
+};
+
+// SELU: Scaled Exponential Linear Unit — self-normalizing (Klambauer et al., 2017)
+struct SELU {
+    static constexpr double alpha = 1.6732632423543772848470426433812;
+    static constexpr double scale  = 1.0507009873554804934193349852946;
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const {
+        return x >= 0 ? scale * x : scale * alpha * (std::exp(x) - 1.0);
+    }
     double derivative(double x) const;
 };
 

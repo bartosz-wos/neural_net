@@ -44,6 +44,23 @@ Tensor Softmax::cross_entropy_grad(const Tensor& logits, const Tensor& labels) {
     return grad;
 }
 
+Tensor LogSoftmax::operator()(const Tensor& t) const {
+    Tensor result(t.rows, t.cols);
+    for (size_t i = 0; i < t.rows; ++i) {
+        double max_logit = t[i][0];
+        for (size_t j = 1; j < t.cols; ++j)
+            if (t[i][j] > max_logit) max_logit = t[i][j];
+        double sum_exp = 0.0;
+        for (size_t j = 0; j < t.cols; ++j)
+            sum_exp += std::exp(t[i][j] - max_logit);
+        sum_exp = std::max(sum_exp, 1e-300);  // guard: all exp underflow → 0
+        double log_sum_exp = std::log(sum_exp);
+        for (size_t j = 0; j < t.cols; ++j)
+            result[i][j] = t[i][j] - max_logit - log_sum_exp;
+    }
+    return result;
+}
+
 
 // Numerically stable combined softmax + cross-entropy loss
 // Handles both one-hot labels and class-index labels
@@ -108,6 +125,14 @@ Tensor softmax_cross_entropy_grad(const Tensor& logits, const Tensor& labels) {
     return grad;
 }
 
+Tensor PReLU::operator()(const Tensor& t) const {
+    return t.apply([this](double x) {
+        // Clamp for numerical stability
+        double x_clamped = std::max(-100.0, std::min(100.0, x));
+        return x_clamped >= 0 ? x_clamped : alpha * x_clamped;
+    });
+}
+
 Tensor LeakyReLU::operator()(const Tensor& t) const {
     return t.apply([this](double x) { return x >= 0 ? x : slope * x; });
 }
@@ -167,4 +192,18 @@ Tensor Mish::operator()(const Tensor& t) const {
         double sp = std::log(1.0 + std::exp(x)); // softplus, numerically stable both sides
         return x * std::tanh(sp);
     });
+}
+
+Tensor SELU::operator()(const Tensor& t) const {
+    return t.apply([](double x) {
+        if (x >= 0) return scale * x;
+        double x_clamped = std::max(x, -700.0);
+        return scale * alpha * (std::exp(x_clamped) - 1.0);
+    });
+}
+
+double SELU::derivative(double x) const {
+    if (x >= 0) return scale;
+    double x_clamped = std::max(x, -700.0);
+    return scale * alpha * std::exp(x_clamped);
 }
