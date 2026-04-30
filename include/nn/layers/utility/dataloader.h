@@ -3,21 +3,22 @@
 
 #include "../../core/tensor.h"
 #include <vector>
+#include <memory>
 #include <random>
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
 
 // Abstract Dataset: returns (data, target) pair by index
 class Dataset {
 public:
     virtual ~Dataset() = default;
     virtual size_t size() const = 0;
-    // Returns a single sample as (1, features) tensor and its target
     virtual Tensor get_sample(size_t idx) = 0;
     virtual Tensor get_target(size_t idx) = 0;
 };
 
-// Simple in-memory dataset wrapping X (N x features) and y (N x targets)
+// TensorDataset: wraps in-memory X and y tensors as a dataset
 class TensorDataset : public Dataset {
     Tensor X_;
     Tensor y_;
@@ -26,67 +27,59 @@ public:
     size_t size() const override { return X_.rows; }
     Tensor get_sample(size_t idx) override {
         Tensor row(1, X_.cols);
-        for (size_t j = 0; j < X_.cols; ++j) row[0][j] = X_[idx][j];
+        for (size_t c = 0; c < X_.cols; ++c) row(0, c) = X_(idx, c);
         return row;
     }
     Tensor get_target(size_t idx) override {
-        Tensor row(1, y_.cols);
-        for (size_t j = 0; j < y_.cols; ++j) row[0][j] = y_[idx][j];
-        return row;
+        if (y_.cols == 1) {
+            Tensor t(1, 1);
+            t(0, 0) = y_(idx, 0);
+            return t;
+        } else {
+            Tensor t(1, y_.cols);
+            for (size_t c = 0; c < y_.cols; ++c) t(0, c) = y_(idx, c);
+            return t;
+        }
     }
-    const Tensor& X() const { return X_; }
-    const Tensor& y() const { return y_; }
 };
 
-// DataLoader: iterates over a Dataset in mini-batches
+// DataLoader: mini-batch iterator over a Dataset
 class DataLoader {
-    Dataset& dataset_;
+    std::shared_ptr<Dataset> dataset_;
     size_t batch_size_;
     bool shuffle_;
+    bool drop_last_;
     std::vector<size_t> indices_;
     std::mt19937 rng_;
     size_t pos_ = 0;
 
 public:
-    DataLoader(Dataset& dataset, size_t batch_size, bool shuffle = false, unsigned seed = 42)
-        : dataset_(dataset), batch_size_(batch_size), shuffle_(shuffle), rng_(seed) {
-        indices_.resize(dataset.size());
-        std::iota(indices_.begin(), indices_.end(), 0);
-        if (shuffle_) std::shuffle(indices_.begin(), indices_.end(), rng_);
-    }
+    struct Batch {
+        std::vector<Tensor> data;
+        std::vector<Tensor> targets;
+        size_t batch_size;
+    };
 
-    // Returns {X_batch, y_batch} stacked as (batch_size, features/targets)
-    // Stops early if not enough samples remain for a full batch
-    bool has_next() const { return pos_ < dataset_.size(); }
+    DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size,
+               bool shuffle = false, bool drop_last = false, unsigned seed = 42);
 
-    std::pair<Tensor, Tensor> next_batch() {
-        // FIX (Bug 10): dataset_.get_sample(0) / get_target(0) -> use idx from indices_.
-        // Also: pre-compute column sizes before the loop, not from sample 0 each time.
-        size_t N = std::min(batch_size_, dataset_.size() - pos_);
-        Tensor X_batch(N, dataset_.get_sample(indices_[pos_]).cols);
-        Tensor y_batch(N, dataset_.get_target(indices_[pos_]).cols);
-        for (size_t i = 0; i < N; ++i) {
-            size_t idx = indices_[pos_ + i];
-            for (size_t j = 0; j < X_batch.cols; ++j)
-                X_batch[i][j] = dataset_.get_sample(idx)[0][j];
-            for (size_t j = 0; j < y_batch.cols; ++j)
-                y_batch[i][j] = dataset_.get_target(idx)[0][j];
-        }
-        pos_ += N;
-        if (shuffle_ && pos_ >= dataset_.size()) {
-            std::shuffle(indices_.begin(), indices_.end(), rng_);
-            pos_ = 0;
-        }
-        return {X_batch, y_batch};
-    }
+    // Returns the next batch, or empty Batch if exhausted
+    Batch next();
 
-    void reset() {
-        pos_ = 0;
-        if (shuffle_) std::shuffle(indices_.begin(), indices_.end(), rng_);
-    }
+    // Resets the iterator to the beginning of epoch
+    void reset();
 
-    size_t batch_size() const { return batch_size_; }
-    size_t remaining() const { return dataset_.size() - pos_; }
+    // Total number of batches per epoch
+    size_t batches_per_epoch() const;
+
+    // Total dataset size
+    size_t size() const { return dataset_->size(); }
+
+    // Whether there is another batch available
+    bool has_next() const;
+
+private:
+    void shuffle_indices();
 };
 
 #endif

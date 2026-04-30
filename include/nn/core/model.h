@@ -16,6 +16,9 @@ public:
     Tensor backward(Tensor grad, double learning_rate);
     void train(const Tensor& X, const Tensor& y, double learning_rate, int epochs);
     void train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs);
+    // Mini-batch training with DataLoader
+    void train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs,
+               size_t batch_size, bool shuffle = true, unsigned seed = 42);
     void train_cross_entropy(const Tensor& X, const Tensor& y, double learning_rate, int epochs);
     double evaluate(const Tensor& X, const Tensor& y);
     void save(const std::string& path);

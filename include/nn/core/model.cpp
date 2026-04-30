@@ -1,5 +1,6 @@
 #include "model.h"
 #include "../activations/activations.h"
+#include "../layers/utility/dataloader.h"
 #include <fstream>
 #include <cstdint>
 #include <cstring>
@@ -249,6 +250,58 @@ void Model::train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs) 
             total_loss += loss;
         }
         double avg_loss = total_loss / static_cast<double>(X.rows);
+        if ((epoch + 1) % 100 == 0 || epoch == 0) {
+            std::cout << "Epoch " << epoch + 1 << "/" << epochs << " - Loss: " << avg_loss << std::endl;
+        }
+    }
+}
+
+// Mini-batch training with DataLoader (softmax cross-entropy)
+void Model::train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs,
+                  size_t batch_size, bool shuffle, unsigned seed) {
+    auto dataset = std::make_shared<TensorDataset>(X, y);
+    DataLoader loader(dataset, batch_size, shuffle, false, seed);
+
+    for (int epoch = 0; epoch < epochs; ++epoch) {
+        loader.reset();
+        double total_loss = 0.0;
+        int batch_count = 0;
+
+        while (loader.has_next()) {
+            auto batch = loader.next();
+
+            // Stack (1, C) sample tensors into (batch_size, C) tensors
+            size_t batch_sz = batch.data.size();
+            if (batch_sz == 0) continue;
+
+            Tensor X_batch(batch_sz, batch.data[0].cols);
+            for (size_t b = 0; b < batch_sz; ++b)
+                for (size_t c = 0; c < batch.data[0].cols; ++c)
+                    X_batch(b, c) = batch.data[b](0, c);
+
+            Tensor y_batch(batch_sz, batch.targets[0].cols);
+            for (size_t b = 0; b < batch_sz; ++b)
+                for (size_t c = 0; c < batch.targets[0].cols; ++c)
+                    y_batch(b, c) = batch.targets[b](0, c);
+
+            // Forward pass
+            Tensor logits = forward(X_batch);
+
+            // Compute loss
+            double batch_loss = softmax_cross_entropy(logits, y_batch);
+            total_loss += batch_loss;
+
+            // Backward pass
+            Tensor grad = softmax_cross_entropy_grad(logits, y_batch);
+            backward(grad, 0.0);
+
+            // Optimizer step
+            opt.step(*this);
+
+            batch_count++;
+        }
+
+        double avg_loss = batch_count > 0 ? total_loss / batch_count : 0.0;
         if ((epoch + 1) % 100 == 0 || epoch == 0) {
             std::cout << "Epoch " << epoch + 1 << "/" << epochs << " - Loss: " << avg_loss << std::endl;
         }

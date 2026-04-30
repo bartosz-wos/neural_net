@@ -74,6 +74,7 @@
 #include "layers/utility/skip_connection.h"
 #include "layers/utility/squeeze_excitation.h"
 #include "layers/utility/dataloader.h"
+#include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
 // Layers — generative
