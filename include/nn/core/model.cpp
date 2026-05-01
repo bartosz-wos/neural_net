@@ -161,6 +161,51 @@ void Model::save(const std::string& path) {
     out.close();
 }
 
+void Model::set_accumulate_steps(int n) {
+    accum_steps_ = std::max(1, n);
+}
+
+double Model::accumulated_grad_norm() {
+    double sum_sq = 0.0;
+    for (auto& layer : layers) {
+        for (Tensor* g : layer->gradients()) {
+            if (g->rows == 0 || g->cols == 0) continue;
+            for (double val : g->data) {
+                sum_sq += val * val;
+            }
+        }
+    }
+    return std::sqrt(sum_sq);
+}
+
+void Model::apply_gradAccum(Optimizer& opt) {
+    double denom = static_cast<double>(accum_steps_);
+    // Divide accumulated gradients by accum_steps_
+    for (auto& layer : layers) {
+        for (Tensor* g : layer->gradients()) {
+            if (g->rows == 0 || g->cols == 0) continue;
+            for (double& val : g->data) {
+                val /= denom;
+            }
+        }
+    }
+    // Perform weight update
+    opt.step(*this);
+    // Zero gradients after update
+    for (auto& layer : layers) {
+        layer->zero_grad();
+    }
+    step_count_ = 0;
+}
+
+bool Model::should_update() const {
+    return (step_count_ > 0 && step_count_ % accum_steps_ == 0);
+}
+
+void Model::step() {
+    ++step_count_;
+}
+
 Model Model::load(const std::string& path) {
     Model model;
     std::ifstream in(path, std::ios::binary);

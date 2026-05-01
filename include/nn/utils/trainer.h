@@ -6,6 +6,11 @@
 #include "../layers/utility/dataloader.h"
 #include <functional>
 
+struct TrainerConfig {
+    int epochs = 10;
+    int accum_steps = 1;  // gradient accumulation steps (1 = no accumulation)
+};
+
 // Trainer: orchestrates the training loop with full control over
 // epochs, batch iteration, callbacks, and logging.
 class Trainer {
@@ -21,6 +26,10 @@ public:
                Model& model,
                Optimizer& optimizer,
                int epochs);
+
+    // Train with explicit config
+    void train(Model& model, const DataLoader& train_loader,
+               const DataLoader* val_loader, Optimizer& opt, TrainerConfig config);
 
     // Single-batch training step (for manual loops)
     void train_step(Model& model, Optimizer& optimizer,

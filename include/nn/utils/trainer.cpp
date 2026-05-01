@@ -93,6 +93,83 @@ void Trainer::train(DataLoader& train_loader,
     }
 }
 
+void Trainer::train(Model& model, const DataLoader& train_loader,
+                       const DataLoader* val_loader, Optimizer& opt, TrainerConfig config) {
+    model.set_accumulate_steps(config.accum_steps);
+
+    for (int epoch = 0; epoch < config.epochs; ++epoch) {
+        // NOTE: const cast needed because DataLoader doesn't expose non-const iterator
+        auto& loader = const_cast<DataLoader&>(train_loader);
+        loader.reset();
+        double total_loss = 0.0;
+        int batch_count = 0;
+
+        while (loader.has_next()) {
+            DataLoader::Batch batch = loader.next();
+            Tensor X_batch(batch.batch_size, batch.data[0].cols);
+            for (size_t i = 0; i < batch.batch_size; ++i) {
+                for (size_t c = 0; c < X_batch.cols; ++c) {
+                    X_batch(i, c) = batch.data[i](0, c);
+                }
+            }
+            Tensor y_batch = targets_to_tensor_impl(batch.targets);
+
+            // Forward pass
+            Tensor logits = model.forward(X_batch);
+            double batch_loss = softmax_cross_entropy(logits, y_batch);
+            total_loss += batch_loss;
+
+            // Backward pass
+            Tensor grad = softmax_cross_entropy_grad(logits, y_batch);
+            model.backward(grad, 0.0);
+
+            // Gradient accumulation step
+            model.step();
+            if (model.should_update()) {
+                model.apply_gradAccum(opt);
+            }
+
+            batch_count++;
+            if (batch_cb_) batch_cb_(epoch, batch_count, batch_loss);
+        }
+
+        // Final update if we haven't reached accum_steps
+        if (!model.should_update() && model.step_count() > 0) {
+            model.apply_gradAccum(opt);
+        }
+
+        double avg_train_loss = batch_count > 0 ? total_loss / batch_count : 0.0;
+        double val_loss = 0.0;
+
+        if (val_loader) {
+            auto& vloader = const_cast<DataLoader&>(*val_loader);
+            vloader.reset();
+            double val_total = 0.0;
+            int val_count = 0;
+            while (vloader.has_next()) {
+                DataLoader::Batch batch = vloader.next();
+                Tensor X_batch(batch.batch_size, batch.data[0].cols);
+                for (size_t i = 0; i < batch.batch_size; ++i) {
+                    for (size_t c = 0; c < X_batch.cols; ++c) {
+                        X_batch(i, c) = batch.data[i](0, c);
+                    }
+                }
+                Tensor y_batch = targets_to_tensor_impl(batch.targets);
+                Tensor logits = model.forward(X_batch);
+                val_total += softmax_cross_entropy(logits, y_batch);
+                val_count++;
+            }
+            val_loss = val_count > 0 ? val_total / val_count : 0.0;
+        }
+
+        if (epoch_cb_) epoch_cb_(epoch, avg_train_loss, val_loss);
+        if (verbose_) {
+            std::cout << "Epoch " << epoch << " — train_loss: " << avg_train_loss
+                      << " val_loss: " << val_loss << std::endl;
+        }
+    }
+}
+
 double batch_cross_entropy(const Tensor& logits, const Tensor& targets) {
     return softmax_cross_entropy(logits, targets);
 }

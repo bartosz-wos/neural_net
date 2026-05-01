@@ -10,6 +10,18 @@ class Model {
 public:
     std::vector<std::unique_ptr<Layer>> layers;
 
+    // Gradient accumulation support
+    int accum_steps_ = 1;    // 1 = no accumulation (regular training)
+    int step_count_ = 0;     // global step counter
+
+    void set_accumulate_steps(int n);       // Number of steps to accumulate before update
+    int get_accumulate_steps() const { return accum_steps_; }
+    double accumulated_grad_norm();          // Returns L2 norm of summed gradients
+    void apply_gradAccum(Optimizer& opt);    // Divide accumulated grads by accum_steps_, update weights, zero grads
+    bool should_update() const;              // returns (step_count_ % accum_steps_ == 0)
+    void step();                             // increment step_count_; returns true when should_update()
+    int step_count() const { return step_count_; }
+
     Model() = default;
     void add_layer(Layer* layer);  // takes ownership
     Tensor forward(const Tensor& input);
