@@ -11,9 +11,9 @@ class OneCycleLR : public LRScheduler {
 public:
     OneCycleLR(double max_lr, size_t total_steps,
                double min_lr = 1e-7, const std::string& anneal_strategy = "cos");
-    void step() override;
+    void step(Model& model) override { ++step_; apply(model); }
     double get_lr() const override;
-    void apply(Model& model) override {}
+    void apply(Model& model);  // overrides LRScheduler::apply to call notify_optimizer
     void reset() { step_ = 0; }
 
 private:

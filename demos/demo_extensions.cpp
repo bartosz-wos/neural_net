@@ -77,12 +77,12 @@ int main() {
     std::cout << "[6] LR Schedulers\n";
     StepLR step_lr(0.01, 5, 0.5);
     std::cout << "  StepLR: initial=" << step_lr.get_lr();
-    step_lr.step(); step_lr.step(); step_lr.step(); step_lr.step(); step_lr.step();
+    step_lr.step(m); step_lr.step(m); step_lr.step(m); step_lr.step(m); step_lr.step(m);
     std::cout << " after 5 steps=" << step_lr.get_lr() << "\n";
 
     ExponentialLR exp_lr(0.1, 0.9);
     std::cout << "  ExponentialLR: initial=" << exp_lr.get_lr();
-    exp_lr.step(); exp_lr.step(); exp_lr.step();
+    exp_lr.step(m); exp_lr.step(m); exp_lr.step(m);
     std::cout << " after 3 steps=" << exp_lr.get_lr() << "\n";
 
     ReduceLROnPlateau plateau(0.1);

@@ -12,10 +12,6 @@ OneCycleLR::OneCycleLR(double max_lr, size_t total_steps,
     if (total_steps < 3) warmup_steps_ = 0;  // guard div/0
 }
 
-void OneCycleLR::step() {
-    ++step_;
-}
-
 double OneCycleLR::get_lr() const {
     double s = static_cast<double>(step_);
 
@@ -48,4 +44,9 @@ double OneCycleLR::get_lr() const {
             return lin;
         }
     }
+}
+
+void OneCycleLR::apply(Model& model) {
+    (void)model;
+    if (optimizer_) optimizer_->lr = get_lr();
 }

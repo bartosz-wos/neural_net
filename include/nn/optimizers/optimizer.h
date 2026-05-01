@@ -9,6 +9,7 @@ class Tensor;
 
 class Optimizer {
 public:
+    double lr = 0.001;  // base lr, updated by LR schedulers via set_optimizer()
     virtual ~Optimizer() = default;
     virtual void step(Model& model) = 0;
     // Returns true if this optimizer already applies weight decay internally.

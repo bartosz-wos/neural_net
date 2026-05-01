@@ -8,11 +8,14 @@
 
 // Base scheduler: just wraps an Optimizer with LR adjustment
 class LRScheduler {
+protected:
+    Optimizer* optimizer_ = nullptr;
 public:
     virtual ~LRScheduler() = default;
     virtual double get_lr() const = 0;
-    virtual void step() = 0;
-    virtual void apply(Model& model) = 0;
+    virtual void step(Model& model) = 0;
+    void set_optimizer(Optimizer* opt) { optimizer_ = opt; }
+    void apply(Model& model) { if (optimizer_) optimizer_->lr = get_lr(); }
 };
 
 // StepLR: decay LR by gamma every step_size epochs
@@ -23,8 +26,7 @@ public:
     StepLR(double lr, int step_size = 10, double gamma = 0.1)
         : initial_lr(lr), lr(lr), gamma(gamma), step_size(step_size), epoch(0) {}
     double get_lr() const override { return lr; }
-    void step() override { ++epoch; if (epoch % step_size == 0) lr *= gamma; }
-    void apply(Model& model) override {}
+    void step(Model& model) override { ++epoch; if (epoch % step_size == 0) lr *= gamma; apply(model); }
 };
 
 // ExponentialLR: lr = initial_lr * gamma^epoch
@@ -35,8 +37,7 @@ public:
     ExponentialLR(double lr, double gamma = 0.95)
         : initial_lr(lr), lr(lr), gamma(gamma), epoch(0) {}
     double get_lr() const override { return lr; }
-    void step() override { ++epoch; lr = initial_lr * std::pow(gamma, epoch); }
-    void apply(Model& model) override {}
+    void step(Model& model) override { ++epoch; lr = initial_lr * std::pow(gamma, epoch); apply(model); }
 };
 
 // ReduceLROnPlateau: reduce LR when metric stops improving
@@ -49,7 +50,7 @@ public:
     ReduceLROnPlateau(double lr, double factor = 0.5, int patience = 5, double min_lr = 1e-6)
         : lr(lr), factor(factor), min_lr(min_lr), patience(patience), counter(0), best_metric(1e9), first(true) {}
     double get_lr() const override { return lr; }
-    void step() override { ++counter; }
+    void step(Model& model) override { ++counter; apply(model); }
     // Call this with current metric to check for improvement
     void check_metric(double metric) {
         if (first || metric < best_metric) {
@@ -61,10 +62,10 @@ public:
             if (counter >= patience) {
                 lr = std::max(lr * factor, min_lr);
                 counter = 0;
+                if (optimizer_) optimizer_->lr = lr;
             }
         }
     }
-    void apply(Model& model) override {}
 };
 
 // CosineAnnealingLR: lr decays along cosine curve from initial_lr to min_lr
@@ -77,11 +78,11 @@ public:
     CosineAnnealingLR(double lr, int T_max, double min_lr = 0.0)
         : initial_lr(lr), lr(lr), min_lr(min_lr), T_max(T_max), epoch(0) {}
     double get_lr() const override { return lr; }
-    void step() override {
+    void step(Model& model) override {
         ++epoch;
         lr = min_lr + 0.5 * (initial_lr - min_lr) * (1.0 + std::cos(std::acos(-1.0) * epoch / T_max));
+        apply(model);
     }
-    void apply(Model& model) override {}
 };
 
 // EarlyStopping: monitors training loss and reverts to best model after patience epochs.
