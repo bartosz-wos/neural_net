@@ -27,7 +27,8 @@ all: setup \
 	$(BUILD_DIR)/demo_lstm_airline \
 	$(BUILD_DIR)/demo_embedding \
 	$(BUILD_DIR)/demo_extensions \
-	$(BUILD_DIR)/demo_transformer
+	$(BUILD_DIR)/demo_transformer \
+	$(BUILD_DIR)/demo_s4
 
 setup:
 	@mkdir -p $(BUILD_DIR) $(ALL_DIRS)
@@ -50,6 +51,9 @@ $(BUILD_DIR)/nn_demo: $(LIB_OBJS) $(BUILD_DIR)/demo.o
 
 # Link other demos
 $(BUILD_DIR)/demo%: $(LIB_OBJS) $(BUILD_DIR)/demo%.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/demo_s4: $(LIB_OBJS) $(BUILD_DIR)/demo_s4.o
 	$(CXX) $^ -o $@
 
 clean:
