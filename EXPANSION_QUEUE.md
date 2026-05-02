@@ -5,7 +5,11 @@ After completing an item, move it to the "Done" section.
 
 ## Queue (bottom = next to pop)
 
-- **<empty — no pending items>**
+*(empty — queue processed)*
+
+## Done
+
+- **RMSNorm**: Implement RMSNorm layer (Root Mean Square Normalization, used in LLaMA/Mistral). Formula: y = (x / RMS) * gamma where RMS = sqrt(mean(x^2) + eps). Remove mean-centering (unlike LayerNorm) — more numerically stable and faster. Added to layers/normalization/rms_norm.{h,cpp}.
 
 ## Done
 

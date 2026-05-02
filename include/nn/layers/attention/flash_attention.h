@@ -304,7 +304,8 @@ Tensor FlashAttentionLayer::forward(const Tensor& input) {
         // For backward we need the full scores, so cache them now
         double scale = 1.0 / std::sqrt(static_cast<double>(d_k_) + 1e-9);
         size_t tile_B = TILE;
-        size_t tiles = (seq_len + tile_B - 1) / tile_B;
+        (void)tile_B;  // unused in fallback path
+        (void)seq_len;  // unused in fallback path
 
         // Compute and store full scores (pre-softmax, post-mask)
         for (size_t i = 0; i < tokens; ++i) {
@@ -464,6 +465,23 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
             for (size_t c = 0; c < tokens; ++c)
                 s += attn_probs[j][c] * dP[j][c];
             row_sum_corr[j] = s;
+        }
+
+        // dL/dK_h[i][dk] = sum_j P[j][i] * Q_h[j][dk] * (dP[j][i] - row_sum_corr[j]) / sqrt(d_k)
+        // dL/dQ_h[i][dk] = sum_j P[j][i] * K_h[j][dk] * (dP[j][i] - row_sum_corr[j]) / sqrt(d_k)
+        Tensor grad_K_h_t(tokens, d_k_), grad_Q_h_t(tokens, d_k_);
+        double scale = 1.0 / std::sqrt((double)d_k_);
+        for (size_t i = 0; i < tokens; ++i) {
+            for (size_t dk = 0; dk < d_k_; ++dk) {
+                double gk = 0.0, gq = 0.0;
+                for (size_t j = 0; j < tokens; ++j) {
+                    double correction = attn_probs[j][i] * (dP[j][i] - row_sum_corr[j]) * scale;
+                    gk += correction * Q_h[j][dk];
+                    gq += correction * K_h[j][dk];
+                }
+                grad_K_h_t[i][dk] = gk;
+                grad_Q_h_t[i][dk] = gq;
+            }
         }
 
         // dL/dK[i][dk] = sum_j P[j][i] * Q_h[j][dk] * (dP[j][i] - row_sum_corr[j]) / sqrt(d_k)

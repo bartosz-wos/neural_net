@@ -49,6 +49,7 @@
 // Layers — normalization
 #include "layers/normalization/batch_norm.h"
 #include "layers/normalization/layer_norm.h"
+#include "layers/normalization/rms_norm.h"
 #include "layers/normalization/weight_norm.h"
 #include "layers/normalization/group_norm.h"
 
