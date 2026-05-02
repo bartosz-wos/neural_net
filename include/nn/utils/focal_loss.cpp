@@ -66,15 +66,16 @@ Tensor FocalLoss::backward(const Tensor& logits, const Tensor& targets) {
         double p_t = probs[b][label];
         p_t = std::max(1e-7, std::min(p_t, 1.0 - 1e-7));
 
-        // Gradient derivation for FL = -α(1-p_t)^γ * log(p_t):
-        //   dFL/dp_t = -α * [γ(1-p_t)^(γ-1)*(-log(p_t)) + (1-p_t)^γ * (-1/p_t)]
-        //            = α(1-p_t)^(γ-1) * [γ*log(p_t) + 1 - p_t] / p_t
-        // Using (indicator - p_j) to combine both cases:
-        //   dFL/dz_j = dFL/dp_t * dp_t/dz_j = α(1-p_t)^(γ-1) * [γ*log(p_t) + 1 - p_t] / p_t * (indicator - p_j)
-        double dFL_dpt = alpha_ * std::pow(1.0 - p_t, gamma_ - 1.0) * (gamma_ * std::log(p_t) + 1.0 - p_t) / p_t;
+        // Focal loss: FL = -alpha * (1-p_t)^gamma * log(p_t)
+        // dFL/dp_t = alpha * (1-p_t)^(gamma-1) * [gamma * log(p_t) - (1-p_t)/p_t]
+        // Softmax: dp_t/dz_j = p_t * (1_{j=label} - p_j)
+        // Chain rule: dFL/dz_j = dFL/dp_t * dp_t/dz_j
+        //           = alpha * (1-p_t)^(gamma-1) * [gamma*log(p_t) - (1-p_t)/p_t] * p_t * (indicator - p_j)
+        // Final gradient divided by batch (loss is mean over batch)
+        double dFL_dpt = alpha_ * std::pow(1.0 - p_t, gamma_ - 1.0) * (gamma_ * std::log(p_t) - (1.0 - p_t) / p_t);
         for (size_t j = 0; j < K; ++j) {
             double indicator = (j == label) ? 1.0 : 0.0;
-            grad[b][j] = dFL_dpt * (indicator - probs[b][j]) / batch;
+            grad[b][j] = dFL_dpt * p_t * (indicator - probs[b][j]) / batch;
         }
     }
 

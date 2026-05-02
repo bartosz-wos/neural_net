@@ -15,7 +15,7 @@ LIB_OBJS := $(LIB_SRCS:include/nn/%.cpp=$(BUILD_DIR)/%.o)
 # All unique dirs needed
 ALL_DIRS := $(sort $(dir $(LIB_OBJS)))
 
-.PHONY: all clean setup
+.PHONY: all clean setup tests run_tests
 
 all: setup \
 	$(BUILD_DIR)/nn_demo \
@@ -55,6 +55,31 @@ $(BUILD_DIR)/demo%: $(LIB_OBJS) $(BUILD_DIR)/demo%.o
 
 $(BUILD_DIR)/demo_s4: $(LIB_OBJS) $(BUILD_DIR)/demo_s4.o
 	$(CXX) $^ -o $@
+
+# Test single-file compilation rules
+$(BUILD_DIR)/test%.o: tests/test%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# =================================================================
+# Test targets
+# =================================================================
+$(BUILD_DIR)/test_s4: $(LIB_OBJS) $(BUILD_DIR)/test_s4.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_gradient_check: $(LIB_OBJS) $(BUILD_DIR)/test_gradient_check.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_focal_simple: $(LIB_OBJS) $(BUILD_DIR)/test_focal_simple.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
+	$(CXX) $^ -o $@
+
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check
+
+run_tests: tests
+	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
+	@echo "=== Running Gradient Checks ===" && ./$(BUILD_DIR)/test_gradient_check
 
 clean:
 	rm -rf $(BUILD_DIR)
