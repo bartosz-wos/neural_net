@@ -15,7 +15,7 @@ public:
     virtual double get_lr() const = 0;
     virtual void step(Model& model) = 0;
     void set_optimizer(Optimizer* opt) { optimizer_ = opt; }
-    void apply(Model& model) { if (optimizer_) optimizer_->lr = get_lr(); }
+    void apply(Model& model) { (void)model; if (optimizer_) optimizer_->lr = get_lr(); }
 };
 
 // StepLR: decay LR by gamma every step_size epochs

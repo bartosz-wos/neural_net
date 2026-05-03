@@ -16,7 +16,7 @@ public:
     LASEncoder(size_t input_dim, size_t hidden_size, size_t num_layers = 1);
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double learning_rate) override;
+    void update_weights(double) override;
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
@@ -60,7 +60,7 @@ public:
     Tensor forward(const Tensor& input, const Tensor& encoder_output);
     const Tensor& last_output() const { return last_output_; }
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double learning_rate) override;
+    void update_weights(double) override;
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
@@ -82,13 +82,16 @@ private:
 
 class ListenAttendSpell : public Layer {
 public:
+    using Layer::forward;  // bring base forward(const Tensor&) into scope so both overloads are visible
     ListenAttendSpell(size_t vocab_size, size_t embedding_dim,
                        size_t encoder_hidden, size_t decoder_hidden,
                        size_t num_layers = 1);
     // input: (seq_len, embedding_dim), target: (target_seq_len, embedding_dim)
+    // NOTE: forward(input, target) intentionally overloads base forward(const Tensor&)
+    // ListenAttendSpell uses a 2-input forward for encoder-decoder architecture
     Tensor forward(const Tensor& input, const Tensor& target);
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double learning_rate) override;
+    void update_weights(double) override;
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;

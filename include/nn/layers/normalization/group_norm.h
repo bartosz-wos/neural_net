@@ -11,7 +11,8 @@ public:
     GroupNorm(int num_groups, int num_channels, float eps = 1e-5);
     Tensor forward(const Tensor& x) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
-    void update_weights(double learning_rate) override {}
+    void update_weights(double) override {}
+    // NOTE: forward(input, target) intentionally hides base forward(const Tensor&)
     Tensor get_weights() const override { return gamma_; }
     Tensor get_gradients() const override { return grad_gamma_; }
     std::vector<Tensor*> parameters() override;

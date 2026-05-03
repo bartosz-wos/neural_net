@@ -28,7 +28,8 @@ all: setup \
 	$(BUILD_DIR)/demo_embedding \
 	$(BUILD_DIR)/demo_extensions \
 	$(BUILD_DIR)/demo_transformer \
-	$(BUILD_DIR)/demo_s4
+	$(BUILD_DIR)/demo_s4 \
+	$(BUILD_DIR)/demo_lookahead
 
 setup:
 	@mkdir -p $(BUILD_DIR) $(ALL_DIRS)

@@ -75,7 +75,8 @@ int main() {
     Tensor X(X_shuffled);
     Tensor y(y_shuffled);
 
-    const int img_h = 6, img_w = 6, img_c = 1;
+    const int img_h = 6, img_w = 6;
+    // img_c deliberately not used (implicitly 1 channel)
     std::cout << "Dataset: " << X.rows << " samples, " << X.cols << " features (6x6)\n";
     std::cout << "Classes: 3 (horizontal line, vertical line, cross-diagonals)\n\n";
 
@@ -116,7 +117,7 @@ int main() {
     // Evaluate accuracy
     int correct = 0;
     std::cout << "\n--- Predictions (first 10 samples) ---\n";
-    for (int i = 0; i < X.rows; ++i) {
+    for (size_t i = 0; i < X.rows; ++i) {
         Tensor in = Tensor(std::vector<std::vector<double>>{X_shuffled[i]});
         Tensor logits = model.forward(in);
         Tensor probs = Softmax()(logits);

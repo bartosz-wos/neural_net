@@ -34,7 +34,7 @@ public:
     Tensor forward(const Tensor& x) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
     void init_weights() {}
-    void update_weights(double learning_rate) override {}
+    void update_weights(double) override {}
     Tensor get_weights() const override { return Tensor(0, 0); }
     Tensor get_gradients() const override { return Tensor(0, 0); }
     std::vector<Tensor*> parameters() override { return {}; }

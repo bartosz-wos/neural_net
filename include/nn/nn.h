@@ -11,6 +11,7 @@
 #include "optimizers/optimizer_extended.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
+#include "optimizers/lookahead.h"
 #include "utils/grid_search.h"
 #include "utils/tokenizer.h"
 #include "utils/gradient_check.h"
