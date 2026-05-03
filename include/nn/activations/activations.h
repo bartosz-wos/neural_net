@@ -124,6 +124,39 @@ struct Mish {
     }
 };
 
+// HardSigmoid: hardware-friendly approximation of Sigmoid
+// HardSigmoid(x) = clamp((x + 3) / 6, 0, 1)
+// Used in MobileNetV3, EfficientNet-Lite
+struct HardSigmoid {
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const {
+        if (x <= -3.0) return 0.0;
+        if (x >= 3.0)  return 1.0;
+        return (x + 3.0) / 6.0;
+    }
+    double derivative(double x) const {
+        if (x < -3.0 || x > 3.0) return 0.0;
+        return 1.0 / 6.0;
+    }
+};
+
+// HardSwish: x * HardSigmoid(x) — used in MobileNetV3, EfficientNet
+// HardSwish(x) = x * clamp((x + 3) / 6, 0, 1)
+struct HardSwish {
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const {
+        if (x <= -3.0) return 0.0;
+        if (x >= 3.0)  return x;
+        return x * (x + 3.0) / 6.0;
+    }
+    double derivative(double x) const {
+        if (x < -3.0) return 0.0;
+        if (x > 3.0)  return 1.0;
+        // derivative of x*(x+3)/6 = (2x+3)/6 = x/3 + 0.5
+        return (2.0 * x + 3.0) / 6.0;
+    }
+};
+
 // Helper: apply activation and its derivative elementwise
 // Numerically stable softmax + cross-entropy combined loss
 // (subtracts max logit before exp to avoid overflow)

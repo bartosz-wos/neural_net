@@ -55,6 +55,7 @@
 
 // Layers — attention
 #include "layers/attention/transformer.h"
+#include "layers/attention/flash_attention.h"
 #include "layers/attention/layer_output_tracker.h"
 
 // Layers — architectures (full model definitions)

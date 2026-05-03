@@ -207,3 +207,19 @@ double SELU::derivative(double x) const {
     double x_clamped = std::max(x, -700.0);
     return scale * alpha * std::exp(x_clamped);
 }
+
+Tensor HardSigmoid::operator()(const Tensor& t) const {
+    return t.apply([](double x) {
+        if (x <= -3.0) return 0.0;
+        if (x >= 3.0)  return 1.0;
+        return (x + 3.0) / 6.0;
+    });
+}
+
+Tensor HardSwish::operator()(const Tensor& t) const {
+    return t.apply([](double x) {
+        if (x <= -3.0) return 0.0;
+        if (x >= 3.0)  return x;
+        return x * (x + 3.0) / 6.0;
+    });
+}
