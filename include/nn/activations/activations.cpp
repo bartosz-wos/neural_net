@@ -208,6 +208,18 @@ double SELU::derivative(double x) const {
     return scale * alpha * std::exp(x_clamped);
 }
 
+Tensor Snake::operator()(const Tensor& t) const {
+    return t.apply([this](double x) {
+        double bx = beta * x;
+        double sin_sq = std::sin(bx);
+        return x + (1.0 / beta) * sin_sq * sin_sq;
+    });
+}
+
+Tensor TanhPlus::operator()(const Tensor& t) const {
+    return t.apply([](double x) { return x + std::tanh(x); });
+}
+
 Tensor HardSigmoid::operator()(const Tensor& t) const {
     return t.apply([](double x) {
         if (x <= -3.0) return 0.0;

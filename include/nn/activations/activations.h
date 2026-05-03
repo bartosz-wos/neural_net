@@ -124,6 +124,35 @@ struct Mish {
     }
 };
 
+// Snake: x + (1/β) * sin²(βx) — sinusoidal activation with learnable frequency
+// Paper: "Snake: Sinusoidal Activation Functions"
+struct Snake {
+    double beta;
+    explicit Snake(double beta = 1.0) : beta(beta) {}
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const {
+        double bx = beta * x;
+        double sin_sq = std::sin(bx);
+        return x + (1.0 / beta) * sin_sq * sin_sq;
+    }
+    double derivative(double x) const {
+        // d/dx [x + (1/β)*sin²(βx)] = 1 + sin(2βx)
+        return 1.0 + std::sin(2.0 * beta * x);
+    }
+};
+
+
+// TanhPlus: x + tanh(x) — smooth, unbounded above, bounded below
+struct TanhPlus {
+    Tensor operator()(const Tensor& t) const;
+    double operator()(double x) const { return x + std::tanh(x); }
+    double derivative(double x) const {
+        // d/dx [x + tanh(x)] = 1 + sech²(x) = 1 + (1 - tanh²(x))
+        double th = std::tanh(x);
+        return 1.0 + 1.0 - th * th;
+    }
+};
+
 // HardSigmoid: hardware-friendly approximation of Sigmoid
 // HardSigmoid(x) = clamp((x + 3) / 6, 0, 1)
 // Used in MobileNetV3, EfficientNet-Lite
