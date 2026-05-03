@@ -53,6 +53,7 @@ private:
     std::vector<Tensor> last_Wh_heads_;
     Tensor last_alpha_;
     Tensor adj_;
+    std::vector<std::vector<std::vector<double>>> leaky_relu_masks_;
 };
 
 class GraphNetwork : public Layer {
