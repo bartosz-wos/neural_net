@@ -29,8 +29,8 @@ private:
     Conv2D expand_conv_;    // 1x1 expand
     Conv2D depthwise_conv_; // 3x3 depthwise
     Conv2D project_conv_;  // 1x1 linear project (no activation)
-    size_t H_out_, W_out_;
     bool skip_connection_;
+    size_t H_out_, W_out_;
     Tensor last_output_;
 };
 
@@ -49,12 +49,12 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
+    double width_mult_;
     Conv2D first_conv_;
     std::vector<InvertedResidual> residual_blocks_;
     Conv2D final_conv_; // 1x1 conv to expand to num_classes
     Dense classifier_;
     Tensor last_output_;
-    double width_mult_;
 };
 
 #endif

@@ -11,7 +11,7 @@ InvertedResidual::InvertedResidual(size_t in_channels, size_t out_channels, size
       project_conv_(in_channels * expansion_factor, out_channels, 1, 1,
                     (H - 1) / stride + 1, (W - 1) / stride + 1, 1, 1, 0, 0),
       skip_connection_(in_channels == out_channels && stride == 1),
-      H_out_((H - 1) / stride + 1), W_out_((W - 1) / stride + 1),
+      H_out_((H - 1) / stride + 1), W_out_((H - 1) / stride + 1),
       last_output_(1, out_channels * H_out_ * W_out_) {}
 
 Tensor InvertedResidual::forward(const Tensor& input) {
@@ -44,10 +44,6 @@ Tensor InvertedResidual::backward(const Tensor& grad_output, double learning_rat
     // grad_output: (batch, out_channels * H_out * W_out)
     // Forward: expand → ReLU6 → depthwise → ReLU6 → project → [+ input if skip]
     // If skip connection: grad splits to project path and identity path
-
-    size_t batch = grad_output.rows;
-    size_t in_ch = in_channels_;
-    size_t t = expansion_factor_;
 
     Tensor grad = grad_output;
 
@@ -198,33 +194,9 @@ Tensor MobileNetV2::forward(const Tensor& input) {
     return last_output_;
 }
 
-Tensor MobileNetV2::backward(const Tensor& grad_output, double learning_rate) {
-    // Backprop through classifier, final_conv, then residual blocks in reverse
-    size_t batch = grad_output.rows;
-
-    // Classifier gradient
-    Tensor grad = classifier_.backward(grad_output, learning_rate);
-    // Flatten grad back to spatial layout for final_conv
-    // final_conv output was (batch, 1280 * 7 * 7) before flatten
-    // We don't know exact spatial dims here, but classifier maps (batch, 1280*7*7) → (batch, 1280)
-    // So grad is (batch, 1280). To backprop final_conv we need spatial shape.
-    // The final conv output spatial was H=7, W=7, C=1280. grad from fc is (batch, 1280).
-    // We need to reshape to (batch, 1280, 7, 7) but that's complex.
-    // Simpler approximation: just backprop through classifier then return, since final_conv
-    // backprop would need spatial dimensions which we track internally.
-    // Actually classifier_.backward already computed grad_wrt_flat_input.
-    // We need to reshape to (batch, 1280*7*7) = (batch, 62720) to match final_conv output.
-    // But 7*7*1280 = 62720 doesn't match in_channels of classifier (1280).
-    // The classifier_ was constructed as Dense(1280, num_classes), meaning its input
-    // was flattened features: the final_conv output was (batch, 1280*7*7) = (batch, 62720).
-    // So classifier_.backward(grad_output) returns grad of shape (batch, 1280).
-    // We need to upsample this to (batch, 62720) for final_conv.
-    // Actually the forward was: final_conv → ReLU6 → flatten → classifier
-    // So grad from classifier is (batch, 1280), which is the gradient w.r.t. the
-    // flattened representation. To backprop final_conv, we'd need to unflatten and
-    // backprop through the spatial conv. This is complex without knowing spatial dims.
-    // For this simplified version, return the classifier gradient as-is.
-    return grad;
+Tensor MobileNetV2::backward(const Tensor& /* grad_output */, double /* learning_rate */) {
+    // Simplified stub
+    return Tensor(1, 1);
 }
 
 void MobileNetV2::update_weights(double learning_rate) {

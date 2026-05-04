@@ -73,7 +73,7 @@ Tensor GroupNorm::forward(const Tensor& x) {
 
 Tensor GroupNorm::backward(const Tensor& grad_output, double /* learning_rate */) {
     int batch = (int)grad_output.rows;
-    int features = (int)grad_output.cols;
+    (void)batch;
     grad_gamma_ = Tensor(1, num_channels_);
     grad_beta_ = Tensor(1, num_channels_);
     grad_gamma_.fill(0.0);

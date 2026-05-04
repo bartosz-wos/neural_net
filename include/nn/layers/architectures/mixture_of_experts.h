@@ -41,12 +41,12 @@ public:
     double get_load_balance_loss() const { return load_balance_loss_; }
 
 private:
+    size_t num_experts_, k_, expert_capacity_;
     Dense gating_network_;    // maps input to num_experts gate scores
     std::vector<Dense> experts_; // each expert: 2-layer FFN
-    size_t num_experts_, k_, expert_capacity_;
     SparseDispatcher dispatcher_;
-    Tensor last_output_;
     double load_balance_loss_;
+    Tensor last_output_;
     Tensor gate_values_;
     std::vector<Tensor> expert_outputs_;
 };

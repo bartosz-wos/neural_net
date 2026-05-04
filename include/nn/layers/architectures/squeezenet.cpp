@@ -26,9 +26,9 @@ Tensor FireModule::forward(const Tensor& input) {
         size_t out_idx = 0;
         for (size_t h = 0; h < H_out_; ++h) {
             for (size_t w = 0; w < W_out_; ++w) {
-                for (size_t c = 0; c < expand1x1_.out_channels; ++c)
+                for (size_t c = 0; c < static_cast<size_t>(expand1x1_.out_channels); ++c)
                     last_output_[b][out_idx++] = e1[b][c * H_out_ * W_out_ + h * W_out_ + w];
-                for (size_t c = 0; c < expand3x3_.out_channels; ++c)
+                for (size_t c = 0; c < static_cast<size_t>(expand3x3_.out_channels); ++c)
                     last_output_[b][out_idx++] = e3[b][c * H_out_ * W_out_ + h * W_out_ + w];
             }
         }

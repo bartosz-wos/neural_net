@@ -11,7 +11,6 @@ std::vector<Tensor> SparseDispatcher::dispatch(const Tensor& input,
     // Returns k tensors: each is the input sliced/selected for expert i
     // Simplified: select top-k based on gate values, zero out other experts
     size_t batch = input.rows;
-    size_t dim = input.cols;
 
     std::vector<Tensor> dispatched(batch * num_experts_, Tensor(0, 0));
     std::fill(expert_counts_.begin(), expert_counts_.end(), 0.0);
@@ -98,9 +97,9 @@ double SparseDispatcher::load_balance_loss(const Tensor& gate_values,
 
 MoELayer::MoELayer(size_t hidden_dim, size_t num_experts,
                      size_t k, size_t expert_capacity)
-    : gating_network_(hidden_dim, num_experts),
+    : num_experts_(num_experts), k_(k), expert_capacity_(expert_capacity),
+      gating_network_(hidden_dim, num_experts),
       dispatcher_(num_experts, k),
-      num_experts_(num_experts), k_(k), expert_capacity_(expert_capacity),
       load_balance_loss_(0.0),
       last_output_(1, hidden_dim) {
 

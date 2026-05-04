@@ -46,12 +46,12 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
+    size_t H_, W_;
+    bool has_skip_;
     Conv2D conv1_, conv2_;
     SEBlock se_;
     Conv2D skip_conv_;
-    bool has_skip_;
     Tensor last_output_;
-    size_t H_, W_;
 };
 
 #endif

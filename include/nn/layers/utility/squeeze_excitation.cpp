@@ -88,12 +88,12 @@ Tensor SEBlock::scale_channels(const Tensor& input, const Tensor& excitation) {
 
 SEResNetBlock::SEResNetBlock(size_t in_channels, size_t out_channels,
                                size_t reduction, size_t H, size_t W)
-    : conv1_(in_channels, out_channels, 3, 3, H, W, 1, 1, 1, 1),
+    : H_(H), W_(W),
+      has_skip_(in_channels != out_channels),
+      conv1_(in_channels, out_channels, 3, 3, H, W, 1, 1, 1, 1),
       conv2_(out_channels, out_channels, 3, 3, H, W, 1, 1, 1, 1),
       se_(out_channels, reduction),
       skip_conv_(in_channels, out_channels, 1, 1, H, W, 1, 1, 0, 0),
-      has_skip_(in_channels != out_channels),
-      H_(H), W_(W),
       last_output_(1, out_channels * H * W) {}
 
 Tensor SEResNetBlock::forward(const Tensor& input) {

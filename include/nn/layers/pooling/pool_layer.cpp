@@ -150,7 +150,6 @@ Tensor AvgPool1D::forward(const Tensor& input) {
     int N = input.rows;
     last_input = input;
     Tensor output(N, channels * seq_out);
-    double norm = 1.0 / kernel_size;
     counts_.assign(channels * N, std::vector<int>(seq_out, 1));
     for (int n = 0; n < N; ++n) {
         for (int c = 0; c < channels; ++c) {
