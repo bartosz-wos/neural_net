@@ -32,6 +32,8 @@ private:
     bool skip_connection_;
     size_t H_out_, W_out_;
     Tensor last_output_;
+    Tensor last_expand_relu_;
+    Tensor last_depthwise_relu_;
 };
 
 class MobileNetV2 : public Layer {
@@ -55,6 +57,8 @@ private:
     Conv2D final_conv_; // 1x1 conv to expand to num_classes
     Dense classifier_;
     Tensor last_output_;
+    Tensor last_final_relu_;
+    Tensor last_flat_;
 };
 
 #endif

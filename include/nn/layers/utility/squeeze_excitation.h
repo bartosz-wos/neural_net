@@ -23,12 +23,17 @@ public:
     // Scale each channel by its excitation weight (broadcast multiply)
     static Tensor scale_channels(const Tensor& input, const Tensor& excitation);
 
+    // Cached for backward (public for SEResNetBlock access)
+    Tensor last_excitation_;
+    friend class SEResNetBlock;
+
 private:
     Dense fc1_; // squeeze: C → C/r
     Dense fc2_; // excite: C/r → C
     size_t in_channels_, reduction_;
-    Tensor last_excitation_;
     Tensor last_input_;
+    Tensor last_gap_;
+    Tensor last_fc1_relu_;
 };
 
 // SEResNetBlock: residual block with SE channel attention
@@ -52,6 +57,8 @@ private:
     SEBlock se_;
     Conv2D skip_conv_;
     Tensor last_output_;
+    Tensor last_se_input_;
+    Tensor last_skip_output_;
 };
 
 #endif

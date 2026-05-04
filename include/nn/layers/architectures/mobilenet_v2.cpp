@@ -21,12 +21,14 @@ Tensor InvertedResidual::forward(const Tensor& input) {
     for (size_t i = 0; i < x.rows; ++i)
         for (size_t j = 0; j < x.cols; ++j)
             x[i][j] = std::min(std::max(0.0, x[i][j]), 6.0); // ReLU6
+    last_expand_relu_ = x;
 
     // Depthwise conv
     x = depthwise_conv_.forward(x);
     for (size_t i = 0; i < x.rows; ++i)
         for (size_t j = 0; j < x.cols; ++j)
-            x[i][j] = std::min(std::max(0.0, x[i][j]), 6.0);
+            x[i][j] = std::min(std::max(0.0, x[i][j]), 6.0); // ReLU6
+    last_depthwise_relu_ = x;
 
     // Project: 1x1 conv (t*in -> out), linear (no activation)
     last_output_ = project_conv_.forward(x);
@@ -42,62 +44,79 @@ Tensor InvertedResidual::forward(const Tensor& input) {
 
 Tensor InvertedResidual::backward(const Tensor& grad_output, double learning_rate) {
     // grad_output: (batch, out_channels * H_out * W_out)
-    // Forward: expand → ReLU6 → depthwise → ReLU6 → project → [+ input if skip]
-    // If skip connection: grad splits to project path and identity path
-
-    Tensor grad = grad_output;
+    // Forward: input → expand(ReLU6) → depthwise(ReLU6) → project → [+ input if skip]
+    // Backward: grad_output → project back → depthwise back → expand back (+ identity if skip)
 
     if (skip_connection_) {
-        // grad_output has gradient from both project(x) and identity input
-        // We need to: backprop project, then backprop expand (for project path)
-        // plus handle the identity gradient flowing to input directly
-        // For simplicity, backprop through project, then identity adds to result
-        // The grad currently contains gradients for both paths; we backprop the
-        // project path and the identity path contributes grad_output directly.
-        // To combine: backprop project → get grad_to_expand; add identity grad
-        // But the project conv backprop already computed grad w.r.t. its input
-        // (the depthwise output), not w.r.t. the original input. We need to
-        // continue backprop through depthwise → expand and also add identity.
+        // Skip: grad_output = grad_project + grad_identity
+        // dL/d(project_input) from project backward
+        // dL/d(input) from identity = grad_output directly
 
-        // Backprop project_conv
-        Tensor grad_depthwise = project_conv_.backward(grad, learning_rate);
-        // grad_depthwise: (batch, t*in_ch * H_dw * W_dw)
+        // 1) Backprop project_conv (linear, no activation)
+        Tensor grad_depthwise = project_conv_.backward(grad_output, learning_rate);
 
-        // ReLU6 gradient on depthwise output (second ReLU in forward)
-        // last_output_ was after project, so we need to check what the depthwise
-        // output was before project. We need to cache it. Since we don't have
-        // last_depthwise_output cached, we approximate: assume positive (common)
-        // For correct implementation we'd need to cache. Let's approximate
-        // by using grad directly (most activations are positive during training).
+        // 2) Backprop depthwise ReLU6
+        // dL/d(depthwise_raw) = dL/d(depthwise_relu) * relu6_mask
+        // relu6_mask = 1 if 0 < raw < 6, else 0
+        // raw output was last_depthwise_relu_ (after ReLU6), but we need pre-ReLU6 raw.
+        // depthwise_conv_.last_input_ has raw output before ReLU6
+        Tensor grad_depthwise_raw(depthwise_conv_.last_input.rows, depthwise_conv_.last_input.cols);
+        for (size_t i = 0; i < depthwise_conv_.last_input.rows; ++i)
+            for (size_t j = 0; j < depthwise_conv_.last_input.cols; ++j) {
+                double raw = depthwise_conv_.last_input[i][j];
+                grad_depthwise_raw[i][j] = (raw > 0.0 && raw < 6.0) ? grad_depthwise[i][j] : 0.0;
+            }
 
-        // Backprop depthwise conv
-        Tensor grad_expanded = depthwise_conv_.backward(grad_depthwise, learning_rate);
+        // 3) Backprop depthwise conv
+        Tensor grad_expanded = depthwise_conv_.backward(grad_depthwise_raw, learning_rate);
 
-        // ReLU6 gradient on expanded output
-        // We don't have cached output of ReLU6 after expand. Approximate.
+        // 4) Backprop expand ReLU6
+        // raw output was expand_conv_ output before ReLU6. Use expand_conv_.last_input_
+        Tensor grad_expand_raw(expand_conv_.last_input.rows, expand_conv_.last_input.cols);
+        for (size_t i = 0; i < expand_conv_.last_input.rows; ++i)
+            for (size_t j = 0; j < expand_conv_.last_input.cols; ++j) {
+                double raw = expand_conv_.last_input[i][j];
+                grad_expand_raw[i][j] = (raw > 0.0 && raw < 6.0) ? grad_expanded[i][j] : 0.0;
+            }
 
-        // Backprop expand_conv
-        grad = expand_conv_.backward(grad_expanded, learning_rate);
+        // 5) Backprop expand_conv
+        Tensor grad_input = expand_conv_.backward(grad_expand_raw, learning_rate);
 
-        // Add identity gradient from skip connection
-        // grad_output flows directly to input via identity (gradient = 1)
-        for (size_t i = 0; i < grad.rows; ++i)
-            for (size_t j = 0; j < grad.cols; ++j)
-                grad[i][j] += grad_output[i][j];
+        // 6) Add identity gradient (skip connection backprop)
+        for (size_t i = 0; i < grad_input.rows; ++i)
+            for (size_t j = 0; j < grad_input.cols; ++j)
+                grad_input[i][j] += grad_output[i][j];
 
-        return grad;
+        return grad_input;
     } else {
-        // No skip connection: straightforward backprop
-        Tensor grad_proj = project_conv_.backward(grad, learning_rate);
+        // No skip: straightforward backprop through project → depthwise → expand
 
-        // ReLU6 gradient (no cache, approximate)
+        // 1) Backprop project_conv (linear)
+        Tensor grad_depthwise = project_conv_.backward(grad_output, learning_rate);
 
-        Tensor grad_dw = depthwise_conv_.backward(grad_proj, learning_rate);
+        // 2) Apply depthwise ReLU6 mask
+        Tensor grad_depthwise_raw(depthwise_conv_.last_input.rows, depthwise_conv_.last_input.cols);
+        for (size_t i = 0; i < depthwise_conv_.last_input.rows; ++i)
+            for (size_t j = 0; j < depthwise_conv_.last_input.cols; ++j) {
+                double raw = depthwise_conv_.last_input[i][j];
+                grad_depthwise_raw[i][j] = (raw > 0.0 && raw < 6.0) ? grad_depthwise[i][j] : 0.0;
+            }
 
-        // ReLU6 gradient (no cache, approximate)
+        // 3) Backprop depthwise conv
+        Tensor grad_expanded = depthwise_conv_.backward(grad_depthwise_raw, learning_rate);
 
-        grad = expand_conv_.backward(grad_dw, learning_rate);
-        return grad;
+        // 4) Apply expand ReLU6 mask
+        Tensor grad_expand_raw(expand_conv_.last_input.rows, expand_conv_.last_input.cols);
+        for (size_t i = 0; i < expand_conv_.last_input.rows; ++i)
+            for (size_t j = 0; j < expand_conv_.last_input.cols; ++j) {
+                double raw = expand_conv_.last_input[i][j];
+                grad_expand_raw[i][j] = (raw > 0.0 && raw < 6.0) ? grad_expanded[i][j] : 0.0;
+            }
+
+        // 5) Backprop expand_conv
+        Tensor grad_input = expand_conv_.backward(grad_expand_raw, learning_rate);
+
+        return grad_input;
     }
 }
 
@@ -177,26 +196,68 @@ Tensor MobileNetV2::forward(const Tensor& input) {
     for (auto& blk : residual_blocks_)
         x = blk.forward(x);
 
-    // Final conv + avg pool + classifier
+    // Final conv + ReLU6
     x = final_conv_.forward(x);
     for (size_t i = 0; i < x.rows; ++i)
         for (size_t j = 0; j < x.cols; ++j)
             x[i][j] = std::min(std::max(0.0, x[i][j]), 6.0);
+    last_final_relu_ = x;
 
     // Flatten
     size_t batch = x.rows;
-    Tensor flat(batch, x.cols);
+    last_flat_ = Tensor(batch, x.cols);
     for (size_t i = 0; i < batch; ++i)
         for (size_t j = 0; j < x.cols; ++j)
-            flat[i][j] = x[i][j];
+            last_flat_[i][j] = x[i][j];
 
-    last_output_ = classifier_.forward(flat);
+    last_output_ = classifier_.forward(last_flat_);
     return last_output_;
 }
 
-Tensor MobileNetV2::backward(const Tensor& /* grad_output */, double /* learning_rate */) {
-    // Simplified stub
-    return Tensor(1, 1);
+Tensor MobileNetV2::backward(const Tensor& grad_output, double learning_rate) {
+    // grad_output: (batch, num_classes)
+    // Backward: classifier → flatten → final_conv → residual_blocks → first_conv
+    // Forward: input → first_conv(ReLU6) → residual_blocks → final_conv(ReLU6) → flatten → classifier
+
+    // 1) Classifier backward
+    // classifier_.forward took last_flat_ as input
+    // classifier_.backward computes grad w.r.t. last_flat_ (flattened features)
+    Tensor grad_flat = classifier_.backward(grad_output, learning_rate);
+
+    // 2) Flatten is pass-through (identity), grad_flat is same shape as last_flat_
+    size_t batch = grad_output.rows;
+
+    // 3) ReLU6 backward for final conv output
+    // dL/d(final_conv_out) = grad_flat
+    // d(out)/d(x) = 1 if 0 < x < 6, else 0
+    // first_conv_.last_input_ stores raw output before ReLU6
+    Tensor grad_final_conv(batch, grad_flat.cols);
+    for (size_t i = 0; i < batch; ++i)
+        for (size_t j = 0; j < grad_flat.cols; ++j) {
+            double v = last_final_relu_[i][j];
+            grad_final_conv[i][j] = (v > 0.0 && v < 6.0) ? grad_flat[i][j] : 0.0;
+        }
+
+    // 4) Final conv backward
+    Tensor grad_after_blocks = final_conv_.backward(grad_final_conv, learning_rate);
+
+    // 5) Residual blocks backward (in reverse order)
+    for (auto it = residual_blocks_.rbegin(); it != residual_blocks_.rend(); ++it)
+        grad_after_blocks = it->backward(grad_after_blocks, learning_rate);
+
+    // 6) First conv ReLU6 backward
+    // first_conv_.last_input_ is raw conv output (before ReLU6)
+    // Apply mask: gradient only flows where raw > 0
+    const Tensor& raw_first_conv = first_conv_.last_input;
+    Tensor grad_first_conv(raw_first_conv.rows, raw_first_conv.cols);
+    for (size_t i = 0; i < raw_first_conv.rows; ++i)
+        for (size_t j = 0; j < raw_first_conv.cols; ++j)
+            grad_first_conv[i][j] = raw_first_conv[i][j] > 0.0 ? grad_after_blocks[i][j] : 0.0;
+
+    // 7) First conv backward (returns gradient w.r.t. input)
+    Tensor grad_input = first_conv_.backward(grad_first_conv, learning_rate);
+
+    return grad_input;
 }
 
 void MobileNetV2::update_weights(double learning_rate) {
