@@ -24,14 +24,47 @@ int main() {
     int exit_gc = WEXITSTATUS(ret_gc);
 
     // =================================================================
+    // Run RMSNorm gradient tests
+    // =================================================================
+    std::cout << std::endl << ">>> Running RMSNorm Gradient Tests..." << std::endl;
+    int ret_rms = std::system("./build/test_rmsnorm");
+    int exit_rms = WEXITSTATUS(ret_rms);
+
+    // =================================================================
+    // Run WGAN-GP gradient tests
+    // =================================================================
+    std::cout << std::endl << ">>> Running WGAN-GP Gradient Tests..." << std::endl;
+    int ret_wgan = std::system("./build/test_wgan_gp");
+    int exit_wgan = WEXITSTATUS(ret_wgan);
+
+    // =================================================================
+    // Run FlashAttention gradient tests
+    // =================================================================
+    std::cout << std::endl << ">>> Running FlashAttention Gradient Tests..." << std::endl;
+    int ret_flash = std::system("./build/test_flash_attention");
+    int exit_flash = WEXITSTATUS(ret_flash);
+
+    // =================================================================
+    // Run ViT gradient tests
+    // =================================================================
+    std::cout << std::endl << ">>> Running ViT Gradient Tests..." << std::endl;
+    int ret_vit = std::system("./build/test_vit");
+    int exit_vit = WEXITSTATUS(ret_vit);
+
+    // =================================================================
     // Summary
     // =================================================================
     std::cout << std::endl;
     std::cout << "============================================" << std::endl;
-    std::cout << "  S4 Tests:       " << (exit_s4 == 0 ? "PASSED" : "FAILED") << std::endl;
-    std::cout << "  Gradient Tests: " << (exit_gc == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  S4 Tests:           " << (exit_s4 == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  Gradient Tests:     " << (exit_gc == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  RMSNorm Tests:      " << (exit_rms == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  WGAN-GP Tests:      " << (exit_wgan == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  FlashAttn Tests:    " << (exit_flash == 0 ? "PASSED" : "FAILED") << std::endl;
+    std::cout << "  ViT Tests:          " << (exit_vit == 0 ? "PASSED" : "FAILED") << std::endl;
     std::cout << "============================================" << std::endl;
 
     // Any failure propagates
-    return (exit_s4 != 0 || exit_gc != 0) ? 1 : 0;
+    return (exit_s4 != 0 || exit_gc != 0 || exit_rms != 0 ||
+            exit_wgan != 0 || exit_flash != 0 || exit_vit != 0) ? 1 : 0;
 }

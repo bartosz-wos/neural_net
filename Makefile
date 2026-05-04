@@ -70,13 +70,25 @@ $(BUILD_DIR)/test_s4: $(LIB_OBJS) $(BUILD_DIR)/test_s4.o
 $(BUILD_DIR)/test_gradient_check: $(LIB_OBJS) $(BUILD_DIR)/test_gradient_check.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_rmsnorm: $(LIB_OBJS) $(BUILD_DIR)/test_rmsnorm.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_wgan_gp: $(LIB_OBJS) $(BUILD_DIR)/test_wgan_gp.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_flash_attention: $(LIB_OBJS) $(BUILD_DIR)/test_flash_attention.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_vit: $(LIB_OBJS) $(BUILD_DIR)/test_vit.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_focal_simple: $(LIB_OBJS) $(BUILD_DIR)/test_focal_simple.o
 	$(CXX) $^ -o $@
 
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
