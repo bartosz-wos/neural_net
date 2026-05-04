@@ -66,7 +66,7 @@ void HistogramBoosting::fit(const Tensor& X, const Tensor& y) {
         build_histogram(X, grad, hist);
 
         // Find best split across all leaves (simplified: one level at a time)
-        SplitCandidate best;
+        SplitCandidate best{};
         best.gain = -1e100;
         size_t d = X.cols;
 
@@ -119,5 +119,10 @@ void HistogramBoosting::fit(const Tensor& X, const Tensor& y) {
 }
 
 Tensor HistogramBoosting::predict(const Tensor& X) const {
-    return Tensor(X.rows, 1); // placeholder
+    size_t n = X.rows;
+    Tensor result(n, 1);
+    for (size_t i = 0; i < n; ++i) {
+        result[i][0] = base_predictions_[i];
+    }
+    return result;
 }
