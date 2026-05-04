@@ -83,6 +83,7 @@
 // Layers — generative
 #include "layers/generative/vae.h"
 #include "layers/generative/capsnet.h"
+#include "layers/generative/wgan_gp.h"
 
 // Layers — graph
 #include "layers/architectures/gnn.h"
