@@ -129,25 +129,71 @@ Tensor MemoryNetwork::forward(const Tensor& input) {
 }
 
 Tensor MemoryNetwork::backward(const Tensor& grad_output, double learning_rate) {
-    // Gradient w.r.t. R and output
-    // grad_R = u^T * grad_output
+    // Forward: input (BoW embed) → hops (u → attention + memory → u+memory) → u_final → output = u_final @ R + b_out
+    // Chain: input → last_u_ → hop0 → ... → hop_{H-1} → u_final → (R, b_out) → output
+    // Backward: grad_output → grad_wrt_R, b via u_final → grad_wrt_u_final → hops reverse → grad_wrt_last_u
     size_t batch = grad_output.rows;
+
+    // 1. grad_wrt_R = u_final^T @ grad_output, shape (embedding_dim, output_dim)
+    // u_final = last_u_ (output of last hop, before R projection)
     for (size_t k = 0; k < embedding_dim_; ++k)
         for (size_t j = 0; j < output_dim_; ++j) {
             double g = 0.0;
             for (size_t b = 0; b < batch; ++b)
-                g += grad_output[b][j] * last_u_[b][k]; // use original u before hop
+                g += last_u_[b][k] * grad_output[b][j];
             grad_R_[k][j] = g / batch;
         }
 
-    // Gradient w.r.t. embedding matrix A (simplified — propagate through u)
-    for (size_t i = 0; i < vocab_size_; ++i)
-        for (size_t k = 0; k < embedding_dim_; ++k)
-            grad_A_[i][k] = 0.0;
+    // 2. grad_wrt_b_out = sum_b grad_output[b]
+    for (size_t j = 0; j < output_dim_; ++j) {
+        double g = 0.0;
+        for (size_t b = 0; b < batch; ++b)
+            g += grad_output[b][j];
+        grad_b_out_[0][j] = g / batch;
+    }
 
-    // Simplified backward: just update W and R
+    // 3. grad_wrt_u_final: (batch, embedding_dim) = grad_output @ R^T
+    Tensor grad_u_final(batch, embedding_dim_);
+    for (size_t b = 0; b < batch; ++b)
+        for (size_t k = 0; k < embedding_dim_; ++k) {
+            double sum = 0.0;
+            for (size_t j = 0; j < output_dim_; ++j)
+                sum += grad_output[b][j] * R_[k][j];
+            grad_u_final[b][k] = sum;
+        }
+
+    // 4. Backprop through hops in reverse order
+    // Each hop: u_out = u_in + sum_i(probs_i) * memory[:,i]^T
+    // d(u_out)/d(u_in) = I (residual), so grad_u_in = grad_u_out + grad_from_memory_contribution
+    // But memory is external, so grad_u_in += grad_u_out (residual gradient passes through)
+    // Memory is not a learned parameter here so we skip storing grad_memory
+    Tensor grad_current = grad_u_final;
+    for (size_t h = 0; h < hop_layers_; ++h) {
+        // Residual: gradient flows straight through (u_out = u_in + something)
+        // The addition node passes gradient through unchanged
+        // grad_current is already the gradient w.r.t. the output of this hop
+        // which equals the gradient w.r.t. the input of this hop (residual path)
+        // Nothing more to do — we don't update memory, so no grad_mem needed
+        (void)h; // reserved for future when memory slots are learnable
+    }
+
+    // 5. grad_wrt_A via backprop through BoW embedding
+    // last_u_[b][k] = sum_j (input[b][j] selects word w) sum_k embeddings_[w][k] * scale
+    // d(last_u_)/d(embeddings_[w][k]) = scale for each occurrence of word w in that batch item
+    double emb_scale = (last_input_.cols > 0) ? 1.0 / last_input_.cols : 1.0;
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t j = 0; j < (size_t)last_input_.cols; ++j) {
+            size_t w = static_cast<size_t>(last_input_(b, j));
+            if (w >= vocab_size_) continue;
+            for (size_t k = 0; k < embedding_dim_; ++k)
+                grad_A_[w][k] += emb_scale * grad_current(b, k);
+        }
+    }
+
+    // Return gradient w.r.t. the embedded input (u_before_hops = last_u_ before first hop)
+    // This is the meaningful gradient for upstream layers
     (void)learning_rate;
-    return Tensor(1, 1); // placeholder
+    return grad_current; // (batch, embedding_dim)
 }
 
 void MemoryNetwork::update_weights(double learning_rate) {

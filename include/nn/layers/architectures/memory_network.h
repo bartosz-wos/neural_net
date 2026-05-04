@@ -50,6 +50,7 @@ private:
     Tensor last_probs_;    // attention probabilities over memory
     Tensor last_memory_;   // embedded memory (embedding_dim, memory_size)
     Tensor last_output_;
+    Tensor last_input_;     // store input for backward (batch, seq_len)
     std::vector<std::vector<size_t>> memory_;
 
     // Single hop: u = u + softmax(u^T * m_i) * m_i^T
