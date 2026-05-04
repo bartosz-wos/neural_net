@@ -61,6 +61,7 @@
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
+#include "layers/architectures/vit.h"
 #include "layers/architectures/unet.h"
 #include "layers/architectures/squeezenet.h"
 #include "layers/architectures/densenet.h"
