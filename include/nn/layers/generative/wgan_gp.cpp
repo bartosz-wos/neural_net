@@ -157,9 +157,11 @@ void WGANDiscriminator::backward_gradient_penalty() {
     // d(GP)/d(D(x_hat))_i = 2 * (||grad_i|| - 1) / ||grad_i|| * grad_x_hat_i
     // where grad_x_hat_i = d(D(x_hat))/d(x_hat)[i]
     size_t batch = last_x_hat_.rows;
+    size_t input_dim = last_x_hat_.cols;
 
-    // grad_gp_wrt_dxhat: (batch, 1)
-    Tensor grad_gp_wrt_dxhat(batch, 1);
+    // grad_gp_wrt_dxhat: (batch, input_dim)
+    // Each row i is: coeff_i * grad_x_hat_layers_[0][i] (element-wise scaling)
+    Tensor grad_gp_wrt_dxhat(batch, input_dim);
     for (size_t i = 0; i < batch; ++i) {
         double norm_sq = 0.0;
         for (size_t j = 0; j < grad_x_hat_layers_[0].cols; ++j) {
