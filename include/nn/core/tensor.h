@@ -45,6 +45,10 @@ public:
     Tensor() {}
     Tensor(size_t r, size_t c);
     Tensor(const std::vector<std::vector<double>>& d);
+    // Copy constructor (deep copy)
+    Tensor(const Tensor& other);
+    // Copy assignment (deep copy)
+    Tensor& operator=(const Tensor& other);
     // Construct from flat data pointer (row-wise copy)
     Tensor(size_t r, size_t c, const double* flat_data);
     static Tensor zeros(size_t r, size_t c);
@@ -80,6 +84,8 @@ public:
 
     // Row extraction: returns row i as (1, cols) tensor
     Tensor get_row(size_t i) const;
+    // Explicit deep clone — use instead of copy constructor when semantics need to be unambiguous
+    Tensor clone() const { Tensor t(rows, cols); t.data = data; return t; }
 };
 
 #endif

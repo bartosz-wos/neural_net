@@ -5,6 +5,17 @@ Tensor::Tensor(size_t r, size_t c) : rows(r), cols(c) {
     data.resize(r * c);
 }
 
+Tensor::Tensor(const Tensor& other) : data(other.data), rows(other.rows), cols(other.cols) {}
+
+Tensor& Tensor::operator=(const Tensor& other) {
+    if (this != &other) {
+        rows = other.rows;
+        cols = other.cols;
+        data = other.data;
+    }
+    return *this;
+}
+
 Tensor::Tensor(const std::vector<std::vector<double>>& d)
     : rows(d.size()), cols(d.empty() ? 0 : d[0].size()) {
     data.resize(rows * cols);
