@@ -79,6 +79,7 @@ public:
     ViTPatchEmbedding patch_embed;
     Tensor class_token;       // (1, d_model)
     Tensor pos_embedding;     // (N+1, d_model)
+    Tensor grad_pos_embedding; // (N+1, d_model) gradient for pos_embedding
     std::vector<ViTBlock> transformer_blocks;
     LayerNorm ln;
     Dense head;               // (d_model, num_classes)

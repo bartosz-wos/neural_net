@@ -82,6 +82,9 @@ $(BUILD_DIR)/test_flash_attention: $(LIB_OBJS) $(BUILD_DIR)/test_flash_attention
 $(BUILD_DIR)/test_vit: $(LIB_OBJS) $(BUILD_DIR)/test_vit.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_rope: $(LIB_OBJS) $(BUILD_DIR)/test_rope.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_focal_simple: $(LIB_OBJS) $(BUILD_DIR)/test_focal_simple.o
 	$(CXX) $^ -o $@
 

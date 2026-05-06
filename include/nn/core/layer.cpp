@@ -46,7 +46,7 @@ void Dense::init_weights(const std::string& scheme) {
 }
 
 Tensor Dense::forward(const Tensor& input) {
-    last_input = input;  // cache for backward
+    last_input = input.clone();  // DEEP copy to prevent aliasing with caller tensor (ViT last_cls)
     Tensor result = input * weights.transpose();
     // Manually broadcast bias (1, out_features) to each batch row
     // FIX: bias[0][j] is the same for every row — eliminate the outer loop

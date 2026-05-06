@@ -18,8 +18,8 @@ public:
     Tensor last_q;       // (tokens, d_model) Q after projection
     Tensor last_k;       // (tokens, d_model) K after projection
     Tensor last_v;       // (tokens, d_model) V after projection
-    Tensor last_scores;  // (num_heads * tile_B, tiles_K * tile_B) cached pre-softmax scores
-    Tensor last_attn_out; // (tokens, d_model) attention output before W_o
+    Tensor last_scores;  // (num_heads * tokens, tokens) cached pre-softmax scores
+    Tensor last_attn_out; // (tokens, d_model) attention output BEFORE W_o projection (output_acc)
     Tensor last_x;       // (tokens, d_model) original input
 
     static constexpr size_t TILE = 64;
@@ -326,6 +326,9 @@ Tensor FlashAttentionLayer::forward(const Tensor& input) {
     }
 
     // Final projection: output_acc @ W_o^T: (tokens, d_model_) @ (d_model_, d_model_)
+    // last_attn_out stores pre-projection attention output (output_acc)
+    last_attn_out = output_acc;
+
     Tensor output(tokens, d_model_);
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d_model_; ++j) {
@@ -335,7 +338,6 @@ Tensor FlashAttentionLayer::forward(const Tensor& input) {
             output[i][j] = val;
         }
     }
-    last_attn_out = output;
 
     // Reshape output back to (d_model_, seq_len)
     Tensor out_back(d_model_, seq_len);
@@ -357,6 +359,17 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
         for (size_t s = 0; s < seq_len; ++s)
             grad_out[s][f] = grad_output[f][s];
 
+    // Accumulate grad_W_o += grad_out^T @ last_attn_out (pre-projection)
+    // last_attn_out is the attention output before W_o projection (output_acc)
+    for (size_t i = 0; i < d_model_; ++i) {
+        for (size_t j = 0; j < d_model_; ++j) {
+            double v = 0.0;
+            for (size_t t = 0; t < tokens; ++t)
+                v += grad_out[t][i] * last_attn_out[t][j];
+            grad_W_o[i][j] += v;
+        }
+    }
+
     // Propagate through W_o: grad_proj = grad_out @ W_o^T
     Tensor grad_proj(tokens, d_model_);
     for (size_t i = 0; i < tokens; ++i) {
@@ -365,16 +378,6 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
             for (size_t k = 0; k < d_model_; ++k)
                 v += grad_out[i][k] * W_o[k][j];
             grad_proj[i][j] = v;
-        }
-    }
-
-    // Accumulate grad_W_o += grad_out^T @ last_attn_out
-    for (size_t i = 0; i < d_model_; ++i) {
-        for (size_t j = 0; j < d_model_; ++j) {
-            double v = 0.0;
-            for (size_t t = 0; t < tokens; ++t)
-                v += grad_out[t][i] * last_attn_out[t][j];
-            grad_W_o[i][j] += v;
         }
     }
 

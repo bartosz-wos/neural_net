@@ -191,8 +191,8 @@ Tensor ViTBlock::backward(const Tensor& grad_output, double /* learning_rate */)
     size_t flat_size = seq_len * d_model;
 
     // ---- Residual split: grad flows to both after_attn and ffn_out ----
-    Tensor grad_after_attn = grad_output;
-    Tensor grad_ffn_out = grad_output;
+    Tensor grad_after_attn = grad_output.clone();
+    Tensor grad_ffn_out = grad_output.clone();
 
     // ---- Backprop FFN2: W2, b2 ----
     // ffn_out[b][s*d_model + d] = b2[d] + sum_h ffn_pregelu[b][s*mlp_hidden + h] * W2[h][d]

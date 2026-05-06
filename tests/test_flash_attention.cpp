@@ -107,7 +107,7 @@ static void test_flash_attention_numerical_Wo() {
     layer.backward(grad_out, 0.0);
 
     double orig_wo00 = layer.W_o[0][0];
-    double eps = 1e-4;
+    double eps = 1e-3;
 
     // loss = sum(outputs)
     layer.zero_grad();
@@ -162,7 +162,7 @@ static void test_flash_attention_numerical_Wq() {
     layer.backward(grad_out, 0.0);
 
     double orig_wq10 = layer.W_q[1][0];
-    double eps = 1e-4;
+    double eps = 1e-3;
 
     layer.W_q[1][0] = orig_wq10 + eps;
     layer.zero_grad();
@@ -209,7 +209,7 @@ static void test_flash_attention_numerical_Wk() {
     layer.backward(grad_out, 0.0);
 
     double orig_wk02 = layer.W_k[0][2];
-    double eps = 1e-4;
+    double eps = 1e-3;
 
     layer.W_k[0][2] = orig_wk02 + eps;
     layer.zero_grad();
@@ -256,7 +256,7 @@ static void test_flash_attention_numerical_Wv() {
     layer.backward(grad_out, 0.0);
 
     double orig_wv11 = layer.W_v[1][1];
-    double eps = 1e-4;
+    double eps = 1e-3;
 
     layer.W_v[1][1] = orig_wv11 + eps;
     layer.zero_grad();
