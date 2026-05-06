@@ -6,3 +6,4 @@ build/
 *.aux
 *.out
 *.synctex.gz
+NOT_FIXED.md
