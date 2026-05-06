@@ -478,7 +478,7 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
             for (size_t dk = 0; dk < d_k_; ++dk) {
                 double gk = 0.0, gq = 0.0;
                 for (size_t j = 0; j < tokens; ++j) {
-                    double correction = attn_probs[j][i] * (dP[j][i] - row_sum_corr[j]) * scale;
+                    double correction = attn_probs[j][i] * (dP[j][i] - row_sum_corr[j]) / scale;
                     gk += correction * Q_h[j][dk];
                     gq += correction * K_h[j][dk];
                 }
