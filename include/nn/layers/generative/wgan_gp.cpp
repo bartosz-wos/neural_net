@@ -12,9 +12,18 @@ static void accumulate_dense_grad(Dense& layer, const Tensor& grad_output,
                                   const Tensor& input) {
     if (input.rows == 0 || input.cols == 0) return;
     // grad_w += grad_output^T * input
-    // For each output unit m and input unit n:
-    // grad_w[m][n] = sum_i grad_output[i][m] * input[i][n]
-    Tensor grad_w(grad_output.transpose() * input); // (out, batch) * (batch, in) = (out, in)
+    // grad_output: (batch, out_i), input: (batch, in_i) -> (out_i, in_i)
+    // grad_w[m][n] = sum_r grad_output[r][m] * input[r][n]
+    Tensor grad_w(grad_output.cols, input.cols);
+    for (size_t m = 0; m < grad_w.rows; ++m) {
+        for (size_t n = 0; n < grad_w.cols; ++n) {
+            double sum = 0.0;
+            for (size_t r = 0; r < grad_output.rows; ++r) {
+                sum += grad_output[r][m] * input[r][n];
+            }
+            grad_w[m][n] = sum;
+        }
+    }
     layer.grad_weights += grad_w;
 
     // Bias gradient: sum over batch for each output unit
@@ -107,12 +116,24 @@ double WGANDiscriminator::gradient_penalty(const Tensor& real, const Tensor& fak
                                            double lambda) {
     // Sample alpha ~ Uniform(0, 1)
     size_t batch = real.rows;
+    size_t input_dim = real.cols;
     Tensor alpha(batch, 1);
     for (size_t i = 0; i < batch; ++i)
         alpha[i][0] = std::uniform_real_distribution<double>(0.0, 1.0)(rng_);
 
     // Interpolation: x_hat = alpha * real + (1 - alpha) * fake
-    last_x_hat_ = alpha.hadamard(real) + (Tensor(1, 1) - alpha).hadamard(fake);
+    // Tile alpha from (batch, 1) to (batch, input_dim) for proper broadcasting
+    Tensor alpha_tiled(batch, input_dim);
+    Tensor one_minus_alpha_tiled(batch, input_dim);
+    for (size_t i = 0; i < batch; ++i) {
+        double a = alpha[i][0];
+        double om = 1.0 - a;
+        for (size_t j = 0; j < input_dim; ++j) {
+            alpha_tiled[i][j] = a;
+            one_minus_alpha_tiled[i][j] = om;
+        }
+    }
+    last_x_hat_ = alpha_tiled.hadamard(real) + one_minus_alpha_tiled.hadamard(fake);
 
     // Forward through critic on x_hat
     // Cached inputs are set inside forward()
@@ -154,38 +175,93 @@ double WGANDiscriminator::gradient_penalty(const Tensor& real, const Tensor& fak
 }
 
 void WGANDiscriminator::backward_gradient_penalty() {
-    // d(GP)/d(D(x_hat))_i = 2 * (||grad_i|| - 1) / ||grad_i|| * grad_x_hat_i
-    // where grad_x_hat_i = d(D(x_hat))/d(x_hat)[i]
+    // Gradient penalty backward pass.
+    //
+    // For each sample r:
+    //   coeff_r = 2 * (||grad_x_hat_layers_[0][r]|| - 1) / ||grad_x_hat_layers_[0][r]||
+    //
+    // d(GP)/d(W_i) = sum_r coeff_r * d(D)/d(W_i)[r]
+    //               = sum_r coeff_r * cached_inputs_[i][r]^T  [for output layer]
+    //
+    // d(GP)/d(pre_i) propagation:
+    //   d(GP)/d(pre_i) = d(GP)/d(pre_{i+1}) @ W_{i+1} * leakyReLU'
+    //
+    // Cached inputs mapping:
+    //   cached_inputs_[0] = input to layer 0 (x)
+    //   cached_inputs_[i] = output of layer i-1 = pre_{i-1} (input to layer i)
     size_t batch = last_x_hat_.rows;
-    size_t input_dim = last_x_hat_.cols;
 
-    // grad_gp_wrt_dxhat: (batch, input_dim)
-    // Each row i is: coeff_i * grad_x_hat_layers_[0][i] (element-wise scaling)
-    Tensor grad_gp_wrt_dxhat(batch, input_dim);
-    for (size_t i = 0; i < batch; ++i) {
+
+    // coeff: per-sample gradient penalty coefficient, shape (batch, 1)
+    Tensor coeff(batch, 1);
+    for (size_t r = 0; r < batch; ++r) {
         double norm_sq = 0.0;
-        for (size_t j = 0; j < grad_x_hat_layers_[0].cols; ++j) {
-            double g = grad_x_hat_layers_[0][i][j];
+        for (size_t c = 0; c < grad_x_hat_layers_[0].cols; ++c) {
+            double g = grad_x_hat_layers_[0][r][c];
             norm_sq += g * g;
         }
         double norm = std::sqrt(std::max(norm_sq, 1e-12));
         double diff = norm - 1.0;
-        // d(GP)/d(D(x_hat)) = 2 * (||grad|| - 1) / ||grad|| * grad_xhat
-        double coeff = 2.0 * diff / norm;
-        for (size_t j = 0; j < grad_x_hat_layers_[0].cols; ++j) {
-            grad_gp_wrt_dxhat[i][j] = coeff * grad_x_hat_layers_[0][i][j];
-        }
+        coeff[r][0] = 2.0 * diff / norm;
     }
 
-    // Backprop through critic using grad_gp_wrt_dxhat
-    Tensor grad = grad_gp_wrt_dxhat;
+    // grad_pre: d(GP)/d(pre_i) — starts as d(GP)/d(pre_n) for last layer
+    // For last layer: d(GP)/d(pre_n) = coeff * 1 (identity Jacobian for scalar output)
+    // grad_pre is also used to compute d(GP)/d(pre_{i-1}) = d(GP)/d(pre_i) @ W_i
+    Tensor grad_pre(batch, layers_.back().weights.rows);
+    for (size_t r = 0; r < batch; ++r) {
+        grad_pre[r][0] = coeff[r][0];
+    }
 
     for (size_t i = layers_.size(); i-- > 0; ) {
         if (cached_inputs_[i].rows > 0 && cached_inputs_[i].cols > 0) {
-            accumulate_dense_grad(layers_[i], grad, cached_inputs_[i]);
-        }
-        if (i > 0) {
-            grad = layers_[i].backward(grad, 0.0);
+            const Dense& layer = layers_[i];
+            size_t out_i = layer.weights.rows;
+            size_t in_i = layer.weights.cols;
+
+            // d(GP)/d(W_i)[m][n] = sum_r coeff[r] * grad_x_hat_layers_[i][r][m] * cached_inputs_[i][r][n]
+            Tensor grad_w(out_i, in_i);
+            for (size_t m = 0; m < out_i; ++m) {
+                for (size_t n = 0; n < in_i; ++n) {
+                    double sum = 0.0;
+                    for (size_t r = 0; r < batch; ++r) {
+                        sum += coeff[r][0] * grad_x_hat_layers_[i][r][m] * cached_inputs_[i][r][n];
+                    }
+                    grad_w[m][n] = sum;
+                }
+            }
+
+            // Accumulate GP gradient into layer.grad_weights
+            if (layer.grad_weights.rows != grad_w.rows || layer.grad_weights.cols != grad_w.cols) {
+                layers_[i].grad_weights = Tensor(grad_w.rows, grad_w.cols);
+            }
+            layers_[i].grad_weights += grad_w;
+
+            // Propagate to previous layer: d(GP)/d(pre_{i-1}) = d(GP)/d(pre_i) @ W_i * leakyReLU'
+            if (i > 0) {
+                // grad_pre: (batch, out_i), W_i: (out_i, in_i)
+                // grad_pre @ W_i: (batch, out_i) @ (out_i, in_i) = (batch, in_i)
+                Tensor grad_input(batch, layer.weights.cols);
+                for (size_t r = 0; r < batch; ++r) {
+                    for (size_t c = 0; c < layer.weights.cols; ++c) {
+                        double sum = 0.0;
+                        for (size_t k = 0; k < out_i; ++k) {
+                            sum += grad_pre[r][k] * layer.weights[k][c];
+                        }
+                        grad_input[r][c] = sum;
+                    }
+                }
+                // Apply LeakyReLU' slope from cached_inputs_[i] (which is pre_i)
+                const Tensor& slope_input = cached_inputs_[i];
+                for (size_t r = 0; r < batch; ++r) {
+                    for (size_t c = 0; c < layer.weights.cols; ++c) {
+                        double x = slope_input(r, c);
+                        double s = (x > 0.0) ? 1.0 : 0.01;
+                        grad_input[r][c] *= s;
+                    }
+                }
+                grad_pre = grad_input;
+            }
         }
     }
 }
