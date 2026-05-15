@@ -478,9 +478,12 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
             for (size_t dk = 0; dk < d_k_; ++dk) {
                 double gk = 0.0, gq = 0.0;
                 for (size_t j = 0; j < tokens; ++j) {
-                    double correction = attn_probs[j][i] * (dP[j][i] - row_sum_corr[j]) / scale;
-                    gk += correction * Q_h[j][dk];
-                    gq += correction * K_h[j][dk];
+                    // Q: query at i attends to key at j => P[i][j], dP[i][j], row_sum_corr[i]
+                    // K: key at i is attended by query at j => P[j][i], dP[j][i], row_sum_corr[j]
+                    double corr_q = attn_probs[i][j] * (dP[i][j] - row_sum_corr[i]) * scale;
+                    double corr_k = attn_probs[j][i] * (dP[j][i] - row_sum_corr[j]) * scale;
+                    gq += corr_q * K_h[j][dk];
+                    gk += corr_k * Q_h[j][dk];
                 }
                 grad_K_h_t[i][dk] = gk;
                 grad_Q_h_t[i][dk] = gq;
@@ -503,8 +506,11 @@ Tensor FlashAttentionLayer::backward(const Tensor& grad_output, double) {
         // grad_W_v += last_x^T @ grad_v
         // grad_W_k += last_x^T @ grad_k
         // grad_W_q += last_x^T @ grad_q
+        //
+        // IMPORTANT: grad_q/grad_k/grad_v[j] = grad_Q/K/V_h_t[j] ONLY for j in [h*d_k, (h+1)*d_k).
+        // For other j, stale values from previous heads exist. Only accumulate for this head's range.
         for (size_t i = 0; i < d_model_; ++i) {
-            for (size_t j = 0; j < d_model_; ++j) {
+            for (size_t j = h * d_k_; j < (h + 1) * d_k_; ++j) {
                 double gq = 0.0, gk = 0.0, gv = 0.0;
                 for (size_t t = 0; t < tokens; ++t) {
                     gq += last_x[t][i] * grad_q[t][j];

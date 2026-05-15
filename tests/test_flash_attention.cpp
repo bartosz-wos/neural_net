@@ -99,18 +99,20 @@ static void test_flash_attention_numerical_Wo() {
     size_t seq_len = 8;
     Tensor input = Tensor::random(d_model, seq_len, 0.3);
 
-    // Forward, backward, reset, then numerical check
+    // Forward, backward to get analytical gradient
     layer.zero_grad();
     Tensor out = layer.forward(input);
     Tensor grad_out(d_model, seq_len);
     grad_out.fill(1.0);
     layer.backward(grad_out, 0.0);
 
+    // CRITICAL: Save analytical gradient BEFORE numerical check clears gradients
+    double ana_grad = layer.grad_W_o[0][0];
+
     double orig_wo00 = layer.W_o[0][0];
     double eps = 1e-3;
 
-    // loss = sum(outputs)
-    layer.zero_grad();
+    // loss = sum(outputs) - use fresh forward with same input, no grad tracking
     out = layer.forward(input);
     double loss_base = 0.0;
     for (size_t r = 0; r < out.rows; ++r)
@@ -136,7 +138,7 @@ static void test_flash_attention_numerical_Wo() {
     layer.W_o[0][0] = orig_wo00;
 
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
-    double ana_grad = layer.grad_W_o[0][0];
+    // ana_grad already saved before numerical check
     double err = rel_error(num_grad, ana_grad);
 
     check("FlashAttention W_o[0][0] numerical vs analytical gradient", err < 1e-1);
@@ -161,19 +163,22 @@ static void test_flash_attention_numerical_Wq() {
     grad_out.fill(1.0);
     layer.backward(grad_out, 0.0);
 
+    // CRITICAL: Save analytical gradient BEFORE numerical check clears gradients
+    double ana_grad = layer.grad_W_q[1][0];
+
     double orig_wq10 = layer.W_q[1][0];
     double eps = 1e-3;
 
+    // Plus perturbation
     layer.W_q[1][0] = orig_wq10 + eps;
-    layer.zero_grad();
     Tensor out_plus = layer.forward(input);
     double loss_plus = 0.0;
     for (size_t r = 0; r < out_plus.rows; ++r)
         for (size_t c = 0; c < out_plus.cols; ++c)
             loss_plus += out_plus[r][c];
 
+    // Minus perturbation
     layer.W_q[1][0] = orig_wq10 - eps;
-    layer.zero_grad();
     Tensor out_minus = layer.forward(input);
     double loss_minus = 0.0;
     for (size_t r = 0; r < out_minus.rows; ++r)
@@ -183,7 +188,6 @@ static void test_flash_attention_numerical_Wq() {
     layer.W_q[1][0] = orig_wq10;
 
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
-    double ana_grad = layer.grad_W_q[1][0];
     double err = rel_error(num_grad, ana_grad);
 
     check("FlashAttention W_q[1][0] numerical vs analytical gradient", err < 1e-1);
@@ -208,19 +212,22 @@ static void test_flash_attention_numerical_Wk() {
     grad_out.fill(1.0);
     layer.backward(grad_out, 0.0);
 
+    // CRITICAL: Save analytical gradient BEFORE numerical check clears gradients
+    double ana_grad = layer.grad_W_k[0][2];
+
     double orig_wk02 = layer.W_k[0][2];
     double eps = 1e-3;
 
+    // Plus perturbation
     layer.W_k[0][2] = orig_wk02 + eps;
-    layer.zero_grad();
     Tensor out_plus = layer.forward(input);
     double loss_plus = 0.0;
     for (size_t r = 0; r < out_plus.rows; ++r)
         for (size_t c = 0; c < out_plus.cols; ++c)
             loss_plus += out_plus[r][c];
 
+    // Minus perturbation
     layer.W_k[0][2] = orig_wk02 - eps;
-    layer.zero_grad();
     Tensor out_minus = layer.forward(input);
     double loss_minus = 0.0;
     for (size_t r = 0; r < out_minus.rows; ++r)
@@ -230,7 +237,6 @@ static void test_flash_attention_numerical_Wk() {
     layer.W_k[0][2] = orig_wk02;
 
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
-    double ana_grad = layer.grad_W_k[0][2];
     double err = rel_error(num_grad, ana_grad);
 
     check("FlashAttention W_k[0][2] numerical vs analytical gradient", err < 1e-1);
@@ -255,19 +261,22 @@ static void test_flash_attention_numerical_Wv() {
     grad_out.fill(1.0);
     layer.backward(grad_out, 0.0);
 
+    // CRITICAL: Save analytical gradient BEFORE numerical check clears gradients
+    double ana_grad = layer.grad_W_v[1][1];
+
     double orig_wv11 = layer.W_v[1][1];
     double eps = 1e-3;
 
+    // Plus perturbation
     layer.W_v[1][1] = orig_wv11 + eps;
-    layer.zero_grad();
     Tensor out_plus = layer.forward(input);
     double loss_plus = 0.0;
     for (size_t r = 0; r < out_plus.rows; ++r)
         for (size_t c = 0; c < out_plus.cols; ++c)
             loss_plus += out_plus[r][c];
 
+    // Minus perturbation
     layer.W_v[1][1] = orig_wv11 - eps;
-    layer.zero_grad();
     Tensor out_minus = layer.forward(input);
     double loss_minus = 0.0;
     for (size_t r = 0; r < out_minus.rows; ++r)
@@ -277,7 +286,6 @@ static void test_flash_attention_numerical_Wv() {
     layer.W_v[1][1] = orig_wv11;
 
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
-    double ana_grad = layer.grad_W_v[1][1];
     double err = rel_error(num_grad, ana_grad);
 
     check("FlashAttention W_v[1][1] numerical vs analytical gradient", err < 1e-1);
