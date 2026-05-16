@@ -103,7 +103,7 @@ $(BUILD_DIR)/test_avgpool2d: $(LIB_OBJS) $(BUILD_DIR)/test_avgpool2d.o
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_realnvp
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
