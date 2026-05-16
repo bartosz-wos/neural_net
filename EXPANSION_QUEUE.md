@@ -5,7 +5,9 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **GELU + SwiGLU**: Implement GELU activation (Gaussian Error Linear Unit, from "Gaussian Error Linear Units (GELU)" — used in BERT, GPT, ViT) with exact formula: `0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))`. Also implement SwiGLU (Swish-Gated Linear Unit from "GLU Variants Improve Transformer") as a block: `SiLU(x) * W * x` with a gating branch. Add both to `include/nn/activations/activations.h` and `activations.cpp`.
+## Done
+
+- **GELU + SwiGLU**: Already implemented — GELU in `activations.h`/`.cpp`, SwiGLU as a template class in `layers/utility/swiglu.{h,cpp}`.
 
 ## Done
 
