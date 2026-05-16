@@ -97,6 +97,9 @@ $(BUILD_DIR)/test_coord_network: $(LIB_OBJS) $(BUILD_DIR)/test_coord_network.o
 $(BUILD_DIR)/test_realnvp: $(LIB_OBJS) $(BUILD_DIR)/test_realnvp.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_avgpool2d: $(LIB_OBJS) $(BUILD_DIR)/test_avgpool2d.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 

@@ -25,6 +25,31 @@ private:
     int H_out, W_out;
 };
 
+// 2D average pooling
+class AvgPool2D : public Layer {
+public:
+    int kernel_h, kernel_w;
+    int stride_h, stride_w;
+    int H, W; // input spatial dims
+    Tensor last_input; // cached (N, C*H*W)
+    std::vector<std::vector<int>> counts_; // [N*C][H_out*W_out] actual count per position
+
+    AvgPool2D(int kH, int kW, int H_in, int W_in, int stride_h = 1, int stride_w = 1);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double) override {}
+    Tensor get_weights() const override { return Tensor(0,0); }
+    Tensor get_gradients() const override { return Tensor(0,0); }
+    std::vector<Tensor*> parameters() override { return {}; }
+    std::vector<Tensor*> gradients() override { return {}; }
+    void zero_grad() override {}
+    std::string name() const override { return "AvgPool2D"; }
+
+private:
+    int H_out, W_out;
+};
+
 // 1D max pooling for sequence data
 // Input: (batch, channels * seq_len)  — col-major as channels × time
 // Output: (batch, channels * seq_out)

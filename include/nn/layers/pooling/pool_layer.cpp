@@ -87,6 +87,87 @@ Tensor MaxPool2D::backward(const Tensor& grad_output, double /* learning_rate */
     return grad_input;
 }
 
+// AvgPool2D
+AvgPool2D::AvgPool2D(int kH, int kW, int H_in, int W_in, int stride_h, int stride_w)
+    : kernel_h(kH), kernel_w(kW), stride_h(stride_h), stride_w(stride_w),
+      H(H_in), W(W_in)
+{
+    H_out = (H - kH) / stride_h + 1;
+    W_out = (W - kW) / stride_w + 1;
+    if (H_out <= 0 || W_out <= 0) {
+        throw std::invalid_argument("AvgPool2D: output dimensions non-positive");
+    }
+}
+
+Tensor AvgPool2D::forward(const Tensor& input) {
+    int N = input.rows;
+    if (input.cols % (H * W) != 0) {
+        throw std::invalid_argument("AvgPool2D: input cols not divisible by H*W");
+    }
+    int C = input.cols / (H * W);
+
+    Tensor output(N, C * H_out * W_out);
+    last_input = input; // cache
+    counts_.assign(N * C, std::vector<int>(H_out * W_out, 0));
+
+    for (int n = 0; n < N; ++n) {
+        for (int c = 0; c < C; ++c) {
+            for (int i_out = 0; i_out < H_out; ++i_out) {
+                for (int j_out = 0; j_out < W_out; ++j_out) {
+                    int h_start = i_out * stride_h;
+                    int w_start = j_out * stride_w;
+                    double sum = 0.0;
+                    int count = 0;
+                    for (int i = 0; i < kernel_h; ++i) {
+                        for (int j = 0; j < kernel_w; ++j) {
+                            int h = h_start + i;
+                            int w = w_start + j;
+                            if (h < H && w < W) {
+                                sum += input[n][c * H * W + h * W + w];
+                                ++count;
+                            }
+                        }
+                    }
+                    output[n][c * H_out * W_out + i_out * W_out + j_out] = sum / (count > 0 ? count : 1);
+                    counts_[n * C + c][i_out * W_out + j_out] = count;
+                }
+            }
+        }
+    }
+    return output;
+}
+
+Tensor AvgPool2D::backward(const Tensor& grad_output, double /* learning_rate */) {
+    int N = grad_output.rows;
+    int C = last_input.cols / (H * W);
+    Tensor grad_input(N, C * H * W);
+    grad_input.fill(0.0);
+
+    for (int n = 0; n < N; ++n) {
+        for (int c = 0; c < C; ++c) {
+            for (int i_out = 0; i_out < H_out; ++i_out) {
+                for (int j_out = 0; j_out < W_out; ++j_out) {
+                    int h_start = i_out * stride_h;
+                    int w_start = j_out * stride_w;
+                    double grad_val = grad_output[n][c * H_out * W_out + i_out * W_out + j_out];
+                    int count = counts_[n * C + c][i_out * W_out + j_out];
+                    double scale = grad_val / static_cast<double>(count > 0 ? count : 1);
+                    for (int i = 0; i < kernel_h; ++i) {
+                        for (int j = 0; j < kernel_w; ++j) {
+                            int h = h_start + i;
+                            int w = w_start + j;
+                            if (h < H && w < W) {
+                                grad_input[n][c * H * W + h * W + w] += scale;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return grad_input;
+}
+
 // MaxPool1D
 MaxPool1D::MaxPool1D(int ksz, int seq_len, int ch, int stride)
     : kernel_size(ksz), stride(stride), channels(ch), seq_len(seq_len)
