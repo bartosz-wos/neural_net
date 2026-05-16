@@ -60,9 +60,14 @@ Tensor GCNLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
         }
 
     // ReLU
-    for (size_t i = 0; i < AW.rows; ++i)
-        for (size_t j = 0; j < AW.cols; ++j)
+    relu_mask_.resize(N);
+    for (size_t i = 0; i < AW.rows; ++i) {
+        relu_mask_[i].resize(AW.cols);
+        for (size_t j = 0; j < AW.cols; ++j) {
+            relu_mask_[i][j] = (AW[i][j] > 0.0) ? 1.0 : 0.0;
             AW[i][j] = std::max(0.0, AW[i][j]);
+        }
+    }
 
     last_output_ = AW;
     return last_output_;
@@ -192,7 +197,13 @@ Tensor GATLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
             }
         }
 
-        // Softmax over j for each i
+        // Store raw LeakyReLU output BEFORE softmax for accurate backward
+        // e currently holds raw LeakyReLU scores (before softmax)
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < N; ++j)
+                last_leaky_output_(i, h * N + j) = e[i][j];
+
+        // Softmax over j for each i (in-place on e, AFTER storing raw output)
         for (size_t i = 0; i < N; ++i) {
             double max_e = e[i][0];
             for (size_t j = 1; j < N; ++j) max_e = std::max(max_e, e[i][j]);
@@ -204,11 +215,6 @@ Tensor GATLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
             for (size_t j = 0; j < N; ++j)
                 e[i][j] /= sum_exp;
         }
-
-        // Store raw LeakyReLU output (before softmax) for backward
-        for (size_t i = 0; i < N; ++i)
-            for (size_t j = 0; j < N; ++j)
-                last_leaky_output_(i, h * N + j) = e[i][j];
 
         // Store alpha for backward (softmax output)
         for (size_t i = 0; i < N; ++i)
