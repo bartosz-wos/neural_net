@@ -5,7 +5,27 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+- **Group Conv / DepthwiseSeparable / Ghost Module / ECA / CBAM / SCConv / CoordAttention**: Implement modern conv variants: GroupConv (grouped convolutions), DepthwiseSeparableConv (DW+PW), GhostModule (cheap feature maps from cheap operations), ECA (efficient channel attention), CBAM (channel+spatial attention), SCConv (spatial and channel reconstruction), CoordAttention. Add to `layers/architectures/` or `layers/convolutions/`.
+
+- **Focal Loss / RetinaNet loss**: Implement focal loss = -alpha * (1-p)^gamma * log(p) for class imbalance. RetinaNet uses this. Add to `utils/focal_loss.{h,cpp}`.
+
+- **Diffusion/DDPM**: Implement basic DDPM (Denoising Diffusion Probabilistic Models): forward noising process, reverse denoising UNet, noise scheduler, variational bound loss. Add to `layers/generative/ddpm.{h,cpp}`.
+
+- **GIN (Graph Isomorphism Network)**: Implement GIN layer: h_{k+1} = MLP((1+eps_k) * h_k + sum_{j in N(i)} h_j). Most powerful GNN variant for graph classification. Add to `layers/architectures/gin.{h,cpp}`.
+
+- **AdaBelief optimizer**: Variant of Adam that uses belief in gradient direction. Replaces second moment v with variance of gradient residuals: v = v + (grad - m)^2. Better generalization than Adam. Add to `optimizers/adabelief.{h,cpp}`.
+
+- **DeepGCN / GCNII**: Advanced GCN variants with residual connections and MLPs for deep graphs. Add to `layers/architectures/deep_gcn.{h,cpp}`.
+
+- **Nyström attention**: Efficient attention via low-rank approximation using Nyström method. Approximates softmax(KQ)V with landmark points. Good for long sequences. Add to `layers/attention/nystrom_attention.{h,cpp}`.
+
+- **CRATE**: Convolutions with Rectified Activations — uses channel attention with ReLU. Implement as a lightweight efficient architecture.
+
+- **LightGCN**: Simplified Graph Convolutional Network — removes non-linearities and uses only linear propagation for recommendation. Very simple but effective. Add to `layers/architectures/lightgcn.{h,cpp}`.
+
 ## Done
+
+- **LAMB optimizer**: Implemented — Layer-wise Adaptive Moment estimation with trust ratio normalization. Add to `optimizers/lamb.{h,cpp}` and registered. Full bias-corrected moment update with per-parameter trust ratio clamping.
 
 - **GELU + SwiGLU**: Already implemented — GELU in `activations.h`/`.cpp`, SwiGLU as a template class in `layers/utility/swiglu.{h,cpp}`.
 
