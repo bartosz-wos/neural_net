@@ -91,6 +91,12 @@ $(BUILD_DIR)/test_focal_simple: $(LIB_OBJS) $(BUILD_DIR)/test_focal_simple.o
 $(BUILD_DIR)/test_gat_gradient: $(LIB_OBJS) $(BUILD_DIR)/test_gat_gradient.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_coord_network: $(LIB_OBJS) $(BUILD_DIR)/test_coord_network.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_realnvp: $(LIB_OBJS) $(BUILD_DIR)/test_realnvp.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 

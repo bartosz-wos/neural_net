@@ -3,7 +3,15 @@
 Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
+## Ideas
+
+- **Normalizing Flow layers**: Implement invertible transformations for density estimation (RealNVP-style). Include coupling layers, affine coupling, and test with synthetic data.
+
+- **Coordinate Networks (CoN)**: Implement MLPs augmented with Fourier features for learning high-frequency functions on spatial domains. Good for implicit neural representations and SDFs.
+
 ## Done
+
+- **Normalizing Flow layers**: Implemented RealNVP-style invertible flows with AffineCoupling stack, coupling layers, forward/inverse passes, log-det Jacobian. Fixed batch dimension mismatch bug in CouplingLayer::inverse() and AffineCoupling::sample() — s/t networks operate on single-row input, not batched. Tests: 12/12 pass.
 
 - **TanhPlus + Snake activations**: Implement `TanhPlus(x) = x + tanh(x)` (smooth, unbounded above, bounded below at ~-0.76) and `Snake(x) = x + (1/beta) * sin^2(beta*x)` (periodic activation, learnable beta). Both go in `include/nn/activations/activations.h` and `activations.cpp`. Snake is from the paper "Snake: Sinusoidal Activation Functions" — good for periodic pattern recognition.
 
