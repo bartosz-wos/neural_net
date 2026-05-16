@@ -380,7 +380,7 @@ Tensor GATLayer::backward(const Tensor& grad_output, double learning_rate) {
         for (size_t i = 0; i < a_ref.rows; ++i)
             for (size_t j = 0; j < a_ref.cols; ++j)
                 a_ref(i, j) -= learning_rate * grad_a(i, j);
-        grad_a_ref += grad_a;
+        grad_a_ref += grad_a.transpose(); // grad_a is (4,1), grad_a_ref is (1,4)
 
         // Step 7: dL/dinput += dL/dWh @ W  (accumulate across heads)
         // Wh = input @ W^T => dL/dinput = dL/dWh @ W

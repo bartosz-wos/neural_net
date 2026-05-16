@@ -88,10 +88,13 @@ $(BUILD_DIR)/test_rope: $(LIB_OBJS) $(BUILD_DIR)/test_rope.o
 $(BUILD_DIR)/test_focal_simple: $(LIB_OBJS) $(BUILD_DIR)/test_focal_simple.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_gat_gradient: $(LIB_OBJS) $(BUILD_DIR)/test_gat_gradient.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
