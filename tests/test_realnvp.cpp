@@ -215,26 +215,14 @@ static void test_flow_training() {
             double loss = -log_prob;
 
             epoch_loss += loss;
-
-            // Backward
-            Tensor grad_loss(1, 2);
-            grad_loss.fill(-1.0);  // dL/dz = -(z), dL/dlog_det = -1
-            // Actually we want dL/d(loss) = 1, and loss = -log_prob
-            // So dL/d(log_prob) = -1
-            // dL/d(z) = -1 * d(log_prob)/d(z) = -1 * (-z) = z
-            // dL/d(log_det) = -1 * 1 = -1
-            // But our backward computes dL/dx from dL/dy
-            // We need grad_output = dL/d(y) = dL/d(z) since y=z
-            // dL/dz = z (from above), and dL/dlog_det = -1 is built into the backward
-            // Actually the backward computes gradient w.r.t. the input x not z.
-            // For MLE loss L = -log p(x) = 0.5*||z||^2 - log_det
-            // dL/dz = z, dL/d(log_det) = -1
-            // In backward, grad_output = dL/dy = dL/dz = [z0, z1]
+            // Backward: grad_output = dL/d(output of forward) = dL/dz
+            // Since L = -log_prob and log_prob = -0.5*||z||^2 + log_det
+            // dL/dz = z (chain rule: -1 * (-z) = z)
             Tensor grad_z(1, 2);
-            grad_z[0][0] = z[0][0];  // dL/dz0 = z0
-            grad_z[0][1] = z[0][1];  // dL/dz1 = z1
+            grad_z[0][0] = z[0][0];
+            grad_z[0][1] = z[0][1];
 
-            // Backward with gradient clipping to prevent explosion
+
             double clip_val = 10.0;
             for (double& g : grad_z.data) {
                 if (g > clip_val) g = clip_val;
