@@ -159,6 +159,7 @@ Tensor GATLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
     adj_ = adj;
     last_Wh_heads_.resize(num_heads_);
     last_alpha_ = Tensor(N, N * num_heads_);
+    last_leaky_output_ = Tensor(N, N * num_heads_);
     leaky_relu_masks_.resize(num_heads_);
 
     for (size_t h = 0; h < num_heads_; ++h) {
@@ -204,7 +205,12 @@ Tensor GATLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
                 e[i][j] /= sum_exp;
         }
 
-        // Store alpha for backward
+        // Store raw LeakyReLU output (before softmax) for backward
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < N; ++j)
+                last_leaky_output_(i, h * N + j) = e[i][j];
+
+        // Store alpha for backward (softmax output)
         for (size_t i = 0; i < N; ++i)
             for (size_t j = 0; j < N; ++j)
                 last_alpha_(i, h * N + j) = e[i][j];
@@ -346,7 +352,7 @@ Tensor GATLayer::backward(const Tensor& grad_output, double learning_rate) {
                 // LeakyReLU derivative: use stored e_ij (pre-softmax LeakyReLU output)
                 // e_ij > 0 means original dot_ij > 0 => derivative = 1.0
                 // e_ij <= 0 means original dot_ij <= 0 => derivative = 0.2
-                double e_ij = last_alpha_(i, h * N + j);
+                double e_ij = last_leaky_output_(i, h * N + j);  // raw LeakyReLU output (before softmax)
                 double leaku_deriv = (e_ij > 0.0) ? 1.0 : leaky_slope;
 
                 double ge = grad_e(i, j) * leaku_deriv;

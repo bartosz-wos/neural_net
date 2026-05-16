@@ -160,4 +160,4 @@ void SwiGLU<A>::zero_grad() {
 
 // Explicit instantiations (can be expanded as needed)
 template class SwiGLU<Swish>;
-// template class SwiGLU<GELU>;  // uncomment if GELU variant is needed
+template class SwiGLU<GELU>;

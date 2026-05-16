@@ -52,6 +52,7 @@ private:
     Tensor last_input_;
     std::vector<Tensor> last_Wh_heads_;
     Tensor last_alpha_;
+    Tensor last_leaky_output_;  // raw LeakyReLU output before softmax for accurate backward
     Tensor adj_;
     std::vector<std::vector<std::vector<double>>> leaky_relu_masks_;
 };
