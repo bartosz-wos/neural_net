@@ -9,8 +9,6 @@ After completing an item, move it to the "Done" section.
 
 - **GELU + SwiGLU**: Already implemented — GELU in `activations.h`/`.cpp`, SwiGLU as a template class in `layers/utility/swiglu.{h,cpp}`.
 
-## Done
-
 - **TanhPlus + Snake activations**: Implement `TanhPlus(x) = x + tanh(x)` (smooth, unbounded above, bounded below at ~-0.76) and `Snake(x) = x + (1/beta) * sin^2(beta*x)` (periodic activation, learnable beta). Both go in `include/nn/activations/activations.h` and `activations.cpp`. Snake is from the paper "Snake: Sinusoidal Activation Functions" — good for periodic pattern recognition.
 
 - **Normalizing Flow layers**: Implemented RealNVP-style invertible flows with AffineCoupling stack, coupling layers, forward/inverse passes, log-det Jacobian. Fixed batch dimension mismatch bug in CouplingLayer::inverse() and AffineCoupling::sample() — s/t networks operate on single-row input, not batched. Tests: 12/12 pass.
