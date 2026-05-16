@@ -78,6 +78,8 @@
 #include "layers/utility/skip_connection.h"
 #include "layers/utility/squeeze_excitation.h"
 #include "layers/utility/dataloader.h"
+#include "layers/utility/fourier_features.h"
+#include "layers/utility/coord_network.h"
 #include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
