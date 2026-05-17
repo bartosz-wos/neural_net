@@ -23,6 +23,21 @@ public:
     Tensor get_gradients() const override { return grad_fc1_weight_; }
     std::string name() const override { return "CRATE"; }
 
+public:
+    // Testing-only accessors for gradient verification
+    const Tensor& dw_weight() const { return dw_weight_; }
+    const Tensor& dw_bias() const { return dw_bias_; }
+    const Tensor& fc1_weight() const { return fc1_weight_; }
+    const Tensor& fc1_bias() const { return fc1_bias_; }
+    const Tensor& fc2_weight() const { return fc2_weight_; }
+    const Tensor& fc2_bias() const { return fc2_bias_; }
+    const Tensor& grad_dw_weight() const { return grad_dw_weight_; }
+    const Tensor& grad_dw_bias() const { return grad_dw_bias_; }
+    const Tensor& grad_fc1_weight() const { return grad_fc1_weight_; }
+    const Tensor& grad_fc1_bias() const { return grad_fc1_bias_; }
+    const Tensor& grad_fc2_weight() const { return grad_fc2_weight_; }
+    const Tensor& grad_fc2_bias() const { return grad_fc2_bias_; }
+
 private:
     int channels_;
     int reduction_;

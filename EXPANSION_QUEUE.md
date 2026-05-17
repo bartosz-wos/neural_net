@@ -5,17 +5,17 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **GIN (Graph Isomorphism Network)**: Implement GIN layer: h_{k+1} = MLP((1+eps_k) * h_k + sum_{j in N(i)} h_j). Most powerful GNN variant for graph classification. Add to `layers/architectures/gin.{h,cpp}`.
+- **GIN (Graph Isomorphism Network)**: Already implemented in `layers/architectures/gin.{h,cpp}`. GIN layer: h_{k+1} = MLP((1+eps_k) * h_k + sum_{j in N(i)} h_j). Includes GIN0Layer (linear) and GINLayer (MLP). Gradient check (L2 loss) passes for both. Fixed: last_input_ clone in forward_with_adj to prevent input corruption during numerical gradient checks; L2 loss used in Test 4 to avoid catastrophic cancellation with near-zero MLP outputs.
 
 - **DeepGCN / GCNII**: Advanced GCN variants with residual connections and MLPs for deep graphs. Add to `layers/architectures/deep_gcn.{h,cpp}`.
 
 - **Nyström attention**: Efficient attention via low-rank approximation using Nyström method. Approximates softmax(KQ)V with landmark points. Good for long sequences. Add to `layers/attention/nystrom_attention.{h,cpp}`.
 
-- **CRATE**: Convolutions with Rectified Activations — uses channel attention with ReLU. Implement as a lightweight efficient architecture.
-
 - **LightGCN**: Simplified Graph Convolutional Network — removes non-linearities and uses only linear propagation for recommendation. Very simple but effective. Add to `layers/architectures/lightgcn.{h,cpp}`.
 
 ## Done
+
+- **CRATE**: Convolutions with Rectified Activations — channel attention with ReLU gating (no sigmoid). Architecture: DepthwiseConv3x3 → GAP → FC1 → ReLU → FC2 → ReLU → L1 normalize → channel scale. Key insight: uses ReLU instead of sigmoid for channel importance, producing sparse attention. Tested with numerical gradient verification (rel_err ~3e-9%). All 18 tests pass.
 
 - **AdaBelief optimizer**: Implemented — belief variance instead of second moment. Uses residual variance E[(grad - m_prev)^2] to measure gradient "surprise". Better generalization than Adam in image classification and language modeling. AdamW-style weight decay. Full bias-corrected moment update. Tests: 4/4 pass.
 

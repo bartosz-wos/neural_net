@@ -70,6 +70,9 @@ $(BUILD_DIR)/test_s4: $(LIB_OBJS) $(BUILD_DIR)/test_s4.o
 $(BUILD_DIR)/test_gradient_check: $(LIB_OBJS) $(BUILD_DIR)/test_gradient_check.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_crate: $(LIB_OBJS) $(BUILD_DIR)/test_crate.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_rmsnorm: $(LIB_OBJS) $(BUILD_DIR)/test_rmsnorm.o
 	$(CXX) $^ -o $@
 
