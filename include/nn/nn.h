@@ -90,6 +90,7 @@
 
 // Layers — graph
 #include "layers/architectures/gnn.h"
+#include "layers/architectures/gin.h"
 #include "layers/architectures/s4.h"
 
 #endif

@@ -16,6 +16,8 @@ public:
     void zero_grad() override {}
     std::vector<Tensor*> parameters() override { return {}; }
     std::vector<Tensor*> gradients() override { return {}; }
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
 private:
     double p_;
@@ -37,8 +39,9 @@ public:
     void update_weights(double learning_rate) override {}
     void zero_grad() override {}
     std::vector<Tensor*> parameters() override { return {}; }
-
     std::vector<Tensor*> gradients() override { return {}; }
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 private:
     double p_;
     bool training_;
