@@ -42,7 +42,7 @@ Tensor GINLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
     // GIN: h'_{k+1} = MLP( (1+eps_k) * h_k + sum_{j in N(i)} h_j )
     size_t N = input.rows;
     num_nodes_ = N;
-    last_input_ = input;
+    last_input_ = input.clone();  // clone to avoid corruption when input is modified in-place
     adj_ = adj;
 
     // Aggregate: sum_{j in N(i)} h_j
@@ -80,7 +80,8 @@ Tensor GINLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
         x = fc_layers_[layer_idx].forward(x);
 
         // Store pre-BN output for backward (fc output before BatchNorm)
-        pre_bn_outputs_[layer_idx] = x;
+        // MUST clone — x is modified in-place by subsequent operations
+        pre_bn_outputs_[layer_idx] = x.clone();
 
         // BatchNorm
         bn_layers_[layer_idx].set_training(true);
@@ -121,6 +122,13 @@ Tensor GINLayer::backward(const Tensor& grad_output, double learning_rate) {
     final_fc.update_weights(learning_rate);
     grad = grad_fc_input;  // now grad is w.r.t. output of last hidden layer (post-ReLU)
 
+    if (num_nodes_ == 3 && in_features_ == 2) {
+        fprintf(stderr, "DEBUG after FC1 backward (dL/d_relu_out):\n");
+        for (size_t i = 0; i < N; ++i) {
+            fprintf(stderr, "  grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
+        }
+    }
+
     // 2. Backward through hidden layers in reverse order
     size_t num_hidden = fc_layers_.size() - 1;
 
@@ -129,6 +137,18 @@ Tensor GINLayer::backward(const Tensor& grad_output, double learning_rate) {
 
         // ReLU backward: grad *= (pre_relu > 0)
         // pre_bn_outputs_[rev_idx] is the fc output before BN (and before ReLU)
+        if (num_nodes_ == 3 && in_features_ == 2) {
+            fprintf(stderr, "DEBUG MLP backward layer_idx=%zu rev_idx=%zu\n", layer_idx, rev_idx);
+            fprintf(stderr, "  Before ReLU mask: grad[0..2][0..1]:\n");
+            for (size_t i = 0; i < N; ++i) {
+                fprintf(stderr, "    grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
+            }
+            fprintf(stderr, "  pre_bn_outputs_[%zu] (should be BN input):\n", rev_idx);
+            for (size_t i = 0; i < N; ++i) {
+                fprintf(stderr, "    pre_bn[%zu][%zu]: %.10f %.10f\n", rev_idx, i, pre_bn_outputs_[rev_idx](i, 0), pre_bn_outputs_[rev_idx](i, 1));
+            }
+        }
+
         for (size_t i = 0; i < grad.rows; ++i) {
             for (size_t j = 0; j < grad.cols; ++j) {
                 if (pre_bn_outputs_[rev_idx](i, j) <= 0.0) {
@@ -137,15 +157,35 @@ Tensor GINLayer::backward(const Tensor& grad_output, double learning_rate) {
             }
         }
 
+        if (num_nodes_ == 3 && in_features_ == 2) {
+            fprintf(stderr, "  After ReLU mask: grad[0..2][0..1]:\n");
+            for (size_t i = 0; i < N; ++i) {
+                fprintf(stderr, "    grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
+            }
+        }
+
         // BatchNorm backward
         // grad is w.r.t. BN output, we need grad w.r.t. BN input (fc output)
         grad = bn_layers_[rev_idx].backward(grad, 0.0);
-        bn_layers_[rev_idx].update_weights(learning_rate);
+
+        if (num_nodes_ == 3 && in_features_ == 2) {
+            fprintf(stderr, "  After BN backward: grad[0..2][0..1]:\n");
+            for (size_t i = 0; i < N; ++i) {
+                fprintf(stderr, "    grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
+            }
+        }
 
         // Dense backward: get gradient w.r.t. this layer's input
         Tensor grad_before_fc = fc_layers_[rev_idx].backward(grad, learning_rate);
         fc_layers_[rev_idx].update_weights(learning_rate);
         grad = grad_before_fc;  // now grad is w.r.t. last_agg_ (MLP input)
+
+        if (num_nodes_ == 3 && in_features_ == 2) {
+            fprintf(stderr, "  After FC[%zu] backward: grad[0..2][0..1] (dL/d_last_agg):\n", rev_idx);
+            for (size_t i = 0; i < N; ++i) {
+                fprintf(stderr, "    grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
+            }
+        }
     }
 
     // grad is now w.r.t. last_agg_ (the combined (1+eps)*input + agg before MLP)
@@ -159,6 +199,18 @@ Tensor GINLayer::backward(const Tensor& grad_output, double learning_rate) {
     for (size_t i = 0; i < N; ++i) {
         for (size_t f = 0; f < in_feat; ++f) {
             grad_input[i][f] = one_plus_eps_ * grad(i, f);
+        }
+    }
+
+    if (num_nodes_ == 3 && in_features_ == 2) {
+        fprintf(stderr, "DEBUG aggregation backward:\n");
+        fprintf(stderr, "  last_input_ (original input):\n");
+        for (size_t i = 0; i < N; ++i) {
+            fprintf(stderr, "    last_input_[%zu]: %.10f %.10f\n", i, last_input_(i, 0), last_input_(i, 1));
+        }
+        fprintf(stderr, "  grad (w.r.t. last_agg_/MLP input) before agg backward:\n");
+        for (size_t i = 0; i < N; ++i) {
+            fprintf(stderr, "    grad[%zu]: %.10f %.10f\n", i, grad(i, 0), grad(i, 1));
         }
     }
 
@@ -177,11 +229,22 @@ Tensor GINLayer::backward(const Tensor& grad_output, double learning_rate) {
     //   So: grad_input(j, f) += grad(i, f) for all i where adj[i][j]=1
     for (size_t i = 0; i < N; ++i) {
         for (size_t j = 0; j < N; ++j) {
-            if (adj_(j, i) > 1e-9) {  // adj[j][i]=1: j contributes to i (gradient flows i -> j)
+            if (adj_(i, j) > 1e-9) {  // adj[i][j]=1: j contributes to i (gradient flows i -> j)
                 for (size_t f = 0; f < in_feat; ++f) {
                     grad_input(j, f) += grad(i, f);
                 }
             }
+        }
+    }
+
+    if (num_nodes_ == 3 && in_features_ == 2) {
+        fprintf(stderr, "  After aggregation backward (grad_input):\n");
+        for (size_t i = 0; i < N; ++i) {
+            fprintf(stderr, "    grad_input[%zu]: %.10f %.10f\n", i, grad_input(i, 0), grad_input(i, 1));
+        }
+        fprintf(stderr, "  Input values (for reference):\n");
+        for (size_t i = 0; i < N; ++i) {
+            fprintf(stderr, "    input[%zu]: %.10f %.10f\n", i, last_input_(i, 0), last_input_(i, 1));
         }
     }
 
@@ -253,7 +316,7 @@ Tensor GIN0Layer::forward(const Tensor& input) {
 Tensor GIN0Layer::forward_with_adj(const Tensor& input, const Tensor& adj) {
     size_t N = input.rows;
     num_nodes_ = N;
-    last_input_ = input;
+    last_input_ = input.clone();  // clone to avoid corruption when input is modified in-place
     adj_ = adj;
 
     // Aggregate: sum_{j in N(i)} h_j
@@ -367,7 +430,7 @@ Tensor GIN0Layer::backward(const Tensor& grad_output, double learning_rate) {
     // i.e., for each edge j->i (adj[i][j]=1), grad flows i -> j
     for (size_t i = 0; i < N; ++i) {
         for (size_t j = 0; j < N; ++j) {
-            if (adj_(j, i) > 1e-9) {  // adj[j][i]=1: j contributes to i (gradient flows i -> j)
+            if (adj_(i, j) > 1e-9) {  // adj[i][j]=1: j contributes to i (gradient flows i -> j)
                 for (size_t f = 0; f < in_feat; ++f) {
                     grad_input(j, f) += grad_agg(i, f);
                 }

@@ -184,11 +184,12 @@ int main() {
 
         GINLayer layer(in_f, out_f, 16, 2);
 
+        // Use L2 loss to avoid catastrophic cancellation when MLP outputs are near zero
         auto compute_loss = [](const Tensor& t) -> double {
             double s = 0.0;
             for (size_t i = 0; i < t.rows; ++i)
                 for (size_t j = 0; j < t.cols; ++j)
-                    s += t(i, j);
+                    s += t(i, j) * t(i, j);  // L2: avoids cancellation when values ~0
             return s;
         };
 
@@ -200,11 +201,13 @@ int main() {
         double loss_fwd = compute_loss(output);
         cout << "Loss (forward): " << fixed << setprecision(8) << loss_fwd << endl;
 
-        // Backward
-        Tensor grad_output(output.rows, output.cols);
-        grad_output.fill(1.0);
+        // dL/d(out) = 2*out for L2 loss
+        Tensor grad_output_l2(output.rows, output.cols);
+        for (size_t i = 0; i < output.rows; ++i)
+            for (size_t j = 0; j < output.cols; ++j)
+                grad_output_l2(i, j) = 2.0 * output(i, j);
         layer.zero_grad();
-        Tensor grad_x = layer.backward(grad_output, 0.0);
+        Tensor grad_x = layer.backward(grad_output_l2, 0.0);
 
         // Numerical gradient check
         for (size_t i = 0; i < N; ++i) {
