@@ -250,7 +250,6 @@ static void test_wgan_numerical_weight_gradient() {
     double ana_grad = w1.grad_weights[0][0];
     double err = rel_error(num_grad, ana_grad);
 
-    cout << "DEBUG: num_grad = " << num_grad << ", ana_grad = " << ana_grad << endl;
     check("WGANDiscriminator W[0][0] numerical vs analytical gradient", err < 1e-1);
 }
 

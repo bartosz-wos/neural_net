@@ -1,0 +1,79 @@
+// Compare numerical vs analytical gradients
+#include <iostream>
+#include <iomanip>
+#include <cmath>
+#include "nn/layers/generative/wgan_gp.h"
+#include "nn/core/tensor.h"
+
+using namespace std;
+
+int main() {
+    cout << setprecision(12);
+    
+    // Use a fixed seed for reproducibility
+    srand(42);
+    
+    WGANDiscriminator critic(2, 8, 2);
+    
+    Dense& w0 = critic.layer(0);
+    
+    Tensor real(2, 2);
+    real[0][0] = 0.5; real[0][1] = -0.5;
+    real[1][0] = 1.0; real[1][1] = 0.0;
+    
+    Tensor fake(2, 2);
+    fake[0][0] = -0.5; fake[0][1] = 0.5;
+    fake[1][0] = 0.0; fake[1][1] = -1.0;
+    
+    // First, verify the network forward pass matches our manual computation
+    critic.reset_cached_inputs();
+    Tensor out = critic.forward(real);
+    cout << "Forward D(real)[0] = " << out[0][0] << endl;
+    cout << "Forward D(real)[1] = " << out[1][0] << endl;
+    
+    // Print w0.weights[0][0]
+    cout << "\nw0.weights[0][0] = " << w0.weights[0][0] << endl;
+    
+    // Compute numerical gradient
+    double orig_w00 = w0.weights[0][0];
+    double eps = 1e-4;
+    
+    w0.weights[0][0] = orig_w00 + eps;
+    critic.reset_cached_inputs();
+    Tensor out_r_p = critic.forward(real);
+    double loss_r_plus = out_r_p[0][0] + out_r_p[1][0];
+    critic.reset_cached_inputs();
+    Tensor out_f_p = critic.forward(fake);
+    double loss_f_plus = out_f_p[0][0] + out_f_p[1][0];
+    
+    w0.weights[0][0] = orig_w00 - eps;
+    critic.reset_cached_inputs();
+    Tensor out_r_m = critic.forward(real);
+    double loss_r_minus = out_r_m[0][0] + out_r_m[1][0];
+    critic.reset_cached_inputs();
+    Tensor out_f_m = critic.forward(fake);
+    double loss_f_minus = out_f_m[0][0] + out_f_m[1][0];
+    
+    w0.weights[0][0] = orig_w00;
+    
+    double num_grad = (loss_r_plus + loss_f_plus - loss_r_minus - loss_f_minus) / (2.0 * eps);
+    cout << "\nNumerical gradient = " << num_grad << endl;
+    
+    // Compute analytical gradient
+    critic.zero_grad();
+    Tensor grad_out(2, 1);
+    grad_out.fill(1.0);
+    critic.reset_cached_inputs();
+    critic.forward(real);
+    critic.backward_from(grad_out);
+    critic.reset_cached_inputs();
+    critic.forward(fake);
+    critic.backward_from(grad_out);
+    
+    cout << "Analytical gradient = " << w0.grad_weights[0][0] << endl;
+    
+    double rel_err = abs(num_grad - w0.grad_weights[0][0]) / (abs(num_grad) + abs(w0.grad_weights[0][0]) + 1e-8);
+    cout << "Relative error = " << rel_err << endl;
+    
+    return 0;
+}

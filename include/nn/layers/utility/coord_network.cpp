@@ -96,7 +96,7 @@ Tensor CoordinateNetwork::backward(const Tensor& grad_output, double learning_ra
 
 void CoordinateNetwork::update_weights(double learning_rate) {
     // Clip weight gradients per-layer to prevent instability
-    double max_norm = 10.0;
+    double max_norm = 100.0;
     for (auto& layer : mlp_layers_) {
         for (Tensor* g : layer->gradients()) {
             double gnorm = 0.0;
@@ -227,7 +227,7 @@ Tensor SIREN::forward(const Tensor& coords) {
         if (li == 0) {
             // First layer: sin(omega0 * (Wx + b))
             x = x.apply([this](double v){ return std::sin(omega0_ * v); });
-        } else if (li < layers_.size() - 1) {
+        } else {
             // Hidden layers: sin(Wx + b)
             x = x.apply([](double v){ return std::sin(v); });
         }
@@ -262,11 +262,14 @@ Tensor SIREN::backward(const Tensor& grad_output, double learning_rate) {
             // last_pre_sin_[layer_idx] = output of Dense[layer_idx] = pre-sin value z
             const Tensor& pre_sin = last_pre_sin_[layer_idx];
 
-            // dL/d(pre_sin) = dL/d(post_sin) * cos(pre_sin)
+            // dL/d(pre_sin) = dL/d(post_sin) * omega0 * cos(pre_sin)
+            // For first layer: sin(omega0 * z), d/dz = omega0 * cos(omega0 * z)
+            // For other layers: sin(z), d/dz = cos(z)
+            double omega = (layer_idx == 0) ? omega0_ : 1.0;
             Tensor grad_sin(grad.rows, grad.cols);
             for (size_t i = 0; i < grad.rows; ++i) {
                 for (size_t j = 0; j < grad.cols; ++j) {
-                    grad_sin[i][j] = grad[i][j] * std::cos(pre_sin[i][j]);
+                    grad_sin[i][j] = omega * grad[i][j] * std::cos(pre_sin[i][j]);
                 }
             }
             grad = layers_[layer_idx]->backward(grad_sin, 0.0);
@@ -279,7 +282,7 @@ Tensor SIREN::backward(const Tensor& grad_output, double learning_rate) {
 
 void SIREN::update_weights(double learning_rate) {
     // Clip weight gradients per-layer to prevent instability
-    double max_norm = 10.0;
+    double max_norm = 100.0;
     for (auto& layer : layers_) {
         for (Tensor* g : layer->gradients()) {
             double gnorm = 0.0;

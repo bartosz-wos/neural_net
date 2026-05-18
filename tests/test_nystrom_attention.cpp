@@ -142,7 +142,17 @@ static void test_nystrom_numerical_Wo() {
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
     double err = rel_error(num_grad, ana_grad);
 
-    check("NystromAttention W_o[0][0] numerical vs analytical gradient", err < 1e-1);
+    check("NystromAttention W_o[0][0] numerical vs analytical gradient", err < 1e-5);
+}
+
+static double compute_l2_loss(const Tensor& out) {
+    double loss = 0.0;
+    for (size_t r = 0; r < out.rows; ++r)
+        for (size_t c = 0; c < out.cols; ++c) {
+            double d = out[r][c] - 1.0;
+            loss += d * d;
+        }
+    return loss;
 }
 
 // =====================================================================
@@ -191,7 +201,7 @@ static void test_nystrom_numerical_Wq() {
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
     double err = rel_error(num_grad, ana_grad);
 
-    check("NystromAttention W_q[1][0] numerical vs analytical gradient", err < 1e-1);
+    check("NystromAttention W_q[1][0] numerical vs analytical gradient", err < 1e-5);
 }
 
 // =====================================================================
@@ -240,7 +250,7 @@ static void test_nystrom_numerical_Wk() {
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
     double err = rel_error(num_grad, ana_grad);
 
-    check("NystromAttention W_k[0][2] numerical vs analytical gradient", err < 1e-1);
+    check("NystromAttention W_k[0][2] numerical vs analytical gradient", err < 1e-5);
 }
 
 // =====================================================================
@@ -289,7 +299,7 @@ static void test_nystrom_numerical_Wv() {
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
     double err = rel_error(num_grad, ana_grad);
 
-    check("NystromAttention W_v[1][1] numerical vs analytical gradient", err < 1e-1);
+    check("NystromAttention W_v[1][1] numerical vs analytical gradient", err < 1e-5);
 }
 
 // =====================================================================

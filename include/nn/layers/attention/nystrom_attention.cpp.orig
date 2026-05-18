@@ -41,10 +41,6 @@ void NystromAttention::zero_grad() {
     last_query = Tensor();
     last_key = Tensor();
     last_value = Tensor();
-    // Also clear projected Q/K/V caches to prevent stale values during repeated numerical checks
-    last_q = Tensor();
-    last_k = Tensor();
-    last_v = Tensor();
 }
 
 void NystromAttention::update_weights(double learning_rate) {
@@ -520,8 +516,26 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
         }
     }
 
-    // Nyström backward path: accumulates grad_W_q/k/v through the full
-    // attention computation. Only runs when Nyström was actually used.
+    // grad_W_q = last_query^T @ grad_proj (chain rule: Q = last_query @ W_q^T)
+    // grad_W_k = last_key^T @ grad_proj
+    // grad_W_v = last_value^T @ grad_proj
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t i = 0; i < E; ++i) {
+            for (size_t j = 0; j < E; ++j) {
+                double gq = 0.0, gk = 0.0, gv = 0.0;
+                for (size_t s = 0; s < seq; ++s) {
+                    gq += last_query[b][s * E + i] * grad_proj[b][s * E + j];
+                    gk += last_key[b][s * E + i] * grad_proj[b][s * E + j];
+                    gv += last_value[b][s * E + i] * grad_proj[b][s * E + j];
+                }
+                grad_W_q[i][j] += gq;
+                grad_W_k[i][j] += gk;
+                grad_W_v[i][j] += gv;
+            }
+        }
+    }
+
+    // Full attention backward for Nyström path
     if (last_A_bar.rows > 0) {
         size_t m = landmark_indices_.size();
         size_t N = seq;
@@ -620,13 +634,12 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                         grad_K_L[p][dk] += gkl;
                     }
                 }
-                // grad_Q_h[j][dk] = scale * sum_p grad_S_bar[p][j] * K_L[p][dk]
                 for (size_t j = 0; j < N; ++j) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gqh = 0.0;
                         for (size_t p = 0; p < m; ++p)
-                            gqh += grad_S_bar[p][j] * K_L[p][dk];
-                        grad_Q_h_attn[j][dk] += scale_ * gqh;
+                            gqh += grad_S_bar[p][j] * K_h[j][dk];
+                        grad_Q_h_attn[j][dk] += gqh;
                     }
                 }
 
@@ -664,14 +677,13 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                         grad_K_L[p][dk] += gkl;
                     }
                 }
-                // grad_Q_L[q][dk] = scale * sum_p grad_S_tilde[p][q] * K_L[p][dk]
                 Tensor grad_Q_L(m, d);
                 for (size_t qq = 0; qq < m; ++qq) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gq = 0.0;
                         for (size_t p = 0; p < m; ++p)
                             gq += grad_S_tilde[p][qq] * K_L[p][dk];
-                        grad_Q_L[qq][dk] = scale_ * gq;
+                        grad_Q_L[qq][dk] = gq;
                     }
                 }
 

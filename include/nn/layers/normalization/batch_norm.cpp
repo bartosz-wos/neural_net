@@ -60,6 +60,11 @@ Tensor BatchNorm1D::forward(const Tensor& input) {
                 output[b][f] = gamma[0][f] * norm + beta[0][f];
             }
         }
+        // NOTE: in eval mode we use running stats for normalization.
+        // For backward to work correctly, we must set last_mean/last_var
+        // from the running stats so that gradients are computed properly.
+        last_mean = running_mean;
+        last_var = running_var;
     }
     return output;
 }

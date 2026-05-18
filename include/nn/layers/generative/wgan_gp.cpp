@@ -76,7 +76,7 @@ Tensor WGANDiscriminator::forward(const Tensor& input) {
     for (size_t i = 0; i < layers_.size(); ++i) {
         // Forward through Dense
         x = layers_[i].forward(x);
-        // Cache the pre-activation input for layer i+1 (or output for last layer)
+        // Cache the pre-activation output for layer i+1 (input to next layer)
         if (i + 1 < cached_inputs_.size())
             cached_inputs_[i + 1] = x;
         // Apply LeakyReLU for all but the last layer
@@ -96,18 +96,61 @@ void WGANDiscriminator::backward_from(const Tensor& grad_output) {
     // Accumulate weight gradients using the cached inputs from forward passes.
     // grad_output: (batch, 1) — d_loss/d(output) for each sample
     // We backprop through each layer, accumulating into the layer gradients.
-    // grad: d_loss/d(output of layer i)
+    // grad: d_loss/d(output of layer i) = dL/d(post-activation of layer i)
+    //
+    // For weight gradients, we need dL/d(pre-activation of layer i), not dL/d(post-activation).
+    // dL/d(pre-activation) = dL/d(post-activation) * leakyrelu'(pre-activation)
+    //
+    // The Dense::backward gives us grad_input = dL/d(pre-activation of previous layer),
+    // which is correct for propagation. But for weight gradients in accumulate_dense_grad,
+    // we need to multiply by leakyrelu'(pre_i) before the outer product.
     Tensor grad = grad_output;
 
     for (size_t i = layers_.size(); i-- > 0; ) {
-        // Accumulate weight gradients: grad_w += grad^T * cached_input
+        // Compute dL/d(pre-activation) by applying activation derivative
+        // For output layer: dL/dpre = dL/dpost (identity)
+        // For hidden layers: dL/dpre = dL/dpost * leakyrelu'(pre)
+        //
+        // cached_inputs_[0] = network input (to layer 0)
+        // cached_inputs_[i+1] = pre-activation output of layer i (before leakyrelu)
+        // So for layer i's leakyrelu, we need cached_inputs_[i+1]
+        Tensor grad_pre = grad;
+        if (i < layers_.size() - 1) {
+            double alpha = activations_[i].slope;
+            const Tensor& pre_i = cached_inputs_[i + 1];  // pre-activation for layer i
+            for (size_t r = 0; r < grad_pre.rows; ++r) {
+                for (size_t c = 0; c < grad_pre.cols; ++c) {
+                    double pre_val = pre_i(r, c);
+                    double slope = (pre_val > 0.0) ? 1.0 : alpha;
+                    grad_pre(r, c) *= slope;
+                }
+            }
+        }
+
+        // Accumulate weight gradients: grad_w += grad_pre^T * input
+        // For weight gradients, we need the activation OUTPUT (h), not pre-activation (pre)
+        // cached_inputs_[i] = pre-activation output of layer i-1 (for i > 0)
+        // cached_inputs_[0] = network input (for layer 0)
+        // So for layer 0: input = cached_inputs_[0] (real)
+        // For layer i > 0: input = leakyrelu(cached_inputs_[i])
         if (cached_inputs_[i].rows > 0 && cached_inputs_[i].cols > 0) {
-            accumulate_dense_grad(layers_[i], grad, cached_inputs_[i]);
+            Tensor input_for_grad = cached_inputs_[i];
+            // For layers > 0, apply activation to get the actual input
+            if (i > 0) {
+                double alpha = activations_[i - 1].slope;  // activation for previous layer
+                for (size_t r = 0; r < input_for_grad.rows; ++r) {
+                    for (size_t c = 0; c < input_for_grad.cols; ++c) {
+                        double val = input_for_grad(r, c);
+                        input_for_grad(r, c) = (val > 0.0) ? val : alpha * val;
+                    }
+                }
+            }
+            accumulate_dense_grad(layers_[i], grad_pre, input_for_grad);
         }
 
         // Propagate gradient to previous layer's output (input of current layer)
         if (i > 0) {
-            grad = layers_[i].backward(grad, 0.0);  // d_loss/d(input of layer i)
+            grad = layers_[i].backward(grad, 0.0);  // d_loss/d(input of layer i) = dL/d(pre-activation of layer i-1)
         }
     }
 }

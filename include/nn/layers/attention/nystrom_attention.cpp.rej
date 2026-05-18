@@ -1,0 +1,12 @@
+--- include/nn/layers/attention/nystrom_attention.cpp
++++ include/nn/layers/attention/nystrom_attention.cpp
+@@ -67,6 +67,9 @@ void NystromAttention::zero_grad() {
+     last_key = Tensor();
+     last_value = Tensor();
+     // Also clear projected Q/K/V caches to prevent stale values during repeated numerical checks
++    last_q = Tensor();
++    last_k = Tensor();
++    last_v = Tensor();
+ }
+ 
+ void NystromAttention::update_weights(double learning_rate) {

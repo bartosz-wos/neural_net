@@ -101,11 +101,12 @@ int main() {
         DeepGCNBlock block(in_f, out_f, true, false, 0.0, false);
         block.set_training(false);
 
+        // L2 loss: sum of squares — numerically stable for gradient checks
         auto compute_loss = [](const Tensor& t) -> double {
             double s = 0.0;
             for (size_t i = 0; i < t.rows; ++i)
                 for (size_t j = 0; j < t.cols; ++j)
-                    s += t(i, j);
+                    s += t(i, j) * t(i, j);
             return s;
         };
 
@@ -118,20 +119,25 @@ int main() {
         cout << "Loss (forward): " << fixed << setprecision(8) << loss_fwd << endl;
 
         // Backward
-        Tensor grad_output(N, out_f);
-        grad_output.fill(1.0);
+        // dL/d(out) = 2*out for L2 loss
+        Tensor grad_output_l2(N, out_f);
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < out_f; ++j)
+                grad_output_l2(i, j) = 2.0 * output(i, j);
         block.zero_grad();
-        Tensor grad_x = block.backward(grad_output, 0.0);
+        Tensor grad_x = block.backward(grad_output_l2, 0.0);
 
         // Numerical gradient check on input
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = 0; j < in_f; ++j) {
                 double orig = input(i, j);
 
+                block.zero_grad();
                 input(i, j) = orig + eps;
                 Tensor out_plus = block.forward_with_adj(input, adj);
                 double loss_plus = compute_loss(out_plus);
 
+                block.zero_grad();
                 input(i, j) = orig - eps;
                 Tensor out_minus = block.forward_with_adj(input, adj);
                 double loss_minus = compute_loss(out_minus);
