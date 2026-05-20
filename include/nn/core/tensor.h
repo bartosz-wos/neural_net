@@ -60,6 +60,7 @@ public:
     Tensor operator*(const Tensor& other) const;
     Tensor operator*(double scalar) const;
     Tensor transpose() const;
+    Tensor concatenate(const Tensor& other, bool along_cols = true) const;
     Tensor hadamard(const Tensor& other) const;
     template<typename F>
     Tensor apply(F func) const {

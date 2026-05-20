@@ -112,6 +112,25 @@ Tensor Tensor::transpose() const {
     return res;
 }
 
+Tensor Tensor::concatenate(const Tensor& other, bool along_cols) const {
+    if (rows != other.rows) throw std::invalid_argument("concatenate: row dimension mismatch");
+    if (along_cols) {
+        Tensor res(rows, cols + other.cols);
+        for (size_t i = 0; i < rows; ++i) {
+            for (size_t j = 0; j < cols; ++j) res[i][j] = (*this)[i][j];
+            for (size_t j = 0; j < other.cols; ++j) res[i][cols + j] = other[i][j];
+        }
+        return res;
+    } else {
+        Tensor res(rows + other.rows, cols);
+        for (size_t j = 0; j < cols; ++j) {
+            for (size_t i = 0; i < rows; ++i) res[i][j] = (*this)[i][j];
+            for (size_t i = 0; i < other.rows; ++i) res[rows + i][j] = other[i][j];
+        }
+        return res;
+    }
+}
+
 Tensor Tensor::hadamard(const Tensor& other) const {
     if (rows != other.rows || cols != other.cols) throw std::invalid_argument("Hadamard dimension mismatch");
     Tensor res(rows, cols);

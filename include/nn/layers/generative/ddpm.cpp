@@ -328,12 +328,14 @@ DenoisingUNet::DenoisingUNet(int in_channels, const std::vector<int>& channels,
         Upsample1D* up = new Upsample1D(up_ch, prev_seq);
         up_sample_.push_back(up);
 
-        // SkipTransform: 1x1 conv projects skip from encoder level (skip_in_ch) to 2*out_ch
-        // h after upsampling has 2*out_ch channels (h + upsampled_h), so tskip needs 2*out_ch channels
+        // SkipTransform: 1x1 conv projects skip from encoder level (skip_in_ch) to out_ch
+        // After upsampling: h (out_ch) + concatenated tskip (out_ch) = 2*out_ch channels total
+        // ResBlock1 expects 2*out_ch input (concat of h + tskip), reduces to out_ch
+        // ResBlock2: out_ch -> out_ch
         int skip_in_ch = channels[enc_levels_ - 1 - level];
-        SkipTransform* st1 = new SkipTransform(skip_in_ch, 2 * out_ch, cur_seq);
+        SkipTransform* st1 = new SkipTransform(skip_in_ch, out_ch, cur_seq);
         skip_transforms_.push_back(st1);
-        SkipTransform* st2 = new SkipTransform(skip_in_ch, 2 * out_ch, cur_seq);
+        SkipTransform* st2 = new SkipTransform(skip_in_ch, out_ch, cur_seq);
         skip_transforms_.push_back(st2);
 
         // ResBlock 1: skip (out_ch) + h (out_ch) = 2*out_ch -> out_ch
@@ -448,8 +450,10 @@ Tensor DenoisingUNet::forward(const Tensor& x, const Tensor& time_emb) {
         std::cerr << "[Decoder L" << level << "] h:" << h.rows << "x" << h.cols << " tskip:" << tskip.rows << "x" << tskip.cols << std::endl;
 
 
-        // Step 3: Element-wise addition of h and transformed skip
-        h = h + tskip;
+        // Step 3: Concatenate h and transformed skip along channels (column dimension)
+        // h: (batch, out_ch * cur_seq), tskip: (batch, out_ch * cur_seq)
+        // concat: (batch, 2 * out_ch * cur_seq) -> ResBlock reduces to (batch, out_ch * cur_seq)
+        h = h.concatenate(tskip, true);
 
         // Step 5: Apply ResBlocks to refine
         std::cerr << "[Decoder L" << level << "] up_block[" << up_block_idx << "].in_ch=" << up_blocks_[up_block_idx]->in_ch() << " .out_ch=" << up_blocks_[up_block_idx]->out_ch() << " .seq_len_=" << up_blocks_[up_block_idx]->seq_len() << std::endl;
