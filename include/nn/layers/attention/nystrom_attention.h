@@ -36,6 +36,8 @@ public:
     size_t batch_size_;
     size_t seq_len_;
     std::vector<size_t> landmark_indices_;
+    bool nystrom_path_used_;
+    bool fallback_path_used_;
 
     NystromAttention(int embed_dim, int num_heads, int num_landmarks = 0, float dropout = 0.0f);
 

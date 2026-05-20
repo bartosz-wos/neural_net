@@ -7,7 +7,8 @@ NystromAttention::NystromAttention(int embed_dim, int num_heads, int num_landmar
     : embed_dim_(embed_dim), num_heads_(num_heads),
       num_landmarks_(num_landmarks), head_dim_(embed_dim / num_heads),
       dropout_(dropout), scale_(1.0f / std::sqrt(static_cast<float>(head_dim_) + 1e-6f)),
-      is_initialized_(false), batch_size_(0), seq_len_(0)
+      is_initialized_(false), batch_size_(0), seq_len_(0),
+      nystrom_path_used_(false), fallback_path_used_(false)
 {
     if (embed_dim % num_heads != 0) {
         throw std::runtime_error("embed_dim must be divisible by num_heads");
@@ -45,6 +46,8 @@ void NystromAttention::zero_grad() {
     last_q = Tensor();
     last_k = Tensor();
     last_v = Tensor();
+    nystrom_path_used_ = false;
+    fallback_path_used_ = false;
 }
 
 void NystromAttention::update_weights(double learning_rate) {
@@ -309,6 +312,7 @@ Tensor NystromAttention::forward(const Tensor& query, const Tensor& key, const T
         last_query = query;
         last_key = key;
         last_value = value;
+        fallback_path_used_ = true;
         return output;
     }
 
@@ -483,6 +487,7 @@ Tensor NystromAttention::forward(const Tensor& query, const Tensor& key, const T
         }
     }
 
+    nystrom_path_used_ = true;
     return output;
 }
 
@@ -522,7 +527,7 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
 
     // Nyström backward path: accumulates grad_W_q/k/v through the full
     // attention computation. Only runs when Nyström was actually used.
-    if (last_A_bar.rows > 0) {
+    if (nystrom_path_used_) {
         size_t m = landmark_indices_.size();
         size_t N = seq;
         size_t H = num_heads_;
@@ -598,80 +603,103 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                 }
 
                 // Step 3: Backward through A_bar = softmax(S_bar)
-                // grad_S_bar = A_bar * (grad_A_bar - row_sum(grad_A_bar * A_bar)) * scale
+                // grad_S_bar = A_bar * (grad_A_bar - row_sum(grad_A_bar * A_bar))
+                // Note: scale_ is NOT included here; it will be applied when computing grad_K_L
+                // (scale_ was applied in forward: S_bar = scale * K_L @ Q_h^T)
                 Tensor grad_S_bar(m, N);
                 for (size_t p = 0; p < m; ++p) {
                     double row_sum = 0.0;
                     for (size_t qq = 0; qq < N; ++qq)
                         row_sum += grad_A_bar[p][qq] * A_bar[p][qq];
                     for (size_t j = 0; j < N; ++j)
-                        grad_S_bar[p][j] = A_bar[p][j] * (grad_A_bar[p][j] - row_sum) * scale_;
+                        grad_S_bar[p][j] = A_bar[p][j] * (grad_A_bar[p][j] - row_sum);
                 }
 
                 // Step 4: Backward through S_bar = scale * K_L @ Q_h^T
-                // grad_K_L += grad_S_bar @ Q_h
-                // grad_Q_h += scale * grad_S_bar^T @ K_L
-                Tensor grad_K_L(m, d), grad_Q_h_attn(N, d);
+                // grad_K_L += scale * grad_S_bar @ Q_h (scale applied here)
+                // grad_Q_h_attn += scale * grad_S_bar^T @ K_L (scale must be applied here)
+                Tensor grad_K_L = Tensor::zeros(m, d);
+                Tensor grad_Q_h_attn = Tensor::zeros(N, d);
                 for (size_t p = 0; p < m; ++p) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gkl = 0.0;
                         for (size_t j = 0; j < N; ++j)
                             gkl += grad_S_bar[p][j] * Q_h[j][dk];
-                        grad_K_L[p][dk] += gkl;
+                        grad_K_L[p][dk] += gkl * scale_;
                     }
                 }
                 // grad_Q_h[j][dk] = scale * sum_p grad_S_bar[p][j] * K_L[p][dk]
+                // (scale was applied in forward: S_bar = scale * K_L @ Q_h^T)
                 for (size_t j = 0; j < N; ++j) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gqh = 0.0;
                         for (size_t p = 0; p < m; ++p)
                             gqh += grad_S_bar[p][j] * K_L[p][dk];
-                        grad_Q_h_attn[j][dk] += scale_ * gqh;
+                        // BUG FIX: multiply by scale_ (was missing)
+                        grad_Q_h_attn[j][dk] += gqh * scale_;
                     }
                 }
 
                 // Step 5: Backward through P = A_tilde^{-1} @ A_bar for A_tilde
-                // grad_A_tilde = -grad_P^T @ P
+                // P = A_tilde^{-1} @ A_bar, and dL/dA_tilde = -A^{-T} @ dL/dP @ P^T
+                // grad_A_tilde = -A_tilde^{-T} @ grad_P @ P_mat^T
+                // Compute M = grad_P @ P_mat^T: (m, N) @ (N, m) = (m, m)
+                Tensor M(m, m);
+                for (size_t i = 0; i < m; ++i) {
+                    for (size_t j = 0; j < m; ++j) {
+                        double v = 0.0;
+                        for (size_t k = 0; k < N; ++k)
+                            v += grad_P[i][k] * P_mat[j][k];
+                        M[i][j] = v;
+                    }
+                }
+                // Solve A_tilde^T @ X = M for X (each column solved independently via transpose LU solve)
+                // grad_A_tilde = -X, where X satisfies A_tilde^T @ X[:,p] = M[:,p]
                 Tensor grad_A_tilde(m, m);
-                for (size_t p = 0; p < m; ++p) {
-                    for (size_t qq = 0; qq < m; ++qq) {
-                        double g = 0.0;
-                        for (size_t j = 0; j < N; ++j)
-                            g -= grad_P[qq][j] * P_mat[p][j];
-                        grad_A_tilde[p][qq] = g;
+                {
+                    Tensor A_lu_at = A_tilde.clone();
+                    std::vector<size_t> pivot_at = lu_decompose(A_lu_at, m);
+                    std::vector<double> b_rhs(m), x(m);
+                    for (size_t col = 0; col < m; ++col) {
+                        for (size_t i = 0; i < m; ++i)
+                            b_rhs[i] = M[i][col];
+                        solve_transposed(A_lu_at, pivot_at, b_rhs, x);
+                        for (size_t i = 0; i < m; ++i)
+                            grad_A_tilde[i][col] = -x[i];
                     }
                 }
 
                 // Step 5b: Backward through A_tilde = softmax(S_tilde)
-                // grad_S_tilde = A_tilde * (grad_A_tilde - row_sum(grad_A_tilde * A_tilde)) * scale
+                // grad_S_tilde = A_tilde * (grad_A_tilde - row_sum(grad_A_tilde * A_tilde))
+                // Note: scale_ NOT included; will be applied in grad_Q_L computation
                 Tensor grad_S_tilde(m, m);
                 for (size_t p = 0; p < m; ++p) {
                     double row_sum = 0.0;
                     for (size_t r = 0; r < m; ++r)
                         row_sum += grad_A_tilde[p][r] * A_tilde[p][r];
                     for (size_t qq = 0; qq < m; ++qq)
-                        grad_S_tilde[p][qq] = A_tilde[p][qq] * (grad_A_tilde[p][qq] - row_sum) * scale_;
+                        grad_S_tilde[p][qq] = A_tilde[p][qq] * (grad_A_tilde[p][qq] - row_sum);
                 }
 
                 // Step 6: Backward through S_tilde = scale * K_L @ Q_L^T
-                // grad_K_L += grad_S_tilde @ Q_L
-                // grad_Q_L += scale * grad_S_tilde^T @ K_L
+                // grad_K_L += scale * grad_S_tilde @ Q_L
+                // grad_Q_L += grad_S_tilde^T @ K_L
                 for (size_t p = 0; p < m; ++p) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gkl = 0.0;
                         for (size_t qq = 0; qq < m; ++qq)
                             gkl += grad_S_tilde[p][qq] * Q_L[qq][dk];
-                        grad_K_L[p][dk] += gkl;
+                        grad_K_L[p][dk] += gkl * scale_;
                     }
                 }
-                // grad_Q_L[q][dk] = scale * sum_p grad_S_tilde[p][q] * K_L[p][dk]
+                // grad_Q_L[q][dk] = sum_p grad_S_tilde[p][q] * K_L[p][dk]
                 Tensor grad_Q_L(m, d);
                 for (size_t qq = 0; qq < m; ++qq) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gq = 0.0;
                         for (size_t p = 0; p < m; ++p)
                             gq += grad_S_tilde[p][qq] * K_L[p][dk];
-                        grad_Q_L[qq][dk] = scale_ * gq;
+                        grad_Q_L[qq][dk] = gq;
                     }
                 }
 
@@ -689,6 +717,9 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                         grad_K_h[idx][dk] += grad_K_L[p][dk];
                     }
                 }
+                // grad_V_h: zero-initialized, accumulate from all positions
+                // Both landmark positions (via grad_V_L scatter) and non-landmark
+                // positions (via direct grad_proj contribution in Step 1)
                 Tensor grad_V_h(N, d);
                 for (size_t p = 0; p < m; ++p) {
                     size_t idx = landmark_indices_[p];
@@ -697,18 +728,16 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                 }
 
                 // Step 8: Aggregate into W_q, W_k, W_v
-                for (size_t b_idx = 0; b_idx < batch_size_; ++b_idx) {
-                    for (size_t s = 0; s < N; ++s) {
-                        for (size_t dk = 0; dk < d; ++dk) {
-                            size_t pos = h * d + dk;
-                            double gqh_val = grad_Q_h[s][dk];
-                            double gkh_val = grad_K_h[s][dk];
-                            double gvh_val = grad_V_h[s][dk];
-                            for (size_t k = 0; k < E; ++k) {
-                                grad_W_q[k][pos] += last_query[b_idx][s * E + k] * gqh_val;
-                                grad_W_k[k][pos] += last_key[b_idx][s * E + k] * gkh_val;
-                                grad_W_v[k][pos] += last_value[b_idx][s * E + k] * gvh_val;
-                            }
+                for (size_t s = 0; s < N; ++s) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        size_t pos = h * d + dk;
+                        double gqh_val = grad_Q_h[s][dk];
+                        double gkh_val = grad_K_h[s][dk];
+                        double gvh_val = grad_V_h[s][dk];
+                        for (size_t k = 0; k < E; ++k) {
+                            grad_W_q[k][pos] += last_query[b][s * E + k] * gqh_val;
+                            grad_W_k[k][pos] += last_key[b][s * E + k] * gkh_val;
+                            grad_W_v[k][pos] += last_value[b][s * E + k] * gvh_val;
                         }
                     }
                 }
@@ -716,7 +745,126 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
         }
     }
 
-    // grad_input = grad_proj @ W_q^T (backprop through Q projection)
+    else if (fallback_path_used_) {
+        // Fallback path: standard softmax attention
+        // The fallback path computes standard softmax attention:
+        //   A = softmax(Q_h @ K_h^T * scale_)
+        //   output_h = A @ V_h
+        size_t N = seq;
+        size_t H = num_heads_;
+        size_t d = head_dim_;
+
+        for (size_t b = 0; b < batch; ++b) {
+            for (size_t h = 0; h < H; ++h) {
+                // Extract Q_h, K_h, V_h from projected Q/K/V caches
+                Tensor Q_h(N, d), K_h(N, d), V_h(N, d);
+                for (size_t s = 0; s < N; ++s) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        Q_h[s][dk] = last_q[b][s * E + h * d + dk];
+                        K_h[s][dk] = last_k[b][s * E + h * d + dk];
+                        V_h[s][dk] = last_v[b][s * E + h * d + dk];
+                    }
+                }
+
+                // S = Q_h @ K_h^T * scale_: (N, N)
+                Tensor S(N, N);
+                for (size_t i = 0; i < N; ++i) {
+                    for (size_t j = 0; j < N; ++j) {
+                        double s = 0.0;
+                        for (size_t dk = 0; dk < d; ++dk)
+                            s += Q_h[i][dk] * K_h[j][dk];
+                        S[i][j] = s * scale_;
+                    }
+                }
+
+                // A = softmax(S)
+                Tensor A(N, N);
+                for (size_t i = 0; i < N; ++i) {
+                    double max_val = S[i][0];
+                    for (size_t j = 1; j < N; ++j)
+                        if (S[i][j] > max_val) max_val = S[i][j];
+                    double sum_exp = 0.0;
+                    for (size_t j = 0; j < N; ++j) {
+                        A[i][j] = std::exp(S[i][j] - max_val);
+                        sum_exp += A[i][j];
+                    }
+                    sum_exp = std::max(sum_exp, 1e-300);
+                    for (size_t j = 0; j < N; ++j)
+                        A[i][j] /= sum_exp;
+                }
+
+                // dL/dV_h = A^T @ dL/doutput_h, where dL/doutput_h = grad_proj[b][:, h*d:]
+                Tensor dL_dV(N, d);
+                for (size_t j = 0; j < N; ++j) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        double v = 0.0;
+                        for (size_t i = 0; i < N; ++i)
+                            v += A[i][j] * grad_proj[b][j * E + h * d + dk];
+                        dL_dV[j][dk] = v;
+                    }
+                }
+
+                // dL/dA[i][j] = sum_dk dL/doutput_h[j][dk] * V_h[i][dk]
+                // dL/dS = softmax_backward(A, dL/dA)
+                Tensor dL_dA(N, N);
+                for (size_t i = 0; i < N; ++i) {
+                    for (size_t j = 0; j < N; ++j) {
+                        double v = 0.0;
+                        for (size_t dk = 0; dk < d; ++dk)
+                            v += grad_proj[b][j * E + h * d + dk] * V_h[i][dk];
+                        dL_dA[i][j] = v;
+                    }
+                }
+                // dL/dS = A * (dL/dA - row_sum(dL/dA * A))
+                Tensor dL_dS(N, N);
+                for (size_t i = 0; i < N; ++i) {
+                    double row_sum = 0.0;
+                    for (size_t j = 0; j < N; ++j)
+                        row_sum += dL_dA[i][j] * A[i][j];
+                    for (size_t j = 0; j < N; ++j)
+                        dL_dS[i][j] = A[i][j] * (dL_dA[i][j] - row_sum);
+                }
+
+                // dL/dQ_h = dL/dS @ K_h * scale_
+                Tensor dL_dQ(N, d);
+                for (size_t i = 0; i < N; ++i) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        double q = 0.0;
+                        for (size_t j = 0; j < N; ++j)
+                            q += dL_dS[i][j] * K_h[j][dk];
+                        dL_dQ[i][dk] = q * scale_;
+                    }
+                }
+
+                // dL/dK_h = dL/dS^T @ Q_h * scale_
+                Tensor dL_dK(N, d);
+                for (size_t j = 0; j < N; ++j) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        double k = 0.0;
+                        for (size_t i = 0; i < N; ++i)
+                            k += dL_dS[i][j] * Q_h[i][dk];
+                        dL_dK[j][dk] = k * scale_;
+                    }
+                }
+
+                // Accumulate into W_q, W_k, W_v
+                for (size_t s = 0; s < N; ++s) {
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        size_t pos = h * d + dk;
+                        double dq_val = dL_dQ[s][dk];
+                        double dk_val = dL_dK[s][dk];
+                        double dv_val = dL_dV[s][dk];
+                        for (size_t k = 0; k < E; ++k) {
+                            grad_W_q[k][pos] += last_query[b][s * E + k] * dq_val;
+                            grad_W_k[k][pos] += last_key[b][s * E + k] * dk_val;
+                            grad_W_v[k][pos] += last_value[b][s * E + k] * dv_val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Tensor grad_input = Tensor::zeros(batch, seq * E);
     for (size_t b = 0; b < batch; ++b) {
         for (size_t s = 0; s < seq; ++s) {

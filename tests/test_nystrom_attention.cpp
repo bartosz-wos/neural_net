@@ -177,6 +177,9 @@ static void test_nystrom_numerical_Wq() {
 
     double ana_grad = layer.grad_W_q[1][0];
 
+    // Debug: print W_q[1][0] and grad_W_q[1][0]
+    fprintf(stderr, "TEST4: W_q[1][0]=%e grad_W_q[1][0]=%e\n", layer.W_q[1][0], layer.grad_W_q[1][0]);
+    
     double orig_wq10 = layer.W_q[1][0];
     double eps = 1e-3;
 
@@ -200,7 +203,7 @@ static void test_nystrom_numerical_Wq() {
 
     double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
     double err = rel_error(num_grad, ana_grad);
-
+    
     check("NystromAttention W_q[1][0] numerical vs analytical gradient", err < 1e-5);
 }
 
