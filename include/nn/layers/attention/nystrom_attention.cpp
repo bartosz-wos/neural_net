@@ -192,12 +192,13 @@ static void solve_transposed(const Tensor& A_lu, const std::vector<size_t>& pivo
     // Step 3: Backward substitution for L^T @ x = z
     // L^T is upper triangular: L^T[i][j] = L[j][i] for j >= i
     // A_lu[j][i] = L[j][i] for j > i, L[i][i] = 1
-    // Backward: start from i=m-1 down to 0
+    // Backward: start from i=m-1 down to 0, accumulating into x
+    // x must be zero-initialized so unvisited entries don't contain garbage
+    std::fill(x.begin(), x.end(), 0.0);
     for (int i = (int)m - 1; i >= 0; --i) {
         double val = z[i];
         for (size_t j = i + 1; j < m; ++j)
             val -= A_lu[j][i] * x[j];
-        // L^T[i][i] = 1, so x[i] = val
         x[i] = val;
     }
 }
