@@ -5,15 +5,13 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **EdgeConv / Dynamic Graph CNN**: Convolution over dynamically constructed k-NN graphs. Each node has a small local graph of its k nearest neighbors; edges are computed per layer from feature distance. Add to `layers/architectures/edgeconv.{h,cpp}`.
-
-- **PATCHY-SAN**: Graph conv using a specific node ordering (BFS from canonical anchors) to convert graphs to sequences. Classical approach; still useful for benchmarks. Add to `layers/architectures/patchy_san.{h,cpp}`.
-
 - **GAT (Graph Attention Network)**: Add proper multi-head attention over graph neighborhoods. Use LeakyReLU + softmax attention coefficients. Add to `layers/attention/gat.{h,cpp}` (we have `test_gat_gradient.cpp` already, suggesting there is some stub).
 
 - **DMon (Diffusion Module Network)**: GNN variant that uses graph diffusion (heat kernel with multiple scales) instead of simple neighborhood aggregation. Each layer applies a different diffusion time scale. Add to `layers/architectures/dmon.{h,cpp}`.
 
 ## Done
+
+- **EdgeConv / Dynamic Graph CNN**: Implemented in `layers/architectures/edgeconv.{h,cpp}`. EdgeConvLayer: per layer, builds a k-nearest-neighbour graph in feature space, computes edge features `e_{ij} = h_j - h_i` (asymmetric), runs a 2-layer MLP on `concat(h_i, e_{ij})`, then max-aggregates over neighbours. EdgeConvModel stacks layers with ReLU + input projection + head projection + per-node classifier. 8/8 tests pass — input gradient check at rel_err ~1.7e-10, model input gradient check at ~7.8e-11, bias gradient check at machine precision (~4.7e-14), training step decreases loss. k-NN graph is fixed during backward (standard DGCNN convention); gradient check uses k=N to avoid graph churn.
 
 - **PNA (Principal Neighbourhood Aggregation)**: Implemented in `layers/architectures/pna.{h,cpp}`. PNALayer combines 4 aggregators (mean, max, min, std) with 3 degree-based scalers (identity, amplification log(deg+1)/delta, attenuation delta/log(deg+1)). Post-aggregation Dense produces output features. PNAModel stacks layers with ReLU + input projection + classifier. 8/8 tests pass — analytical vs numerical gradient checks with **rel_err ~1e-11** (post-agg W, layer input, and model input).
 
