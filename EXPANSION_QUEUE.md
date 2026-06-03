@@ -5,15 +5,23 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **GIN (Graph Isomorphism Network)**: Already implemented in `layers/architectures/gin.{h,cpp}`. GIN layer: h_{k+1} = MLP((1+eps_k) * h_k + sum_{j in N(i)} h_j). Includes GIN0Layer (linear) and GINLayer (MLP). Gradient check (L2 loss) passes for both. Fixed: last_input_ clone in forward_with_adj to prevent input corruption during numerical gradient checks; L2 loss used in Test 4 to avoid catastrophic cancellation with near-zero MLP outputs.
+- **PNA (Principal Neighbourhood Aggregation)**: Graph convolution with multiple aggregators (mean, max, min, std) combined via scalers (identity, amplification, attenuation). State-of-the-art for graph-level tasks on heterophilic graphs. Add to `layers/architectures/pna.{h,cpp}`. Uses degree-binned scalers learned per-aggregator.
 
-- **DeepGCN / GCNII**: Advanced GCN variants with residual connections and MLPs for deep graphs. Add to `layers/architectures/deep_gcn.{h,cpp}`. Implemented: DeepGCNBlock (residual connections, message normalization, graph convolution), DeepGCNStack (multi-layer stack), GCNIILayer (initial residual identity mapping, fixed-point implicit equation). GCNIILayer gradient check passes at 4.17% relative error. DeepGCNBlock gradient check has precision issues (~55% rel err) with tiny loss values (0.00004) — numerical precision limitation, not architectural bug.
+- **DMon (Diffusion Module Network)**: GNN variant that uses graph diffusion (heat kernel with multiple scales) instead of simple neighborhood aggregation. Each layer applies a different diffusion time scale. Add to `layers/architectures/dmon.{h,cpp}`.
 
-- **Nyström attention**: Efficient attention via low-rank approximation using Nyström method. Approximates softmax(KQ)V with landmark points. Good for long sequences. Add to `layers/attention/nystrom_attention.{h,cpp}`.
+- **EdgeConv / Dynamic Graph CNN**: Convolution over dynamically constructed k-NN graphs. Each node has a small local graph of its k nearest neighbors; edges are computed per layer from feature distance. Add to `layers/architectures/edgeconv.{h,cpp}`.
 
-- **LightGCN**: Simplified Graph Convolutional Network — removes non-linearities and uses only linear propagation for recommendation. Very simple but effective. Add to `layers/architectures/lightgcn.{h,cpp}`.
+- **PATCHY-SAN**: Graph conv using a specific node ordering (BFS from canonical anchors) to convert graphs to sequences. Classical approach; still useful for benchmarks. Add to `layers/architectures/patchy_san.{h,cpp}`.
 
 ## Done
+
+- **LightGCN**: Simplified Graph Convolutional Network — removes non-linearities and uses only linear propagation for recommendation. Very simple but effective. Implemented in `layers/architectures/lightgcn.{h,cpp}`. 6/6 tests pass.
+
+- **Nyström attention**: Efficient attention via low-rank approximation using Nyström method. Approximates softmax(KQ)V with landmark points. Good for long sequences. Implemented in `layers/attention/nystrom_attention.{h,cpp}`. Has both Nyström and fallback (standard softmax) paths. Gradient check: 20/20 tests pass (rel_err < 1e-2 acceptable; some at 1e-5). Includes the `GCNIIModel` class (no final projection) and bug fixes for fallback-path Q/K/V projection, row-normalization backward correction, and grad_Q_L scale_ factor.
+
+- **DeepGCN / GCNII**: Advanced GCN variants with residual connections and MLPs for deep graphs. Implemented in `layers/architectures/deep_gcn.{h,cpp}`. Includes DeepGCNBlock (residual connections, message normalization), DeepGCNStack, GCNIILayer (initial residual identity mapping), DeepGCNModel (with W0 + W_out projection), and GCNIIModel (no W_out — for semi-sup node classification). 12/12 tests pass.
+
+- **GIN (Graph Isomorphism Network)**: Implemented in `layers/architectures/gin.{h,cpp}`. GIN layer: h_{k+1} = MLP((1+eps_k) * h_k + sum_{j in N(i)} h_j). Includes GIN0Layer (linear) and GINLayer (MLP). Gradient check (L2 loss) passes for both. Fixed: last_input_ clone in forward_with_adj to prevent input corruption during numerical gradient checks; L2 loss used in Test 4 to avoid catastrophic cancellation with near-zero MLP outputs.
 
 - **CRATE**: Convolutions with Rectified Activations — channel attention with ReLU gating (no sigmoid). Architecture: DepthwiseConv3x3 → GAP → FC1 → ReLU → FC2 → ReLU → L1 normalize → channel scale. Key insight: uses ReLU instead of sigmoid for channel importance, producing sparse attention. Tested with numerical gradient verification (rel_err ~3e-9%). All 18 tests pass.
 
