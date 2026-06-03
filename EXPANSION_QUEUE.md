@@ -5,15 +5,17 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **PNA (Principal Neighbourhood Aggregation)**: Graph convolution with multiple aggregators (mean, max, min, std) combined via scalers (identity, amplification, attenuation). State-of-the-art for graph-level tasks on heterophilic graphs. Add to `layers/architectures/pna.{h,cpp}`. Uses degree-binned scalers learned per-aggregator.
-
-- **DMon (Diffusion Module Network)**: GNN variant that uses graph diffusion (heat kernel with multiple scales) instead of simple neighborhood aggregation. Each layer applies a different diffusion time scale. Add to `layers/architectures/dmon.{h,cpp}`.
-
 - **EdgeConv / Dynamic Graph CNN**: Convolution over dynamically constructed k-NN graphs. Each node has a small local graph of its k nearest neighbors; edges are computed per layer from feature distance. Add to `layers/architectures/edgeconv.{h,cpp}`.
 
 - **PATCHY-SAN**: Graph conv using a specific node ordering (BFS from canonical anchors) to convert graphs to sequences. Classical approach; still useful for benchmarks. Add to `layers/architectures/patchy_san.{h,cpp}`.
 
+- **GAT (Graph Attention Network)**: Add proper multi-head attention over graph neighborhoods. Use LeakyReLU + softmax attention coefficients. Add to `layers/attention/gat.{h,cpp}` (we have `test_gat_gradient.cpp` already, suggesting there is some stub).
+
+- **DMon (Diffusion Module Network)**: GNN variant that uses graph diffusion (heat kernel with multiple scales) instead of simple neighborhood aggregation. Each layer applies a different diffusion time scale. Add to `layers/architectures/dmon.{h,cpp}`.
+
 ## Done
+
+- **PNA (Principal Neighbourhood Aggregation)**: Implemented in `layers/architectures/pna.{h,cpp}`. PNALayer combines 4 aggregators (mean, max, min, std) with 3 degree-based scalers (identity, amplification log(deg+1)/delta, attenuation delta/log(deg+1)). Post-aggregation Dense produces output features. PNAModel stacks layers with ReLU + input projection + classifier. 8/8 tests pass — analytical vs numerical gradient checks with **rel_err ~1e-11** (post-agg W, layer input, and model input).
 
 - **PATCHY-SAN**: Implemented in `layers/architectures/patchy_san.{h,cpp}`. PatchySANLayer does: (1) node selection (all nodes as anchors), (2) BFS-k neighborhood assembly of width w, (3) WL-1-style label canonicalization, (4) position-wise Dense conv summed across sequence positions, (5) final Dense producing per-node embedding. PatchySANModel wraps it with input projection + classifier. 8/8 tests pass — including L2 and random-grad numerical gradient checks with **0.0 relative error**.
 
