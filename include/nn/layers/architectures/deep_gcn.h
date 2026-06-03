@@ -194,5 +194,68 @@ private:
     bool training_;
 };
 
+// ============================================================================
+// GCNIIModel — multi-layer GCNII with optional BN/dropout, NO final projection
+// ============================================================================
+//
+// A "pure" GCNII model: input -> W0 projection -> num_layers x GCNII -> output
+// Output dimension equals hidden_features (no W_out projection).
+//
+// Use case: graph-level representation learning where hidden dim is the final
+// node embedding dim. Common for semi-supervised node classification (GCNII
+// paper setup) and small-graph tasks.
+//
+// Constructor: (in_features, hidden_features, num_layers, dropout_p, use_bn, beta)
+//   - dropout_p: dropout probability after each GCNII layer
+//   - use_bn:    whether to apply BatchNorm1D after each GCNII layer
+//   - beta:      identity-mapping scaling (0.0 = no identity path; 1.0 = full)
+//   - alpha_k is set per-layer to 2/(1+k) following the GCNII paper.
+
+class GCNIIModel : public Layer {
+public:
+    GCNIIModel(size_t in_features, size_t hidden_features,
+               size_t num_layers, double dropout_p = 0.0,
+               bool use_bn = true, double beta = 0.5);
+
+    Tensor forward(const Tensor& input) override;
+    // adj: raw (num_nodes, num_nodes) adjacency matrix
+    Tensor forward_with_adj(const Tensor& input, const Tensor& adj);
+
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
+    std::string name() const override { return "GCNIIModel"; }
+    void set_training(bool t);
+
+private:
+    // First layer: projects input to hidden dimension, creates h0
+    Dense W0_;  // (in_features x hidden_features)
+
+    // Hidden GCNII layers (num_layers)
+    std::vector<std::unique_ptr<GCNIILayer>> layers_;
+    std::vector<BatchNorm1D> bns_;             // one per hidden layer (if use_bn)
+    std::vector<std::unique_ptr<Dropout1D>> drops_;  // one per hidden layer
+
+    std::vector<double> alphas_;  // alpha_k = 2/(1+k) per layer
+    size_t num_layers_;
+    double dropout_p_;
+    bool use_bn_;
+    size_t in_features_;
+    size_t hidden_features_;
+
+    // Cached
+    Tensor h0_;            // initial residual shared across all GCNII layers
+    Tensor last_input_;
+    Tensor last_output_;
+    Tensor last_adj_;
+    bool h0_set_;
+    bool training_;
+};
+
 
 #endif

@@ -717,3 +717,152 @@ std::vector<Tensor*> DeepGCNModel::gradients() {
         for (Tensor* g : bn.gradients()) result.push_back(g);
     return result;
 }
+
+// ===========================================================================
+// GCNIIModel
+// ===========================================================================
+//
+// Pure GCNII model: input -> W0 -> (GCNII -> [BN] -> [Dropout])*L -> output
+// Output is in hidden_features space (no final projection to out_features).
+// This matches the original GCNII paper setup for semi-supervised node
+// classification where the hidden dim IS the prediction dim.
+
+GCNIIModel::GCNIIModel(size_t in_features, size_t hidden_features,
+                       size_t num_layers, double dropout_p,
+                       bool use_bn, double beta)
+    : W0_(in_features, hidden_features),
+      num_layers_(num_layers),
+      dropout_p_(dropout_p),
+      use_bn_(use_bn),
+      in_features_(in_features),
+      hidden_features_(hidden_features),
+      h0_(1, 1),
+      last_input_(1, 1),
+      last_output_(1, 1),
+      last_adj_(1, 1),
+      h0_set_(false),
+      training_(false)
+{
+    W0_.init_weights("xavier");
+    alphas_.reserve(num_layers_);
+    for (size_t k = 0; k < num_layers_; ++k) {
+        // alpha_k = 2/(1+k) per GCNII paper
+        alphas_.push_back(2.0 / (1.0 + static_cast<double>(k)));
+        layers_.emplace_back(std::make_unique<GCNIILayer>(hidden_features, hidden_features,
+                             alphas_[k], beta, dropout_p));
+        if (use_bn_) bns_.emplace_back(hidden_features);
+        drops_.emplace_back(std::make_unique<Dropout1D>(dropout_p));
+    }
+}
+
+void GCNIIModel::set_training(bool t) {
+    training_ = t;
+    for (auto& drop : drops_) drop->set_training(t);
+}
+
+Tensor GCNIIModel::forward(const Tensor& input) {
+    (void)input;
+    return last_output_;
+}
+
+Tensor GCNIIModel::forward_with_adj(const Tensor& input, const Tensor& adj) {
+    last_input_ = Tensor(input);
+    last_adj_ = adj;
+
+    // First: project input to hidden and set h0
+    const Tensor& W0 = W0_.get_weights();
+    size_t N = input.rows;
+    Tensor x(N, hidden_features_);
+    for (size_t i = 0; i < N; ++i)
+        for (size_t j = 0; j < hidden_features_; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < input.cols; ++k)
+                sum += input(i, k) * W0(k, j);
+            x(i, j) = sum;
+        }
+
+    // Set h0 as the projected initial input (shared across all GCNII layers)
+    h0_ = Tensor(x);
+    h0_set_ = true;
+    for (auto& layer : layers_)
+        layer->set_h0(h0_);
+
+    // GCNII layers (no final projection: output is in hidden_features space)
+    for (size_t k = 0; k < num_layers_; ++k) {
+        layers_[k]->set_training(training_);
+        x = layers_[k]->forward_with_adj(x, adj);
+        if (use_bn_) {
+            bns_[k].set_training(training_);
+            x = bns_[k].forward(x);
+        }
+        if (dropout_p_ > 0.0) {
+            drops_[k]->set_training(training_);
+            x = drops_[k]->forward(x);
+        }
+    }
+
+    last_output_ = x;
+    return last_output_;
+}
+
+Tensor GCNIIModel::backward(const Tensor& grad_output, double learning_rate) {
+    // grad_output: (N, hidden_features)
+    size_t N = grad_output.rows;
+    Tensor grad_x = grad_output;
+
+    // Backprop through layers in reverse (no W_out here, gradient is direct)
+    for (size_t k = num_layers_; k > 0; --k) {
+        if (dropout_p_ > 0.0) {
+            grad_x = drops_[k - 1]->backward(grad_x, learning_rate);
+        }
+        if (use_bn_) {
+            grad_x = bns_[k - 1].backward(grad_x, learning_rate);
+        }
+        grad_x = layers_[k - 1]->backward(grad_x, learning_rate);
+    }
+
+    // Backprop through W0 projection: grad_input = grad_x @ W0
+    const Tensor& W0 = W0_.get_weights();
+    Tensor grad_input(grad_x.rows, in_features_);
+    for (size_t i = 0; i < grad_x.rows; ++i)
+        for (size_t j = 0; j < in_features_; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < hidden_features_; ++k)
+                sum += grad_x(i, k) * W0(j, k);
+            grad_input(i, j) = sum;
+        }
+
+    return grad_input;
+}
+
+void GCNIIModel::update_weights(double learning_rate) {
+    W0_.update_weights(learning_rate);
+    for (auto& layer : layers_) layer->update_weights(learning_rate);
+    for (auto& bn : bns_) bn.update_weights(learning_rate);
+}
+
+void GCNIIModel::zero_grad() {
+    W0_.zero_grad();
+    for (auto& layer : layers_) layer->zero_grad();
+    for (auto& bn : bns_) bn.zero_grad();
+}
+
+std::vector<Tensor*> GCNIIModel::parameters() {
+    std::vector<Tensor*> result;
+    for (Tensor* p : W0_.parameters()) result.push_back(p);
+    for (auto& layer : layers_)
+        for (Tensor* p : layer->parameters()) result.push_back(p);
+    for (auto& bn : bns_)
+        for (Tensor* p : bn.parameters()) result.push_back(p);
+    return result;
+}
+
+std::vector<Tensor*> GCNIIModel::gradients() {
+    std::vector<Tensor*> result;
+    for (Tensor* g : W0_.gradients()) result.push_back(g);
+    for (auto& layer : layers_)
+        for (Tensor* g : layer->gradients()) result.push_back(g);
+    for (auto& bn : bns_)
+        for (Tensor* g : bn.gradients()) result.push_back(g);
+    return result;
+}
