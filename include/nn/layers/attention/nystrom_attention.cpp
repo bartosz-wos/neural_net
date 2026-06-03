@@ -164,43 +164,41 @@ static Tensor lu_solve_head(const Tensor& A_tilde, const Tensor& A_bar) {
 // Solve A^T @ x = b using already-decomposed A_lu (from lu_decompose)
 // pivot is the permutation array returned by lu_decompose
 // A_lu contains L and U in the standard format (see lu_solve_head)
+//
+// From the LU decomposition: P @ A = L @ U, so A = P^T @ L @ U.
+// Therefore: A^T = U^T @ L^T @ P.
+// To solve A^T @ x = b:
+//   U^T @ L^T @ P @ x = b
+//   Let y = P @ x. Solve U^T @ z = b for z (forward sub), then L^T @ y = z for y (backward sub), then x = P^T @ y.
 static void solve_transposed(const Tensor& A_lu, const std::vector<size_t>& pivot, std::vector<double>& b, std::vector<double>& x) {
     size_t m = A_lu.rows;
-    
-    // For A^T x = b with pivoted LU: P @ A @ P^T = L @ U
-    // A^T = P^T @ U^T @ L^T @ P
-    // So A^T x = b => P^T @ U^T @ L^T @ P x = b
-    // => U^T @ L^T @ P x = P @ b
-    // Let y = P x, solve U^T @ z = P @ b (forward), then L^T @ y = z (backward), then x = P^T @ y
-    
-    // Step 1: Apply row permutation P to b: b_perm[i] = b[pivot[i]]
-    std::vector<double> b_perm(m);
-    for (size_t i = 0; i < m; ++i)
-        b_perm[i] = b[pivot[i]];
-    
-    // Step 2: Forward substitution for U^T @ z = b_perm
-    // U^T is lower triangular: U^T[i][j] = U[j][i] for j <= i
-    // A_lu[j][i] = U[j][i] for j < i, A_lu[i][i] = U[i][i]
+
+    // Step 1: Solve U^T @ z = b for z (forward substitution on lower-triangular U^T)
+    // U^T[i][j] = U[j][i] for j <= i. A_lu[j][i] is U[j][i] for j < i, A_lu[i][i] = U[i][i].
     std::vector<double> z(m);
     for (size_t i = 0; i < m; ++i) {
-        double val = b_perm[i];
+        double val = b[i];  // <-- FIX: use b directly, NOT P @ b (P is applied at the END)
         for (size_t j = 0; j < i; ++j)
             val -= A_lu[j][i] * z[j];
         z[i] = val / A_lu[i][i];
     }
-    
-    // Step 3: Backward substitution for L^T @ x = z
-    // L^T is upper triangular: L^T[i][j] = L[j][i] for j >= i
-    // A_lu[j][i] = L[j][i] for j > i, L[i][i] = 1
-    // Backward: start from i=m-1 down to 0, accumulating into x
-    // x must be zero-initialized so unvisited entries don't contain garbage
-    std::fill(x.begin(), x.end(), 0.0);
+
+    // Step 2: Solve L^T @ y = z for y (backward substitution on upper-triangular L^T)
+    // L^T[i][j] = L[j][i] for j >= i. A_lu[j][i] = L[j][i] for j > i, L[i][i] = 1.
+    std::vector<double> y(m);
+    std::fill(y.begin(), y.end(), 0.0);
     for (int i = (int)m - 1; i >= 0; --i) {
         double val = z[i];
         for (size_t j = i + 1; j < m; ++j)
-            val -= A_lu[j][i] * x[j];
-        x[i] = val;
+            val -= A_lu[j][i] * y[j];
+        y[i] = val;
     }
+
+    // Step 3: Apply P^T to y to get x. We have y = P @ x, so y[i] = x[pivot[i]].
+    // To invert: x[pivot[i]] = y[i] for all i.
+    std::fill(x.begin(), x.end(), 0.0);
+    for (size_t i = 0; i < m; ++i)
+        x[pivot[i]] = y[i];  // <-- FIX: apply pivot at the end (was missing entirely)
 }
 
 Tensor NystromAttention::forward(const Tensor& query, const Tensor& key, const Tensor& value) {
@@ -233,6 +231,9 @@ Tensor NystromAttention::forward(const Tensor& query, const Tensor& key, const T
     // ============================================================
     if (num_lm >= static_cast<int>(seq)) {
         // Project Q, K, V: each (batch, seq * E)
+        // BUG FIX: was using query[b][k] (ignoring s dim) — Q was position-invariant
+        // and perturbation of W_q had no effect on the loss. Now correctly indexed by
+        // position: query[b][s * E + k] (same as the Nyström path).
         Tensor Q = Tensor::zeros(batch, seq * E);
         Tensor K = Tensor::zeros(batch, seq * E);
         Tensor V = Tensor::zeros(batch, seq * E);
@@ -241,9 +242,9 @@ Tensor NystromAttention::forward(const Tensor& query, const Tensor& key, const T
                 for (size_t i = 0; i < E; ++i) {
                     double qv = 0.0, kv = 0.0, vv = 0.0;
                     for (size_t k = 0; k < E; ++k) {
-                        qv += query[b][k] * W_q[k][i];
-                        kv += key[b][k] * W_k[k][i];
-                        vv += value[b][k] * W_v[k][i];
+                        qv += query[b][s * E + k] * W_q[k][i];
+                        kv += key[b][s * E + k] * W_k[k][i];
+                        vv += value[b][s * E + k] * W_v[k][i];
                     }
                     Q[b][s * E + i] = qv;
                     K[b][s * E + i] = kv;
@@ -569,7 +570,11 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                 }
 
                 // Step 1: Backward through row_norm and P^T @ V_L
-                // output_h[j][dk] = sum_p P_mat[p][j] * V_L[p][dk] / p_row_sum[j]
+                // output_h[j][dk] = (sum_p P_mat[p][j] * V_L[p][dk]) / S[j]
+                //   where S[j] = sum_p P_mat[p][j]
+                // doutput/dP[p][j] = (V_L[p][dk] * S[j] - num) / S[j]^2
+                //                   = V_L[p][dk]/S[j] - output_h[j][dk]/S[j]
+                // doutput/dV_L[p][dk] = P_mat[p][j] / S[j]
                 Tensor grad_P(m, N), grad_V_L(m, d);
                 for (size_t j = 0; j < N; ++j) {
                     double p_row_sum = 0.0;
@@ -577,12 +582,40 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                         p_row_sum += P_mat[p][j];
                     p_row_sum = std::max(p_row_sum, 1e-300);
                     double inv_sum = 1.0 / p_row_sum;
+
+                    // Pre-compute sum_dk grad_out_h * output_h for the P gradient correction
+                    // (this captures the backprop through the row-normalization denominator).
+                    // The second term of dL/dP[p][j] is the same for all p, so we
+                    // accumulate it separately and apply once per (j, p) below.
+                    double sum_grad_out_out = 0.0;
+                    for (size_t dk = 0; dk < d; ++dk) {
+                        double y_jdk = 0.0;
+                        for (size_t p = 0; p < m; ++p)
+                            y_jdk += P_mat[p][j] * V_L[p][dk];
+                        y_jdk *= inv_sum;
+                        sum_grad_out_out += grad_proj[b][j * E + h * d + dk] * y_jdk;
+                    }
+                    // The p-independent correction: - (sum_dk grad_out * y) / S[j]
+                    // This gets added to grad_P[p][j] for every p (each p has same S[j]).
+                    double p_correction = -sum_grad_out_out * inv_sum;
+
                     for (size_t p = 0; p < m; ++p) {
+                        // Accumulate V_L[p][dk] * grad_out * inv_sum over dk for the first term
                         for (size_t dk = 0; dk < d; ++dk) {
                             double grad_out_h = grad_proj[b][j * E + h * d + dk];
-                            grad_P[p][j] += grad_out_h * V_L[p][dk] * inv_sum;
                             grad_V_L[p][dk] += grad_out_h * P_mat[p][j] * inv_sum;
                         }
+                    }
+                    // Compute grad_P[p][j] = (sum_dk grad_out * V_L[p][dk])/S[j] + p_correction
+                    for (size_t p = 0; p < m; ++p) {
+                        double v_term = 0.0;
+                        for (size_t dk = 0; dk < d; ++dk) {
+                            v_term += grad_proj[b][j * E + h * d + dk] * V_L[p][dk];
+                        }
+                        // BUG FIX: row-normalization backprop — the P gradient needs the
+                        // -output_h/S correction term (dS/dP contribution).
+                        // Without this, grad_P is wrong and grad_Q_h, grad_K_h are wrong.
+                        grad_P[p][j] += v_term * inv_sum + p_correction;
                     }
                 }
 
@@ -693,14 +726,15 @@ Tensor NystromAttention::backward(const Tensor& grad_output, double) {
                         grad_K_L[p][dk] += gkl * scale_;
                     }
                 }
-                // grad_Q_L[q][dk] = sum_p grad_S_tilde[p][q] * K_L[p][dk]
+                // grad_Q_L[q][dk] = scale * sum_p grad_S_tilde[p][q] * K_L[p][dk]
+                // (scale was applied in forward: S_tilde = scale * K_L @ Q_L^T)
                 Tensor grad_Q_L(m, d);
                 for (size_t qq = 0; qq < m; ++qq) {
                     for (size_t dk = 0; dk < d; ++dk) {
                         double gq = 0.0;
                         for (size_t p = 0; p < m; ++p)
                             gq += grad_S_tilde[p][qq] * K_L[p][dk];
-                        grad_Q_L[qq][dk] = gq;
+                        grad_Q_L[qq][dk] = gq * scale_;
                     }
                 }
 
