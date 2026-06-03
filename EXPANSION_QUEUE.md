@@ -15,6 +15,8 @@ After completing an item, move it to the "Done" section.
 
 ## Done
 
+- **PATCHY-SAN**: Implemented in `layers/architectures/patchy_san.{h,cpp}`. PatchySANLayer does: (1) node selection (all nodes as anchors), (2) BFS-k neighborhood assembly of width w, (3) WL-1-style label canonicalization, (4) position-wise Dense conv summed across sequence positions, (5) final Dense producing per-node embedding. PatchySANModel wraps it with input projection + classifier. 8/8 tests pass — including L2 and random-grad numerical gradient checks with **0.0 relative error**.
+
 - **LightGCN**: Simplified Graph Convolutional Network — removes non-linearities and uses only linear propagation for recommendation. Very simple but effective. Implemented in `layers/architectures/lightgcn.{h,cpp}`. 6/6 tests pass.
 
 - **Nyström attention**: Efficient attention via low-rank approximation using Nyström method. Approximates softmax(KQ)V with landmark points. Good for long sequences. Implemented in `layers/attention/nystrom_attention.{h,cpp}`. Has both Nyström and fallback (standard softmax) paths. Gradient check: 20/20 tests pass (rel_err < 1e-2 acceptable; some at 1e-5). Includes the `GCNIIModel` class (no final projection) and bug fixes for fallback-path Q/K/V projection, row-normalization backward correction, and grad_Q_L scale_ factor.
