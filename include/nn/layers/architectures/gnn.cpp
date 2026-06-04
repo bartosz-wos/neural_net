@@ -1,5 +1,7 @@
 #include "gnn.h"
 #include <cmath>
+#include <cstdio>
+#include <random>
 
 // === GCNLayer ===
 
@@ -136,15 +138,64 @@ std::vector<Tensor*> GCNLayer::gradients() {
 }
 
 // === GATLayer ===
+//
+// Veličković et al. "Graph Attention Networks" ICLR 2018.
+//
+// Per head h, with head_dim F':
+//   Wh_i = W_h @ h_i                 ∈ R^{F'}
+//   e_ij = LeakyReLU( a_h^T [ Wh_i || Wh_j ] )   ∈ R     (a_h ∈ R^{2F'})
+//   α_ij = softmax_j( e_ij )         over j ∈ N(i) ∪ {i}   (we use row-softmax)
+//   h'_i = LeakyReLU( sum_j α_ij Wh_j )            ∈ R^{F'}
+//
+// Multi-head: concat or average across heads. Output dim = out_features.
+//
+// Backward (key idea — corrected):
+//   Three paths flow back from h'_i:
+//     (1) h'_i = LeakyReLU(sum_j α_ij Wh_j)  → dL/dα, dL/dWh (direct path)
+//     (2) e_ij = a^T [Wh_i || Wh_j]  → dL/dWh via attention scores
+//     (3) Wh = X @ W^T                → dL/dX (input) and dL/dW
+//   All three must be summed.
+//
+// LeakyReLU slope α_LR = 0.2 (per paper).
 
 GATLayer::GATLayer(size_t in_features, size_t out_features, size_t num_heads, bool concat_heads)
     : num_heads_(num_heads), concat_heads_(concat_heads),
+      in_features_(in_features), out_features_(out_features),
       last_output_(1, out_features) {
 
-    size_t head_out = concat_heads ? out_features / num_heads : out_features;
+    if (concat_heads_) {
+        // out_features = num_heads * head_dim
+        if (out_features % num_heads != 0) {
+            // Fall back: set head_dim = 1, then num_heads must equal out_features
+            head_dim_ = 1;
+        } else {
+            head_dim_ = out_features / num_heads;
+        }
+    } else {
+        // Average heads: each head outputs out_features
+        head_dim_ = out_features;
+    }
+
+    std::mt19937 gen(123);
+    double std_w = std::sqrt(2.0 / static_cast<double>(in_features));
+    double std_a = std::sqrt(2.0 / static_cast<double>(2 * head_dim_));
+    std::normal_distribution<> nd(0.0, 1.0);
+
+    heads_.resize(num_heads_);
     for (size_t h = 0; h < num_heads_; ++h) {
-        W_heads_.emplace_back(in_features, head_out);
-        a_heads_.emplace_back(head_out * 2, 1); // concat [Wh_i || Wh_j]
+        GATHeadParams hp;
+        hp.W = Tensor(head_dim_, in_features);
+        for (size_t i = 0; i < head_dim_; ++i)
+            for (size_t j = 0; j < in_features; ++j)
+                hp.W(i, j) = nd(gen) * std_w;
+
+        hp.a = Tensor(2 * head_dim_, 1);
+        for (size_t i = 0; i < 2 * head_dim_; ++i)
+            hp.a(i, 0) = nd(gen) * std_a;
+
+        hp.grad_W = Tensor(head_dim_, in_features);
+        hp.grad_a = Tensor(2 * head_dim_, 1);
+        heads_[h] = std::move(hp);
     }
 }
 
@@ -154,285 +205,331 @@ Tensor GATLayer::forward(const Tensor& input) {
 }
 
 Tensor GATLayer::forward_with_adj(const Tensor& input, const Tensor& adj) {
+    // input: (N, in_features)
+    // adj:   (N, N)
     size_t N = input.rows;
-    size_t head_dim = concat_heads_ ? last_output_.cols / num_heads_ : last_output_.cols;
+    const double leaky_slope = 0.2;
 
-    std::vector<Tensor> head_outputs(num_heads_);
-
-    // Store input for backward
     last_input_ = input;
     adj_ = adj;
-    last_Wh_heads_.resize(num_heads_);
+
+    last_Wh_heads_.assign(num_heads_, Tensor(N, head_dim_));
     last_alpha_ = Tensor(N, N * num_heads_);
-    last_leaky_output_ = Tensor(N, N * num_heads_);
-    leaky_relu_masks_.resize(num_heads_);
+    last_e_ = Tensor(N, N * num_heads_);
+    last_head_pre_ = Tensor(N, head_dim_ * num_heads_);
+
+    std::vector<Tensor> head_outputs(num_heads_, Tensor(N, head_dim_));
 
     for (size_t h = 0; h < num_heads_; ++h) {
-        const Tensor& W = W_heads_[h].get_weights();
-        const Tensor& a = a_heads_[h].get_weights();
+        const Tensor& W = heads_[h].W;
+        const Tensor& a = heads_[h].a;
 
-        // Wh
-        Tensor Wh(N, W.cols);
+        // Wh = input @ W^T   → (N, head_dim)
+        // Equivalent to: Wh[i] = sum_k input[i][k] * W.T[k]
+        // Use: Wh[i][j] = sum_k input[i][k] * W[j][k]
+        Tensor Wh(N, head_dim_);
         for (size_t i = 0; i < N; ++i)
-            for (size_t j = 0; j < W.cols; ++j) {
+            for (size_t j = 0; j < head_dim_; ++j) {
                 double sum = 0.0;
-                for (size_t k = 0; k < input.cols; ++k)
-                    sum += input[i][k] * W[k][j];
-                Wh[i][j] = sum;
+                for (size_t k = 0; k < in_features_; ++k)
+                    sum += input(i, k) * W(j, k);
+                Wh(i, j) = sum;
             }
         last_Wh_heads_[h] = Wh;
 
-        // Attention scores: LeakyReLU(a^T [Wh_i || Wh_j])
+        // Compute e_ij = LeakyReLU( a^T [Wh_i || Wh_j] ) for all i, j.
+        // Mask non-neighbors (adj[i][j] == 0 → e = -inf so softmax -> 0).
         Tensor e(N, N);
-        double alpha = 0.2; // LeakyReLU slope
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = 0; j < N; ++j) {
-                if (adj[i][j] < 1e-9) { e[i][j] = -1e9; continue; }
+                if (adj(i, j) < 1e-9) {
+                    e(i, j) = -1e9;  // masked: will softmax to 0
+                    continue;
+                }
                 double dot = 0.0;
-                for (size_t k = 0; k < Wh.cols; ++k)
-                    dot += a[k][0] * Wh[i][k];
-                for (size_t k = 0; k < Wh.cols; ++k)
-                    dot += a[Wh.cols + k][0] * Wh[j][k];
-                e[i][j] = (dot > 0) ? dot : alpha * dot; // LeakyReLU
+                // First head_dim components: a[0..F'-1] · Wh_i
+                for (size_t k = 0; k < head_dim_; ++k)
+                    dot += a(k, 0) * Wh(i, k);
+                // Second head_dim components: a[F'..2F'-1] · Wh_j
+                for (size_t k = 0; k < head_dim_; ++k)
+                    dot += a(head_dim_ + k, 0) * Wh(j, k);
+                e(i, j) = (dot > 0.0) ? dot : leaky_slope * dot;  // LeakyReLU
             }
         }
 
-        // Store raw LeakyReLU output BEFORE softmax for accurate backward
-        // e currently holds raw LeakyReLU scores (before softmax)
+        // Store pre-softmax e (post-LeakyReLU) for backward
         for (size_t i = 0; i < N; ++i)
             for (size_t j = 0; j < N; ++j)
-                last_leaky_output_(i, h * N + j) = e[i][j];
+                last_e_(i, h * N + j) = e(i, j);
 
-        // Softmax over j for each i (in-place on e, AFTER storing raw output)
+        // Row-softmax over j: α_ij = exp(e_ij) / sum_k exp(e_ik)
         for (size_t i = 0; i < N; ++i) {
-            double max_e = e[i][0];
-            for (size_t j = 1; j < N; ++j) max_e = std::max(max_e, e[i][j]);
+            double max_e = e(i, 0);
+            for (size_t j = 1; j < N; ++j) max_e = std::max(max_e, e(i, j));
             double sum_exp = 0.0;
+            for (size_t j = 0; j < N; ++j) {
+                e(i, j) = std::exp(e(i, j) - max_e);
+                sum_exp += e(i, j);
+            }
+            if (sum_exp < 1e-30) sum_exp = 1e-30;  // safety
             for (size_t j = 0; j < N; ++j)
-                e[i][j] = std::exp(e[i][j] - max_e);
-            for (size_t j = 0; j < N; ++j)
-                sum_exp += e[i][j];
-            for (size_t j = 0; j < N; ++j)
-                e[i][j] /= sum_exp;
+                e(i, j) /= sum_exp;
         }
 
-        // Store alpha for backward (softmax output)
         for (size_t i = 0; i < N; ++i)
             for (size_t j = 0; j < N; ++j)
-                last_alpha_(i, h * N + j) = e[i][j];
+                last_alpha_(i, h * N + j) = e(i, j);
 
-        // Weighted sum + LeakyReLU
-        leaky_relu_masks_[h].resize(N);
-        Tensor head_result(N, head_dim);
+        // head_pre[i][j] = sum_k α_ik * Wh[k][j]   (pre-LeakyReLU)
+        Tensor head_pre(N, head_dim_);
         for (size_t i = 0; i < N; ++i) {
-            for (size_t j = 0; j < Wh.cols; ++j) {
+            for (size_t j = 0; j < head_dim_; ++j) {
                 double sum = 0.0;
                 for (size_t k = 0; k < N; ++k)
-                    sum += e[i][k] * Wh[k][j];
-                // LeakyReLU with slope 0.2
-                bool positive = (sum > 0);
-                leaky_relu_masks_[h][i].push_back(positive ? 1.0 : alpha);
-                head_result[i][j] = positive ? sum : alpha * sum;
+                    sum += e(i, k) * Wh(k, j);
+                head_pre(i, j) = sum;
             }
         }
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < head_dim_; ++j)
+                last_head_pre_(i, h * head_dim_ + j) = head_pre(i, j);
 
-        head_outputs[h] = head_result;
+        // Apply LeakyReLU to head_pre to get final head output
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < head_dim_; ++j) {
+                double v = head_pre(i, j);
+                head_outputs[h](i, j) = (v > 0.0) ? v : leaky_slope * v;
+            }
     }
 
-    // Concat or average heads
+    // Combine heads: concat or average
     if (concat_heads_) {
-        size_t total_dim = head_outputs[0].cols * num_heads_;
+        size_t total_dim = head_dim_ * num_heads_;
         last_output_ = Tensor(N, total_dim);
         for (size_t h = 0; h < num_heads_; ++h)
             for (size_t i = 0; i < N; ++i)
-                for (size_t j = 0; j < head_outputs[h].cols; ++j)
-                    last_output_(i, h * head_outputs[h].cols + j) = head_outputs[h](i, j);
+                for (size_t j = 0; j < head_dim_; ++j)
+                    last_output_(i, h * head_dim_ + j) = head_outputs[h](i, j);
     } else {
         last_output_ = head_outputs[0];
         for (size_t h = 1; h < num_heads_; ++h)
             for (size_t i = 0; i < N; ++i)
-                for (size_t j = 0; j < last_output_.cols; ++j)
+                for (size_t j = 0; j < head_dim_; ++j)
                     last_output_(i, j) += head_outputs[h](i, j);
         for (size_t i = 0; i < N; ++i)
-            for (size_t j = 0; j < last_output_.cols; ++j)
-                last_output_(i, j) /= num_heads_;
+            for (size_t j = 0; j < head_dim_; ++j)
+                last_output_(i, j) /= static_cast<double>(num_heads_);
     }
 
     return last_output_;
 }
 
 Tensor GATLayer::backward(const Tensor& grad_output, double learning_rate) {
-    // grad_output: (N, output_dim)
-    // For concat: each head gets full gradient (they're concatenated)
-    // For average: each head gets grad_output / num_heads
+    // grad_output: (N, out_features). For concat: each head's slice [h*head_dim, (h+1)*head_dim).
+    // For average: each head receives grad_output / num_heads.
     size_t N = grad_output.rows;
-    size_t head_dim = last_Wh_heads_[0].cols;
+    const double leaky_slope = 0.2;
 
-    // grad_wrt_input accumulator across heads
-    Tensor grad_input(N, last_input_.cols);
+    Tensor grad_input(N, in_features_);
     grad_input.fill(0.0);
 
+    // For each head: build its own per-head grad, then backprop into W, a, and input.
     for (size_t h = 0; h < num_heads_; ++h) {
         const Tensor& Wh = last_Wh_heads_[h];
-        const Tensor& W = W_heads_[h].get_weights();
-        const Tensor& a = a_heads_[h].get_weights();
+        Tensor& W = heads_[h].W;
+        Tensor& a = heads_[h].a;
+        Tensor& grad_W = heads_[h].grad_W;
+        Tensor& grad_a = heads_[h].grad_a;
 
-        // Extract alpha for this head: shape (N, N)
+        // Extract alpha (N, N) for this head from cached last_alpha_
         Tensor alpha(N, N);
         for (size_t i = 0; i < N; ++i)
             for (size_t j = 0; j < N; ++j)
                 alpha(i, j) = last_alpha_(i, h * N + j);
 
-        // dL/dhead_result for this head
-        // If concat: grad_output cols [h*head_dim, (h+1)*head_dim]
-        // If avg: grad_output / num_heads
-        Tensor grad_head_result(N, head_dim);
-        if (concat_heads_) {
-            for (size_t i = 0; i < N; ++i)
-                for (size_t j = 0; j < head_dim; ++j)
-                    grad_head_result(i, j) = grad_output(i, h * head_dim + j);
-        } else {
-            for (size_t i = 0; i < N; ++i)
-                for (size_t j = 0; j < head_dim; ++j)
-                    grad_head_result(i, j) = grad_output(i, j) / num_heads_;
+        // Extract pre-softmax LeakyReLU scores e_ij
+        Tensor e(N, N);
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < N; ++j)
+                e(i, j) = last_e_(i, h * N + j);
+
+        // === dL/d(head_output_after_LeakyReLU) ===
+        // For this head, slice grad_output.
+        Tensor grad_head_out(N, head_dim_);  // dL/d(head_output_pre_LeakyReLU)
+        for (size_t i = 0; i < N; ++i) {
+            for (size_t j = 0; j < head_dim_; ++j) {
+                double g;
+                if (concat_heads_) {
+                    g = grad_output(i, h * head_dim_ + j);
+                } else {
+                    g = grad_output(i, j) / static_cast<double>(num_heads_);
+                }
+                // Apply LeakyReLU' (the head_output = LeakyReLU(head_pre))
+                double v = last_head_pre_(i, h * head_dim_ + j);
+                double deriv = (v > 0.0) ? 1.0 : leaky_slope;
+                grad_head_out(i, j) = g * deriv;
+            }
         }
 
-        // Step 1: dL/dhead_out = dL/dhead_result * LeakyReLU'(head_out)
-        // mask: 1.0 if positive, 0.2 otherwise
-        Tensor grad_head_out(N, head_dim);
-        for (size_t i = 0; i < N; ++i)
-            for (size_t j = 0; j < head_dim; ++j)
-                grad_head_out(i, j) = grad_head_result(i, j) * leaky_relu_masks_[h][i][j];
-
-        // Step 2: Weighted sum backward — dL/dWh from weighted sum
-        // head_out[i][k] = sum_j (alpha[i][j] * Wh[j][k])
-        // dL/dWh[j][k] += alpha[i][j] * dL/dhead_out[i][k]
-        Tensor grad_Wh(N, head_dim);
+        // === Direct path: head_pre = α @ Wh ===
+        // dL/dWh (direct)  : grad_Wh[j][k] = sum_i α_ij * grad_head_out[i][k]
+        // dL/dα (direct)   : grad_alpha[i][j] = sum_k grad_head_out[i][k] * Wh[j][k]
+        Tensor grad_Wh_direct(N, head_dim_);
+        grad_Wh_direct.fill(0.0);
         for (size_t j = 0; j < N; ++j)
-            for (size_t k = 0; k < head_dim; ++k) {
+            for (size_t k = 0; k < head_dim_; ++k) {
                 double sum = 0.0;
                 for (size_t i = 0; i < N; ++i)
                     sum += alpha(i, j) * grad_head_out(i, k);
-                grad_Wh(j, k) = sum;
+                grad_Wh_direct(j, k) = sum;
             }
 
-        // Step 3: dL/dalpha via weighted sum (straight-through estimator)
-        // alpha[i][j] contributes to loss via head_out = alpha * Wh
-        // dL/dalpha[i][j] = sum_k (dL/dhead_out[i][k] * Wh[j][k])
-        Tensor grad_alpha(N, N);
+        Tensor grad_alpha_direct(N, N);
         for (size_t i = 0; i < N; ++i)
             for (size_t j = 0; j < N; ++j) {
                 double sum = 0.0;
-                for (size_t k = 0; k < head_dim; ++k)
+                for (size_t k = 0; k < head_dim_; ++k)
                     sum += grad_head_out(i, k) * Wh(j, k);
-                grad_alpha(i, j) = sum;
+                grad_alpha_direct(i, j) = sum;
             }
 
-        // Step 4: dL/de = dL/dalpha * softmax'(alpha)
-        // softmax: alpha_ij = exp(e_ij) / sum_k exp(e_ik)
-        // d_alpha_ij/d_e_kl = alpha_ij * (delta_ik * delta_jl - alpha_il * alpha_kl)
-        // Using straight-through: dL/de_ij = alpha_ij * (dL/dalpha_ij - sum_k(alpha_ik * dL/dalpha_ik))
+        // === Backward through softmax (row-wise) ===
+        // dL/de_ij = α_ij * (dL/dα_ij - sum_k α_ik * dL/dα_ik)
         Tensor grad_e(N, N);
         for (size_t i = 0; i < N; ++i) {
-            // sum over k of alpha_ik * dL/dalpha_ik
             double sum_contrib = 0.0;
             for (size_t k = 0; k < N; ++k)
-                sum_contrib += alpha(i, k) * grad_alpha(i, k);
+                sum_contrib += alpha(i, k) * grad_alpha_direct(i, k);
             for (size_t j = 0; j < N; ++j)
-                grad_e(i, j) = alpha(i, j) * (grad_alpha(i, j) - sum_contrib);
+                grad_e(i, j) = alpha(i, j) * (grad_alpha_direct(i, j) - sum_contrib);
         }
 
-        // Step 5: dL/da via LeakyReLU backward on e
-        // e_ij = LeakyReLU(dot_ij), where dot_ij = a^[Wh_i || Wh_j]
-        // d_e/d_a: first half uses Wh_i, second half uses Wh_j
-        const double leaky_slope = 0.2;
-        Tensor grad_a(head_dim * 2, 1);
-        grad_a.fill(0.0);
+        // === Backward through LeakyReLU (e_ij = LeakyReLU(dot_ij)) ===
+        // dL/ddot_ij = grad_e(i,j) * 1{raw > 0} + grad_e(i,j) * slope{raw ≤ 0}
+        // where raw is the un-LeakyRelu'd value. We have e_ij = LeakyReLU(raw_ij).
+        // So: leaku_deriv = 1 if e_ij > 0, else slope. Then dL/d(dot_ij) = grad_e(i,j) * leaku_deriv.
+        Tensor grad_dot(N, N);
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < N; ++j) {
+                double leaku_deriv = (e(i, j) > 0.0) ? 1.0 : leaky_slope;
+                grad_dot(i, j) = grad_e(i, j) * leaku_deriv;
+            }
 
+        // === dL/dW_h via two paths ===
+        // (1) Direct: dL/dW_h[j][k] += sum_i grad_Wh_direct[j][k] * input[i][k]
+        //     i.e. dL/dW = grad_Wh_direct.T @ input
+        // (2) Indirect via attention scores:
+        //     dot_ij = sum_k a[k] * Wh_i[k] + sum_k a[F'+k] * Wh_j[k]
+        //     dL/dWh_i[k] += sum_j grad_dot(i,j) * a[k]
+        //     dL/dWh_j[k] += sum_i grad_dot(i,j) * a[F'+k]  (for i != j; for i==j,
+        //            we must NOT double-count, since Wh_i == Wh_j)
+        //     Note: when i==j, dot_ii uses Wh_i twice with the SAME a vector.
+        //     The actual partial of dot_ii w.r.t. Wh_i[k] is a[k] + a[F'+k].
+        //     So summing both halves is correct, but we should NOT mask i==j.
+        //     The direct α path uses α_ii; the indirect path uses dot_ii.
+        //     Together: dL/dWh = (direct) + (indirect via a).
+        Tensor grad_Wh_indirect(N, head_dim_);
+        grad_Wh_indirect.fill(0.0);
+        for (size_t i = 0; i < N; ++i) {
+            for (size_t k = 0; k < head_dim_; ++k) {
+                double sum_i = 0.0;
+                for (size_t j = 0; j < N; ++j)
+                    sum_i += grad_dot(i, j) * a(k, 0);
+                grad_Wh_indirect(i, k) += sum_i;
+            }
+        }
+        for (size_t j = 0; j < N; ++j) {
+            for (size_t k = 0; k < head_dim_; ++k) {
+                double sum_j = 0.0;
+                for (size_t i = 0; i < N; ++i)
+                    sum_j += grad_dot(i, j) * a(head_dim_ + k, 0);
+                grad_Wh_indirect(j, k) += sum_j;
+            }
+        }
+
+        Tensor grad_Wh(N, head_dim_);
+        for (size_t i = 0; i < N; ++i)
+            for (size_t j = 0; j < head_dim_; ++j)
+                grad_Wh(i, j) = grad_Wh_direct(i, j) + grad_Wh_indirect(i, j);
+
+        // dL/dW_h = grad_Wh.T @ input  → (head_dim, in_features)
+        for (size_t i = 0; i < head_dim_; ++i) {
+            for (size_t k = 0; k < in_features_; ++k) {
+                double sum = 0.0;
+                for (size_t n = 0; n < N; ++n)
+                    sum += grad_Wh(n, i) * last_input_(n, k);
+                grad_W(i, k) = sum;
+            }
+        }
+
+        // === dL/dW_h via Wh = input @ W^T → dL/dinput += grad_Wh @ W  ===
+        Tensor grad_input_h(N, in_features_);
+        for (size_t i = 0; i < N; ++i)
+            for (size_t k = 0; k < in_features_; ++k) {
+                double sum = 0.0;
+                for (size_t j = 0; j < head_dim_; ++j)
+                    sum += grad_Wh(i, j) * W(j, k);
+                grad_input_h(i, k) = sum;
+            }
+        for (size_t i = 0; i < N; ++i)
+            for (size_t k = 0; k < in_features_; ++k)
+                grad_input(i, k) += grad_input_h(i, k);
+
+        // === dL/da via attention scores ===
+        // dot_ij = a[k] * Wh_i[k] (k in [0, F'))  +  a[F'+k] * Wh_j[k] (k in [0, F'))
+        // Mask: only consider j such that adj(i, j) > 0. For i==j, both halves apply.
+        // (When adj(i,i)==0, dot_ii contribution to loss is zero because e_ii = -1e9.)
+        grad_a.fill(0.0);
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = 0; j < N; ++j) {
-                if (adj_(i, j) < 1e-9) continue; // masked out in forward
-                // d_e_ij/d_a_k:
-                //   for k in [0, head_dim): Wh_i[k]
-                //   for k in [head_dim, 2*head_dim): Wh_j[k - head_dim]
-                // LeakyReLU derivative: use stored e_ij (pre-softmax LeakyReLU output)
-                // e_ij > 0 means original dot_ij > 0 => derivative = 1.0
-                // e_ij <= 0 means original dot_ij <= 0 => derivative = 0.2
-                double e_ij = last_leaky_output_(i, h * N + j);  // raw LeakyReLU output (before softmax)
-                double leaku_deriv = (e_ij > 0.0) ? 1.0 : leaky_slope;
-
-                double ge = grad_e(i, j) * leaku_deriv;
-                for (size_t k = 0; k < head_dim; ++k) {
-                    grad_a(k, 0) += ge * Wh(i, k);     // dL/da from Wh_i part
-                    // For Wh_j part, only add if i != j to avoid double-counting self-loop
-                    if (i != j) {
-                        grad_a(head_dim + k, 0) += ge * Wh(j, k); // dL/da from Wh_j part
-                    }
-                }
+                if (adj_(i, j) < 1e-9) continue;  // masked in forward
+                // First half: a[k] contributes grad_dot(i,j) * Wh_i[k]
+                for (size_t k = 0; k < head_dim_; ++k)
+                    grad_a(k, 0) += grad_dot(i, j) * Wh(i, k);
+                // Second half: a[F'+k] contributes grad_dot(i,j) * Wh_j[k]
+                for (size_t k = 0; k < head_dim_; ++k)
+                    grad_a(head_dim_ + k, 0) += grad_dot(i, j) * Wh(j, k);
             }
         }
 
-        // Step 6: dL/dW via chain rule through Wh = input @ W^T
-        // Wh = input @ W^T => dL/dW = dL/dWh^T @ input
-        Tensor grad_W = grad_Wh.transpose() * last_input_; // (head_dim, N) @ (N, in_features) = (head_dim, in_features)
-
-        // Update W_heads_[h] weights manually
-        Tensor& W_ref = W_heads_[h].weights;
-        Tensor& grad_W_ref = W_heads_[h].grad_weights;
-        for (size_t i = 0; i < W_ref.rows; ++i)
-            for (size_t j = 0; j < W_ref.cols; ++j)
-                W_ref(i, j) -= learning_rate * grad_W(i, j);
-
-        // Accumulate gradient in grad_weights for consistency
-        grad_W_ref += grad_W;
-
-        // Update a_heads_[h] weights manually
-        Tensor& a_ref = a_heads_[h].weights;
-        Tensor& grad_a_ref = a_heads_[h].grad_weights;
-        for (size_t i = 0; i < a_ref.rows; ++i)
-            for (size_t j = 0; j < a_ref.cols; ++j)
-                a_ref(i, j) -= learning_rate * grad_a(i, j);
-        grad_a_ref += grad_a.transpose(); // grad_a is (4,1), grad_a_ref is (1,4)
-
-        // Step 7: dL/dinput += dL/dWh @ W  (accumulate across heads)
-        // Wh = input @ W^T => dL/dinput = dL/dWh @ W
-        for (size_t i = 0; i < N; ++i)
-            for (size_t j = 0; j < last_input_.cols; ++j) {
-                double sum = 0.0;
-                for (size_t k = 0; k < W.cols; ++k)
-                    sum += grad_Wh(i, k) * W(k, j);
-                grad_input(i, j) += sum;
-            }
+        // === SGD update on W and a ===
+        for (size_t i = 0; i < head_dim_; ++i)
+            for (size_t j = 0; j < in_features_; ++j)
+                W(i, j) -= learning_rate * grad_W(i, j);
+        for (size_t i = 0; i < 2 * head_dim_; ++i)
+            a(i, 0) -= learning_rate * grad_a(i, 0);
     }
 
     return grad_input;
 }
 
 void GATLayer::update_weights(double learning_rate) {
-    for (auto& w : W_heads_) w.update_weights(learning_rate);
-    for (auto& a : a_heads_) a.update_weights(learning_rate);
+    // Weights are already updated in backward() (matches GCNLayer pattern).
+    (void)learning_rate;
 }
 
 void GATLayer::zero_grad() {
-    for (auto& w : W_heads_) w.zero_grad();
-    for (auto& a : a_heads_) a.zero_grad();
+    for (auto& hp : heads_) {
+        hp.grad_W.fill(0.0);
+        hp.grad_a.fill(0.0);
+    }
 }
 
 std::vector<Tensor*> GATLayer::parameters() {
     std::vector<Tensor*> result;
-    for (auto& w : W_heads_)
-        for (Tensor* p : w.parameters()) result.push_back(p);
-    for (auto& a : a_heads_)
-        for (Tensor* p : a.parameters()) result.push_back(p);
+    for (auto& hp : heads_) {
+        result.push_back(&hp.W);
+        result.push_back(&hp.a);
+    }
     return result;
 }
 
 std::vector<Tensor*> GATLayer::gradients() {
     std::vector<Tensor*> result;
-    for (auto& w : W_heads_)
-        for (Tensor* g : w.gradients()) result.push_back(g);
-    for (auto& a : a_heads_)
-        for (Tensor* g : a.gradients()) result.push_back(g);
+    for (auto& hp : heads_) {
+        result.push_back(&hp.grad_W);
+        result.push_back(&hp.grad_a);
+    }
     return result;
 }
 
