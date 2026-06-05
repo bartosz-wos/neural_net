@@ -5,9 +5,11 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **GAT (Graph Attention Network)**: Add proper multi-head attention over graph neighborhoods. Use LeakyReLU + softmax attention coefficients. Add to `layers/attention/gat.{h,cpp}` (we have `test_gat_gradient.cpp` already, suggesting there is some stub).
+_(empty — pop a new idea next session)_
 
 ## Done
+
+- **GAT (Graph Attention Network)**: Moved to its proper home `layers/attention/gat.{h,cpp}` from `architectures/gnn.h`. GATLayer is fundamentally a multi-head attention mechanism with a learned attention vector a_h, row-softmax over adjacency, and LeakyReLU(0.2) gating — same pattern as transformer attention. `gnn.h` now re-exports it via `#include "nn/layers/attention/gat.h"` so `GraphNetwork` and existing tests using the old path still work. Added new `tests/test_gat_attention.cpp` that includes the new header directly: 5/5 pass at machine precision (rel_err ~1e-9 to 1e-10 on input/W/a gradients with 3 heads, 4 nodes; training step reduces loss; average-heads mode works). Original `test_gat_verify` and `test_gat_gradient` (via the re-export) still pass.
 
 - **DMon (Diffusion Module Network)**: Implemented in `layers/architectures/dmon.{h,cpp}`. DMonLayer computes multi-scale heat-kernel diffusion features — for K time scales tau_k, builds the heat kernel H(tau_k) = exp(tau_k * (A_norm - I)) via truncated Taylor series (R terms), applies it to the input, concatenates all K feature blocks, and feeds them through a final Dense. Backward: grad_X = sum_k T_k^T @ grad_Z_k (the heat kernels are treated as fixed — scales are hyperparameters, not learnable, matching the DMon paper convention). Geometric schedule tau_k = 1.5^k is the default; users can override via constructor. DMonModel stacks layers with input projection + ReLU + classifier. 8/8 tests pass — input grad check at machine precision (rel_err ~2.2e-11 on the layer, ~4.5e-9 on the model), W_out grad check at ~1e-10, training step decreases loss.
 
