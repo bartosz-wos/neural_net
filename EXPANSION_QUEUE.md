@@ -7,9 +7,9 @@ After completing an item, move it to the "Done" section.
 
 - **GAT (Graph Attention Network)**: Add proper multi-head attention over graph neighborhoods. Use LeakyReLU + softmax attention coefficients. Add to `layers/attention/gat.{h,cpp}` (we have `test_gat_gradient.cpp` already, suggesting there is some stub).
 
-- **DMon (Diffusion Module Network)**: GNN variant that uses graph diffusion (heat kernel with multiple scales) instead of simple neighborhood aggregation. Each layer applies a different diffusion time scale. Add to `layers/architectures/dmon.{h,cpp}`.
-
 ## Done
+
+- **DMon (Diffusion Module Network)**: Implemented in `layers/architectures/dmon.{h,cpp}`. DMonLayer computes multi-scale heat-kernel diffusion features — for K time scales tau_k, builds the heat kernel H(tau_k) = exp(tau_k * (A_norm - I)) via truncated Taylor series (R terms), applies it to the input, concatenates all K feature blocks, and feeds them through a final Dense. Backward: grad_X = sum_k T_k^T @ grad_Z_k (the heat kernels are treated as fixed — scales are hyperparameters, not learnable, matching the DMon paper convention). Geometric schedule tau_k = 1.5^k is the default; users can override via constructor. DMonModel stacks layers with input projection + ReLU + classifier. 8/8 tests pass — input grad check at machine precision (rel_err ~2.2e-11 on the layer, ~4.5e-9 on the model), W_out grad check at ~1e-10, training step decreases loss.
 
 - **GATLayer (rewrite/fix)**: GAT layer in `layers/architectures/gnn.{h,cpp}` was completely broken — wrong layout for attention `a` vector (Dense stored it as a row vector but code indexed as column), missing dL/dWh backprop through attention scores, plus a stale `printf` debug artifact. Rewrote the layer with correct math (Veličković et al. 2018, ICLR): row-softmax attention with LeakyReLU(α=0.2), proper multi-head concat/avg, full backward including the path e→Wh→input. Used GATHeadParams struct (raw Tensors) instead of `Dense` for the attention vector to avoid the layout confusion. Tests: `test_gat_verify` (single head, 3 nodes) rel_err ~1.5e-10; `test_gat_gradient` (2 heads, 3 nodes) rel_err ~3e-8. Both pass. Cleanup: removed stray `tests/test_dense_verify.cpp` debug file, fixed duplicate `test_realnvp` Makefile rule.
 

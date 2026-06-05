@@ -133,10 +133,13 @@ $(BUILD_DIR)/test_nystrom_attention: $(LIB_OBJS) $(BUILD_DIR)/test_nystrom_atten
 $(BUILD_DIR)/test_edgeconv: $(LIB_OBJS) $(BUILD_DIR)/test_edgeconv.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_dmon: $(LIB_OBJS) $(BUILD_DIR)/test_dmon.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
