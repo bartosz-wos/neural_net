@@ -5,9 +5,15 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-_(empty — pop a new idea next session)_
+- **Linformer**: Implement Wang et al. 2020 "Linformer: Self-Attention with Linear Complexity" — projects K and V to a lower-rank (k x n) representation via two fixed linear projections (E, F) so attention is O(n*k) instead of O(n^2). Add to `layers/attention/linformer.{h,cpp}` with `LinformerAttention` and a `LinformerBlock` (LN → attention → LN → FFN + residual). 8-10 tests including shape (n=k case is equivalent to vanilla), input grad check, training step.
+- **Mixture-of-Depths (MoD)**: Implement Raposo et al. 2024 — dynamic compute routing: each token either goes through a transformer block or is skipped via a learned router (top-k routing across tokens per layer). 4-6 tests covering shape, gradient flow through routed/skip paths, training reduces loss.
+- **MLP-Mixer**: Tolsten et al. 2021 "MLP-Mixer: An all-MLP Architecture for Vision" — patches → per-patch Dense (channel mixing) → transpose → per-token Dense (token mixing) → transpose. Add `layers/architectures/mlp_mixer.{h,cpp}` with `MixerBlock` and `MLPMixer`. 6-8 tests.
+- **HyperNetworks**: Ha et al. 2016 — a small "hyper" network that generates the weights of a main network from an embedding. Useful for dynamic/meta-learning. Add `layers/architectures/hypernetwork.{h,cpp}`.
+
 
 ## Done
+
+- **gMLP (gated MLP)**: Implemented in `layers/architectures/gmlp.{h,cpp}` — Liu et al. 2021 "Pay Attention to MLPs". gMLPBlock: pre-norm → fc_in (d→2d) → split into u1, u2 → elementwise gate v = u1 * (W_spatial @ GELU(u2)) + b_sgu → fc_out (d→d) → learnable scalar alpha residual. gMLPModel stacks N blocks + classifier head. 10/10 tests pass: input grad check rel_err ~7e-5, W_spatial grad ~2e-5, fc_in W grad ~2.3e-5, alpha grad ~1.5e-5, model input grad at machine precision (1.5e-11), training decreases loss 0.274 → 0.118 over 50 steps. Fixed: classifier constructor arg order (Dense takes in_features first, not out_features).
 
 - **GAT (Graph Attention Network)**: Moved to its proper home `layers/attention/gat.{h,cpp}` from `architectures/gnn.h`. GATLayer is fundamentally a multi-head attention mechanism with a learned attention vector a_h, row-softmax over adjacency, and LeakyReLU(0.2) gating — same pattern as transformer attention. `gnn.h` now re-exports it via `#include "nn/layers/attention/gat.h"` so `GraphNetwork` and existing tests using the old path still work. Added new `tests/test_gat_attention.cpp` that includes the new header directly: 5/5 pass at machine precision (rel_err ~1e-9 to 1e-10 on input/W/a gradients with 3 heads, 4 nodes; training step reduces loss; average-heads mode works). Original `test_gat_verify` and `test_gat_gradient` (via the re-export) still pass.
 
