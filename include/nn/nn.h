@@ -42,6 +42,7 @@
 #include "layers/recurrent/rnn.h"
 #include "layers/recurrent/gru.h"
 #include "layers/recurrent/lstm_bidirectional.h"
+#include "layers/recurrent/mamba.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
