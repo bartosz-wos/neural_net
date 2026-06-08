@@ -44,6 +44,7 @@
 #include "layers/recurrent/lstm_bidirectional.h"
 #include "layers/recurrent/mamba.h"
 #include "layers/recurrent/xlstm.h"
+#include "layers/recurrent/mamba2.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
