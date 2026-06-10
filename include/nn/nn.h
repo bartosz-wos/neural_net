@@ -45,6 +45,9 @@
 #include "layers/recurrent/mamba.h"
 #include "layers/recurrent/xlstm.h"
 #include "layers/recurrent/mamba2.h"
+#include "layers/recurrent/rwkv.h"
+#include "layers/recurrent/retnet.h"
+#include "layers/recurrent/mlstm.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
@@ -56,10 +59,21 @@
 #include "layers/normalization/rms_norm.h"
 #include "layers/normalization/weight_norm.h"
 #include "layers/normalization/group_norm.h"
+#include "layers/normalization/spectral_norm.h"
+#include "layers/normalization/cbam.h"
+#include "layers/normalization/eca.h"
+#include "layers/normalization/coord_attention.h"
+#include "layers/normalization/scconv.h"
+#include "layers/normalization/crate.h"
 
 // Layers — attention
 #include "layers/attention/transformer.h"
 #include "layers/attention/flash_attention.h"
+#include "layers/attention/linformer.h"
+#include "layers/attention/nystrom_attention.h"
+#include "layers/attention/rope.h"
+#include "layers/attention/gat.h"
+#include "layers/attention/performer.h"
 #include "layers/attention/layer_output_tracker.h"
 
 // Layers — architectures (full model definitions)
@@ -76,6 +90,13 @@
 #include "layers/architectures/seq2seq_attention.h"
 #include "layers/architectures/cnn_models.h"
 #include "layers/architectures/cnn_models_vgg.h"
+#include "layers/architectures/patchy_san.h"
+#include "layers/architectures/pna.h"
+#include "layers/architectures/edgeconv.h"
+#include "layers/architectures/dmon.h"
+#include "layers/architectures/gmlp.h"
+#include "layers/architectures/lightgcn.h"
+#include "layers/architectures/deep_gcn.h"
 
 // Layers — utility
 #include "layers/utility/skip_connection.h"
@@ -83,6 +104,11 @@
 #include "layers/utility/dataloader.h"
 #include "layers/utility/fourier_features.h"
 #include "layers/utility/coord_network.h"
+#include "layers/utility/swiglu.h"
+#include "layers/utility/ghost_module.h"
+#include "layers/utility/spatial_dropout.h"
+#include "layers/utility/conv1d.h"
+#include "layers/utility/conv1d_transpose.h"
 #include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
@@ -90,6 +116,10 @@
 #include "layers/generative/vae.h"
 #include "layers/generative/capsnet.h"
 #include "layers/generative/wgan_gp.h"
+#include "layers/generative/ddpm.h"
+#include "layers/generative/consistency.h"
+#include "layers/generative/affine_coupling.h"
+#include "layers/generative/coupling_layer.h"
 
 // Layers — graph
 #include "layers/architectures/gnn.h"
