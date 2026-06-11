@@ -74,6 +74,7 @@
 #include "layers/attention/rope.h"
 #include "layers/attention/gat.h"
 #include "layers/attention/performer.h"
+#include "layers/attention/gqa.h"
 #include "layers/attention/layer_output_tracker.h"
 
 // Layers — architectures (full model definitions)
