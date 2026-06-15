@@ -182,4 +182,246 @@ private:
     Tensor last_block_output_;  // output of the last block (input to classifier)
 };
 
+// ============================================================================
+// AFT-Local — Zhai et al. 2021, "An Attention Free Transformer", §2.2
+//
+// Variant: windowed relative position bias.
+//
+//   w_{t,s} = relative_bias[t - s + (window - 1)]   if |t - s| < window
+//           = -inf (effectively masked out)         otherwise
+//
+// The learnable parameter is a 1D tensor of size (2 * window - 1) covering
+// relative offsets [-(window-1), ..., 0, ..., +(window-1)]. With window = 1,
+// the bias is constant (relative_bias[0] applied to all (t, s)) — useful as
+// a control case. With window = max_seq_len, this becomes equivalent to
+// AFT-full with the additional rank-1 constraint w_{t,s} = f(t-s) — fewer
+// parameters, stronger inductive bias for position-local patterns.
+//
+// Math (otherwise identical to AFT-full):
+//   Y_t[c] = sum_s exp(K_s[c] + w_{t,s}) * V_s[c]
+//   Z_t[c] = sum_s exp(K_s[c] + w_{t,s})
+//   out_t[c] = A_t[c] * Y_t[c] / (Z_t[c] + eps)
+//
+// Implementation note: in the forward pass we treat w_{t,s} as -infinity
+// outside the window (so exp(...) -> 0) by setting it to a very negative
+// constant (-1e9) in the cached position_bias matrix. The cached matrix
+// (max_seq_len, max_seq_len) is recomputed from relative_bias_ each forward
+// pass; the gradient against relative_bias_ is then computed via
+// accumulation against the gradient w.r.t. the (t, s) entries.
+// ============================================================================
+class AFTLocalAttention : public Layer {
+public:
+    // d_model: input/output feature dim (single-head v1)
+    // max_seq_len: maximum number of tokens
+    // window: half-window size; the relative bias covers offsets [-(w-1), w-1]
+    AFTLocalAttention(size_t d_model, size_t max_seq_len, size_t window);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+    Tensor get_weights() const override { return W_q.weights; }
+    Tensor get_gradients() const override { return W_q.grad_weights; }
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    std::string name() const override { return "AFTLocalAttention"; }
+
+    // Accessors
+    size_t d_model() const { return d_model_; }
+    size_t max_seq_len() const { return max_seq_len_; }
+    size_t window() const { return window_; }
+    const Tensor& relative_bias() const { return relative_bias_; }
+
+    // Public parameters
+    Dense W_q;            // (d_model, d_model)
+    Dense W_k;            // (d_model, d_model)
+    Dense W_v;            // (d_model, d_model)
+    Dense W_o;            // (d_model, d_model)
+    Tensor relative_bias_;// (2*window - 1,) — learnable relative position bias
+    Tensor grad_relative_bias_;
+
+private:
+    // Forward cache — position bias materialized as (max_seq_len, max_seq_len)
+    // with -1e9 for out-of-window entries (so exp(-1e9) -> 0). Used by both
+    // forward and backward so backward must run before the next forward.
+    Tensor last_position_bias_;   // (max_seq_len, max_seq_len) cached view
+    size_t d_model_;
+    size_t max_seq_len_;
+    size_t window_;
+
+    // Caches for forward
+    Tensor last_input_;           // (n, d_model)
+    Tensor last_Q_;               // (n, d_model)
+    Tensor last_K_;               // (n, d_model)
+    Tensor last_V_;               // (n, d_model)
+    Tensor last_A_;               // (n, d_model) — sigmoid(Q)
+    Tensor last_Y_;               // (n, d_model) — AFT output before W_o
+    Tensor last_Z_;               // (n, d_model) — denominator per-channel
+    Tensor last_output_pre_wo_;   // (n, d_model) — A_t * Y_t / (Z_t + eps)
+};
+
+// ----------------------------------------------------------------------------
+// AFT-Local Block — pre-LN -> AFT-Local -> residual -> pre-LN -> FFN -> residual
+// ----------------------------------------------------------------------------
+class AFTLocalBlock : public Layer {
+public:
+    AFTLocalBlock(size_t d_model, size_t max_seq_len, size_t window, size_t ffn_dim = 0);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+    Tensor get_weights() const override { return attn.W_q.weights; }
+    Tensor get_gradients() const override { return attn.W_q.grad_weights; }
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    std::string name() const override { return "AFTLocalBlock"; }
+
+    AFTLocalAttention attn;
+    LayerNorm ln1;
+    LayerNorm ln2;
+    Dense ffn_fc1_;
+    Dense ffn_fc2_;
+
+private:
+    size_t d_model_;
+    size_t ffn_dim_;
+    Tensor last_x_;
+    Tensor last_z1_;
+    Tensor last_attn_out_;
+    Tensor last_res1_;
+    Tensor last_z2_;
+    Tensor last_h_pre_;
+    Tensor last_ffn_h_;
+    Tensor last_ffn_out_;
+};
+
+// ============================================================================
+// AFT-Conv — Zhai et al. 2021, "An Attention Free Transformer", §2.2
+//
+// Variant: position bias as low-rank bilinear form of learned per-position
+// vectors, convolved with a learned 1x1 kernel.
+//
+// We implement the "low-rank bilinear" form (the cleanest tractable
+// realization of the paper's "1D conv on position encoding" specification):
+//
+//   pos_emb   in R^{n x K}      -- learnable per-position vectors
+//   W_conv    in R^{K x K}      -- learnable 1x1 conv (per-position mix)
+//   b_conv    in R^{K}          -- learnable bias
+//   q_t       = pos_emb[t]      -- (K,)
+//   q'[t]     = W_conv @ q_t + b_conv   -- (K,)
+//   w_{t,s}   = (1/K) * sum_k q'[t, k] * q'[s, k]   -- bilinear scalar
+//
+// This is equivalent to a 1D conv with kernel size 1 applied to the
+// position embedding, followed by an inner product — a low-rank
+// factorization of the (n x n) position bias matrix. With K = 1, w_{t,s}
+// is a single learnable scalar. With K = n, it has the same capacity as
+// AFT-full (and can match it given enough training).
+//
+// Math (otherwise identical to AFT-full):
+//   Y_t[c] = sum_s exp(K_s[c] + w_{t,s}) * V_s[c]
+//   Z_t[c] = sum_s exp(K_s[c] + w_{t,s})
+//   out_t[c] = A_t[c] * Y_t[c] / (Z_t[c] + eps)
+//
+// Backward:
+//   d_w_{t,s} = (1/K) * sum_c [ dY_t[c] * e * V_s[c] + dZ_t[c] * e ]
+//   d_pos_emb[t, k] = sum_s [ d_w_{t,s} * q'[s, k] ] * (1/K)
+//   d_pos_emb[s, k] += sum_t [ d_w_{t,s} * q'[t, k] ] * (1/K)
+//   d_W_conv[i, k] = sum_t d_q'[t, i] * q_t[t, k]
+//   d_b_conv[i]   = sum_t d_q'[t, i]
+//   d_q'[t, k]    = d_pos_emb[t, k] * 1
+//                   (then chain through W_conv: d_q_t[t, k] = sum_i d_q'[t, i] * W_conv[i, k])
+//                   and the b_conv path adds d_q'[t, k] to d_b_conv[k]
+// ============================================================================
+class AFTConvAttention : public Layer {
+public:
+    // d_model: input/output feature dim (single-head v1)
+    // max_seq_len: maximum number of tokens
+    // rank: low-rank dim K (default = max_seq_len for full capacity)
+    AFTConvAttention(size_t d_model, size_t max_seq_len, size_t rank = 0);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+    Tensor get_weights() const override { return W_q.weights; }
+    Tensor get_gradients() const override { return W_q.grad_weights; }
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    std::string name() const override { return "AFTConvAttention"; }
+
+    // Accessors
+    size_t d_model() const { return d_model_; }
+    size_t max_seq_len() const { return max_seq_len_; }
+    size_t rank() const { return rank_; }
+    const Tensor& position_embedding() const { return position_embedding_; }
+
+    // Public parameters
+    Dense W_q;            // (d_model, d_model)
+    Dense W_k;            // (d_model, d_model)
+    Dense W_v;            // (d_model, d_model)
+    Dense W_o;            // (d_model, d_model)
+    Tensor position_embedding_;  // (max_seq_len, rank) learnable
+    Tensor W_conv_;               // (rank, rank) learnable 1x1 conv
+    Tensor b_conv_;               // (rank,) learnable bias
+    Tensor grad_position_embedding_;
+    Tensor grad_W_conv_;
+    Tensor grad_b_conv_;
+
+private:
+    size_t d_model_;
+    size_t max_seq_len_;
+    size_t rank_;
+
+    // Forward caches (recomputed every forward pass; exposed for testing via
+    // direct member access by tests in the same repo, but logically private).
+    Tensor last_input_;
+    Tensor last_Q_;
+    Tensor last_K_;
+    Tensor last_V_;
+    Tensor last_A_;
+    Tensor last_Y_;
+    Tensor last_Z_;
+    Tensor last_output_pre_wo_;
+    Tensor last_q_;          // pos_emb (n, rank)
+    Tensor last_qp_;         // convolved pos (n, rank)
+    Tensor last_position_bias_;  // (n, n) materialized bilinear
+};
+
+// ----------------------------------------------------------------------------
+// AFT-Conv Block — pre-LN -> AFT-Conv -> residual -> pre-LN -> FFN -> residual
+// ----------------------------------------------------------------------------
+class AFTConvBlock : public Layer {
+public:
+    AFTConvBlock(size_t d_model, size_t max_seq_len, size_t rank = 0, size_t ffn_dim = 0);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+    Tensor get_weights() const override { return attn.W_q.weights; }
+    Tensor get_gradients() const override { return attn.W_q.grad_weights; }
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    std::string name() const override { return "AFTConvBlock"; }
+
+    AFTConvAttention attn;
+    LayerNorm ln1;
+    LayerNorm ln2;
+    Dense ffn_fc1_;
+    Dense ffn_fc2_;
+
+private:
+    size_t d_model_;
+    size_t ffn_dim_;
+    Tensor last_x_;
+    Tensor last_z1_;
+    Tensor last_attn_out_;
+    Tensor last_res1_;
+    Tensor last_z2_;
+    Tensor last_h_pre_;
+    Tensor last_ffn_h_;
+    Tensor last_ffn_out_;
+};
+
 #endif // AFT_H
