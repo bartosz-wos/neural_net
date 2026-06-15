@@ -5,11 +5,29 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-(no new ideas — pop the next one from the Done list only if you want to revisit; otherwise add new ideas below)
+- **PixelCNN / Gated PixelCNN** — autoregressive image generation with masked convolutions. 2-layer stack: masked conv1 over (rows of pixels), masked conv2 over (rows + columns). Conditioning via channel-wise gating. Implement in `layers/generative/`.
 
-- *(add new feature ideas here)*
+- **Equivariant GNN (EGNN)** — Satorras et al. 2021. Graph network with explicit equivariant coordinate updates (3D positions). Goes in `layers/architectures/egnn.{h,cpp}`.
+
+- **Hash-based / LSH attention** — replace softmax attention with locality-sensitive hashing for sub-quadratic attention. Goes in `layers/attention/lsh_attention.{h,cpp}`.
+
+- **Sparse Mixture of Experts (top-1 / top-2 routing)** — basic expert routing. Goes in `layers/architectures/sparse_moe.{h,cpp}`. (Note: `mixture_of_experts.cpp` already exists, but uses simpler soft routing.)
+
+- **Tree-LSTM** — recursive LSTM for tree-structured inputs. Goes in `layers/architectures/tree_lstm.{h,cpp}`.
+
+- **Hopfield Modern / HopfieldGAT** — modern Hopfield networks for retrieval, applied to attention. Goes in `layers/attention/hopfield.{h,cpp}`.
+
+- **RoPE-on-K-and-V** — extension of RoPE (which currently rotates only Q/K) to also rotate V in the attention pipeline. Simpler but worth adding. Goes in `layers/attention/`.
+
+- **MultiHead-Conv attention** (Yang et al. 2023 "Convolutional Self-Attention") — uses 1D convolutions to produce Q/K/V instead of dense projections. Goes in `layers/attention/conv_attention.{h,cpp}`.
+
+- **kNN-Image classification** — non-parametric method as a "layer" for ablation. Goes in `layers/architectures/`.
+
+- **AFT-Local / AFT-Conv variants** — the two AFT variants from the original paper (windowed position bias, learned 1D conv as position bias). Current implementation is AFT-full; the local and conv variants would round out the family. Goes in `layers/attention/aft.{h,cpp}`.
 
 ## Done
+
+- **AFT (Attention Free Transformer)**: Implemented in `layers/attention/aft.{h,cpp}` — Zhai et al. 2021 "An Attention Free Transformer". Replaces softmax attention with element-wise operations + sigmoid gating (O(n) per layer instead of O(n²)). Math: Q_t, K_t, V_t = x_t @ W_{q,k,v}; A_t = σ(Q_t); out_t = A_t ⊙ (Σ_s exp(K_s + w_{t,s}) ⊙ V_s) / (Σ_s exp(K_s + w_{t,s}) + ε). Implemented the AFT-full variant with learnable position bias w ∈ R^{n×n}. Three classes: AFTAttention (single-head attention), AFTBlock (pre-LN → AFT → residual → pre-LN → GELU FFN → residual), AFTModel (stack of AFTBlocks + per-token classifier). Full BPTT through: (1) per-(t,s,c) exp(K+w) outer product chain, (2) the per-channel sigmoid gate (A = σ(Q), dQ = dA · A · (1-A)), (3) the position-bias gradient (sum over channels of dY·exp·V + dZ·exp), (4) the AFTBlock residual double-path (FFN chain + direct residual both contribute to d_x), and (5) the GELU exact derivative. Initial bug — ffn_fc1/ffn_fc2 were declared with reversed in/out dims — was caught when the first test ran; the d_x in AFTBlock was also missing the direct residual contribution (grad_output * 1 from the res1+x and out=res1+ffn_out sums). After both fixes all 16/16 tests pass at machine precision: input grad rel_err 8.98e-11, W_q ~4.5e-10, W_k ~9.7e-9, W_v ~5.4e-11, W_o ~7.8e-11, position_bias ~7.98e-10, AFTBlock input grad rel_err 1.25e-10, attention loss 0.16 → 0.08 (49% reduction), block loss 0.13 → 0.012 (90% reduction), 2-block model loss 0.22 → 0.024 (89% reduction). Added to `include/nn/nn.h` umbrella and registered in Makefile (`build/test_aft`, `make tests`/`make run_tests`).
 
 - **Grouped Query Attention (GQA)**: Implemented in `layers/attention/gqa.{h,cpp}` — Ainslie et al. 2023 "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints". Bridges MHA and MQA by sharing K/V across `num_kv_heads` while keeping `num_query_heads` query heads. Convention: `num_query_heads % num_kv_heads == 0`; each K/V head is shared by `num_query_heads / num_kv_heads` Q heads. With `num_kv_heads == num_query_heads` → MHA (full). With `num_kv_heads == 1` → MQA (single K/V). Used in Llama 2/3, Mistral. Single-head-per-(Q/K/V) projections, head_dim = d_model / num_query_heads. Convention: W_q/W_k/W_v/W_o stored as flat (d_model, d_model) tensors where entry (k, j) is the weight from input feature k to output feature j; forward computes `Q = X @ W_q` (no transpose), backward computes `dX = dQ @ W_q^T` etc. (the Dense convention). W_k and W_v are (d_model, d_model) but only the first `num_kv_heads * head_dim` rows are used in forward; the rest stay zero (inactive). Full BPTT including: (1) softmax backward (d_scores = A * (d_A - row_sum(d_A * A))), (2) per-Q-head dQ/dK/dV with K/V gradient accumulation across the group (dK[h] = sum over Q heads in group), (3) the per-head `d_input` chain through W_q^T/W_k^T/W_v^T. **Bug fix history (this run):** the initial implementation had two missing transposes in the attention backward (`d_head_out = grad_output @ W_o` should be `@ W_o^T`; `d_input = dQ @ W_q` should be `@ W_q^T`) and an entire-wrong residual-merge in the GQABlock backward (was adding `d_ffn_h` — a (n, ffn_dim) tensor — to `d_res1` in (n, d_model) space, AND adding `d_z2` directly instead of `ln2.backward(d_z2)` to chain through the LN). After the fix all 9/9 tests pass at machine precision: input grad rel_err 6.1e-8 (MHA), 1.0e-7 (param W_q/k/v/o), 2.4e-9 (MHA-mode), 3.6e-6 (GQA-mode grouped K/V), 9.2e-11 (block input), and 80% loss reduction over 30 training steps for a 2-block GQAModel.
 
