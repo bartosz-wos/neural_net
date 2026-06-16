@@ -99,6 +99,7 @@
 #include "layers/architectures/gmlp.h"
 #include "layers/architectures/lightgcn.h"
 #include "layers/architectures/deep_gcn.h"
+#include "layers/architectures/egnn.h"
 
 // Layers — utility
 #include "layers/utility/skip_connection.h"
