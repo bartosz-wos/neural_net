@@ -6,7 +6,12 @@ LayerNorm::LayerNorm(size_t features, double eps)
     , beta(Tensor::zeros(1, features))
     , eps(eps)
     , training(true)
+    , grad_gamma_(1, features)
+    , grad_beta_(1, features)
+    , grad_x(0, 0)
 {
+    grad_gamma_.fill(0.0);
+    grad_beta_.fill(0.0);
 }
 
 Tensor LayerNorm::forward(const Tensor& input) {
