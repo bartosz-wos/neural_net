@@ -181,6 +181,9 @@ $(BUILD_DIR)/test_aft_conv: $(LIB_OBJS) $(BUILD_DIR)/test_aft_conv.o
 $(BUILD_DIR)/test_lsh_attention: $(LIB_OBJS) $(BUILD_DIR)/test_lsh_attention.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_conv_attention: $(LIB_OBJS) $(BUILD_DIR)/test_conv_attention.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_pixelcnn: $(LIB_OBJS) $(BUILD_DIR)/test_pixelcnn.o
 	$(CXX) $^ -o $@
 
@@ -199,7 +202,7 @@ $(BUILD_DIR)/test_tree_lstm: $(LIB_OBJS) $(BUILD_DIR)/test_tree_lstm.o
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon $(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier $(BUILD_DIR)/test_tree_lstm
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon $(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier $(BUILD_DIR)/test_tree_lstm
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
@@ -216,6 +219,7 @@ run_tests: tests
 	@echo "=== Running AFT Tests ===" && ./$(BUILD_DIR)/test_aft
 	@echo "=== Running AFT-Local Tests ===" && ./$(BUILD_DIR)/test_aft_local
 	@echo "=== Running AFT-Conv Tests ===" && ./$(BUILD_DIR)/test_aft_conv
+	@echo "=== Running Conv Attention Tests ===" && ./$(BUILD_DIR)/test_conv_attention
 	@echo "=== Running PixelCNN Tests ===" && ./$(BUILD_DIR)/test_pixelcnn
 	@echo "=== Running EGNN Tests ===" && ./$(BUILD_DIR)/test_egnn
 	@echo "=== Running Sparse MoE Tests ===" && ./$(BUILD_DIR)/test_sparse_moe
