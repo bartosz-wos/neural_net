@@ -72,6 +72,7 @@
 #include "layers/attention/linformer.h"
 #include "layers/attention/nystrom_attention.h"
 #include "layers/attention/rope.h"
+#include "layers/attention/rope_v.h"
 #include "layers/attention/gat.h"
 #include "layers/attention/performer.h"
 #include "layers/attention/gqa.h"
