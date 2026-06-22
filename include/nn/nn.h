@@ -80,6 +80,7 @@
 #include "layers/attention/lsh_attention.h"
 #include "layers/attention/conv_attention.h"
 #include "layers/attention/hopfield.h"
+#include "layers/attention/slot_attention.h"
 #include "layers/attention/layer_output_tracker.h"
 
 // Layers — architectures (full model definitions)
