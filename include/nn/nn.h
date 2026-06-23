@@ -122,6 +122,7 @@
 #include "layers/utility/spatial_dropout.h"
 #include "layers/utility/conv1d.h"
 #include "layers/utility/conv1d_transpose.h"
+#include "layers/utility/stochastic_depth.h"
 #include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
