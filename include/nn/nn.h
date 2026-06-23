@@ -25,6 +25,7 @@
 #include "utils/adaboost.h"
 #include "utils/gradient_boosting.h"
 #include "utils/elastic_net.h"
+#include "utils/magnitude_pruning.h"
 #include "utils/random_forest.h"
 #include "utils/isolation_forest.h"
 #include "utils/lightgbm_style.h"
