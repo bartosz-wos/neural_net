@@ -112,6 +112,7 @@
 #include "layers/architectures/egnn.h"
 #include "layers/architectures/tree_lstm.h"
 #include "layers/architectures/span_extractor.h"
+#include "layers/architectures/mixture_of_depths.h"
 
 // Layers — utility
 #include "layers/utility/skip_connection.h"
