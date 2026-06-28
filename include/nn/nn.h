@@ -88,6 +88,7 @@
 #include "layers/attention/slot_attention.h"
 #include "layers/attention/fnet.h"
 #include "layers/attention/mla.h"
+#include "layers/attention/bigbird.h"
 #include "layers/attention/layer_output_tracker.h"
 
 // Layers — architectures (full model definitions)

@@ -244,10 +244,13 @@ $(BUILD_DIR)/test_capsule: $(LIB_OBJS) $(BUILD_DIR)/test_capsule.o
 $(BUILD_DIR)/test_kan: $(LIB_OBJS) $(BUILD_DIR)/test_kan.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_bigbird: $(LIB_OBJS) $(BUILD_DIR)/test_bigbird.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon $(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_slot_attention $(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan
+tests: setup $(BUILD_DIR)/test_s4 $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_gradient_check $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon $(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_slot_attention $(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_bigbird
 
 run_tests: tests
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
@@ -285,6 +288,7 @@ run_tests: tests
 	@echo "=== Running KAN Tests ===" && ./$(BUILD_DIR)/test_kan
 	@echo "=== Running Lion Tests ===" && ./$(BUILD_DIR)/test_lion
 	@echo "=== Running Sophia Tests ===" && ./$(BUILD_DIR)/test_sophia
+	@echo "=== Running BigBird Tests ===" && ./$(BUILD_DIR)/test_bigbird
 
 clean:
 	rm -rf $(BUILD_DIR)
