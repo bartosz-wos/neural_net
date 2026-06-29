@@ -105,6 +105,7 @@
 #include "layers/architectures/knn_classifier.h"
 #include "layers/architectures/lstm_las.h"
 #include "layers/architectures/seq2seq_attention.h"
+#include "layers/architectures/tabnet.h"
 #include "layers/architectures/cnn_models.h"
 #include "layers/architectures/cnn_models_vgg.h"
 #include "layers/architectures/patchy_san.h"

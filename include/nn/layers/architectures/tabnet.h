@@ -42,14 +42,17 @@ private:
     // Shared encoder: batch_norm -> fc -> batch_norm -> fc -> relu
     // Used across all decision steps
     struct EncoderBlock {
-        Tensor w1, b1;           // BN1 input -> BN1 output (no actual BN params, just pre-norm)
+        Tensor w1, b1;           // FC1: input_dim -> virtual_dim
         Tensor bn1_gamma, bn1_beta;
-        Tensor last_bn1_out;     // cached for backward
-        Tensor last_inv_std_bn2;  // cached for backward
-        Tensor last_mean_bn2;     // cached for backward
-        Tensor w2, b2;           // FC1
+        Tensor w2, b2;           // FC2: virtual_dim -> virtual_dim
         Tensor bn2_gamma, bn2_beta;
-        Tensor last_bn2_out;     // cached for backward
+        // Forward caches (per call)
+        Tensor last_bn1_out;            // post-BN1
+        Tensor last_bn2_out;            // post-BN2 (pre-ReLU)
+        Tensor last_mean_bn1, last_inv_std_bn1;
+        Tensor last_x_centered_bn1, last_x_norm_bn1;
+        Tensor last_mean_bn2, last_inv_std_bn2;
+        Tensor last_x_centered_bn2, last_x_norm_bn2;
         // Gradients
         Tensor grad_bn1_gamma, grad_bn1_beta;
         Tensor grad_bn2_gamma, grad_bn2_beta;
@@ -63,10 +66,16 @@ private:
     struct IndependentBlock {
         Tensor w1, b1;
         Tensor bn1_gamma, bn1_beta;
-        Tensor last_bn1_out;
         Tensor w2, b2;
         Tensor bn2_gamma, bn2_beta;
+        // Forward caches
+        Tensor last_bn1_out;
         Tensor last_bn2_out;
+        Tensor last_mean_bn1, last_inv_std_bn1;
+        Tensor last_x_centered_bn1, last_x_norm_bn1;
+        Tensor last_mean_bn2, last_inv_std_bn2;
+        Tensor last_x_centered_bn2, last_x_norm_bn2;
+        // Gradients
         Tensor grad_bn1_gamma, grad_bn1_beta;
         Tensor grad_bn2_gamma, grad_bn2_beta;
         Tensor grad_w1, grad_b1;
@@ -88,8 +97,20 @@ private:
     struct StepFC {
         Tensor w, b;
         Tensor grad_w, grad_b;
+        // Forward caches
+        Tensor last_h_shared;     // (B, virtual_dim) input to step FC
+        Tensor last_dec_pre;      // (B, num_outputs) pre-ReLU activations
     };
     std::vector<StepFC> step_fcs_;
+
+    // Input projection: maps (B, input_dim) -> (B, virtual_dim) at step 0 so that
+    // every subsequent step operates in virtual_dim space (with virtual_dim-shaped masks).
+    Tensor W_in_;             // (virtual_dim_, input_dim_)
+    Tensor b_in_;             // (1, virtual_dim_)
+    Tensor grad_W_in_;        // (virtual_dim_, input_dim_)
+    Tensor grad_b_in_;        // (1, virtual_dim_)
+    Tensor last_input_proj_;  // (B, virtual_dim_) cached for backward
+    Tensor last_input_;       // (B, input_dim_) cached original input (needed for W_in grad)
 
     // Prior scales for relaxation factor
     // Updated after each step: P_s = (gamma - M_{s-1}) / gamma
