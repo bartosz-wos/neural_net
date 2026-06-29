@@ -12,6 +12,8 @@ debug_*
 *.orig
 *.rej
 ref_*
+dbg_*
+*_dbg.*
 tests/debug_*
 tests/*.bak
 # ad-hoc debug tests created during gradient/chain tracing work

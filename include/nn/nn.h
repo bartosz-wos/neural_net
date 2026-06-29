@@ -135,6 +135,7 @@
 #include "layers/utility/stochastic_depth.h"
 #include "layers/utility/ff_layer.h"
 #include "layers/utility/kan.h"
+#include "layers/utility/gumbel_softmax.h"
 #include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
