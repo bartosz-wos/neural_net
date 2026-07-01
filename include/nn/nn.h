@@ -36,8 +36,10 @@
 #include "utils/mixup_cutmix.h"
 #include "utils/triplet_loss_siamese.h"
 
-// Layers — convolutional
 #include "layers/convolutions/conv_layer.h"
+#include "layers/convolutions/depthwise_separable_conv.h"
+#include "layers/convolutions/group_conv.h"
+#include "layers/convolutions/spatial_transformer.h"
 #include "layers/pooling/pool_layer.h"
 #include "layers/utility/conv1d.h"
 #include "layers/utility/coordconv.h"
