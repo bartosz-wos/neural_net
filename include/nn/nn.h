@@ -13,6 +13,7 @@
 #include "optimizers/lamb.h"
 #include "optimizers/lion.h"
 #include "optimizers/sophia.h"
+#include "optimizers/sam.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
