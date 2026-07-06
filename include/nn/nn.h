@@ -36,6 +36,7 @@
 #include "utils/lightgbm_style.h"
 #include "utils/mixup_cutmix.h"
 #include "utils/triplet_loss_siamese.h"
+#include "utils/distribution_losses.h"
 
 #include "layers/convolutions/conv_layer.h"
 #include "layers/convolutions/depthwise_separable_conv.h"
