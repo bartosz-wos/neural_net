@@ -10,6 +10,7 @@
 #include "optimizers/optimizer.h"
 #include "optimizers/optimizer_extended.h"
 #include "optimizers/adabelief.h"
+#include "optimizers/legacy_adaptive.h"
 #include "optimizers/lamb.h"
 #include "optimizers/lion.h"
 #include "optimizers/sophia.h"
