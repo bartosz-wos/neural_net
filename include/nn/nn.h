@@ -71,6 +71,7 @@
 #include "layers/normalization/rms_norm.h"
 #include "layers/normalization/weight_norm.h"
 #include "layers/normalization/group_norm.h"
+#include "layers/normalization/instance_norm.h"
 #include "layers/normalization/spectral_norm.h"
 #include "layers/normalization/cbam.h"
 #include "layers/normalization/eca.h"
