@@ -107,11 +107,22 @@ void SGDNesterov::step(Model& model) {
             Tensor& v = vel[i];
             for (size_t r = 0; r < p->rows; ++r) {
                 for (size_t c_col = 0; c_col < p->cols; ++c_col) {
-                    // Standard momentum SGD; Nesterov lookahead would require
-                    // gradient re-evaluation at (p + momentum*v) which needs
-                    // an extra forward pass and is not implemented here.
-                    v[r][c_col] = momentum * v[r][c_col] + (*g)[r][c_col];
-                    (*p)[r][c_col] -= lr * v[r][c_col];
+                    // Nesterov Accelerated Gradient (NAG) — Sutskever 2013
+                    // reformulation. Two equations:
+                    //   v_t   = momentum * v_{t-1} + grad_t
+                    //   p_t   = p_{t-1} - lr * (grad_t + momentum * v_t)
+                    // The "+ momentum * v_t" lookahead term is the
+                    // defining Nesterov property: it biases the update
+                    // toward where momentum is *going to* land, rather
+                    // than where it has been. PyTorch's
+                    // torch.optim.SGD(nesterov=True) and Sutskever's
+                    // 2013 ICML paper use exactly this reformulation —
+                    // it avoids the 2nd forward pass that the literal
+                    // "look ahead and re-evaluate grad" form would
+                    // require.
+                    double grad = (*g)[r][c_col];
+                    v[r][c_col] = momentum * v[r][c_col] + grad;
+                    (*p)[r][c_col] -= lr * (grad + momentum * v[r][c_col]);
                 }
             }
         }
