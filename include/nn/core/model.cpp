@@ -315,19 +315,11 @@ void Model::train(const Tensor& X, const Tensor& y, Optimizer& opt, int epochs,
         while (loader.has_next()) {
             auto batch = loader.next();
 
-            // Stack (1, C) sample tensors into (batch_size, C) tensors
             size_t batch_sz = batch.data.size();
             if (batch_sz == 0) continue;
 
-            Tensor X_batch(batch_sz, batch.data[0].cols);
-            for (size_t b = 0; b < batch_sz; ++b)
-                for (size_t c = 0; c < batch.data[0].cols; ++c)
-                    X_batch(b, c) = batch.data[b](0, c);
-
-            Tensor y_batch(batch_sz, batch.targets[0].cols);
-            for (size_t b = 0; b < batch_sz; ++b)
-                for (size_t c = 0; c < batch.targets[0].cols; ++c)
-                    y_batch(b, c) = batch.targets[b](0, c);
+            Tensor X_batch = batch.data_tensor();
+            Tensor y_batch = batch.targets_tensor();
 
             // Forward pass
             Tensor logits = forward(X_batch);

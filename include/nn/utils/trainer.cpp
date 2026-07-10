@@ -45,14 +45,8 @@ void Trainer::train(DataLoader& train_loader,
 
         while (train_loader.has_next()) {
             DataLoader::Batch batch = train_loader.next();
-            // Stack individual (1, features) samples into (batch_size, features) tensors
-            Tensor X_batch(batch.batch_size, batch.data[0].cols);
-            for (size_t i = 0; i < batch.batch_size; ++i) {
-                for (size_t c = 0; c < X_batch.cols; ++c) {
-                    X_batch(i, c) = batch.data[i](0, c);
-                }
-            }
-            Tensor y_batch = targets_to_tensor_impl(batch.targets);
+            Tensor X_batch = batch.data_tensor();
+            Tensor y_batch = batch.targets_tensor();
 
             double batch_loss = 0.0;
             train_step(model, optimizer, X_batch, y_batch, batch_loss);
@@ -71,13 +65,8 @@ void Trainer::train(DataLoader& train_loader,
             int val_count = 0;
             while (val_loader->has_next()) {
                 DataLoader::Batch batch = val_loader->next();
-                Tensor X_batch(batch.batch_size, batch.data[0].cols);
-                for (size_t i = 0; i < batch.batch_size; ++i) {
-                    for (size_t c = 0; c < X_batch.cols; ++c) {
-                        X_batch(i, c) = batch.data[i](0, c);
-                    }
-                }
-                Tensor y_batch = targets_to_tensor_impl(batch.targets);
+                Tensor X_batch = batch.data_tensor();
+                Tensor y_batch = batch.targets_tensor();
                 Tensor logits = model.forward(X_batch);
                 val_total += softmax_cross_entropy(logits, y_batch);
                 val_count++;
@@ -106,13 +95,8 @@ void Trainer::train(Model& model, const DataLoader& train_loader,
 
         while (loader.has_next()) {
             DataLoader::Batch batch = loader.next();
-            Tensor X_batch(batch.batch_size, batch.data[0].cols);
-            for (size_t i = 0; i < batch.batch_size; ++i) {
-                for (size_t c = 0; c < X_batch.cols; ++c) {
-                    X_batch(i, c) = batch.data[i](0, c);
-                }
-            }
-            Tensor y_batch = targets_to_tensor_impl(batch.targets);
+            Tensor X_batch = batch.data_tensor();
+            Tensor y_batch = batch.targets_tensor();
 
             // Forward pass
             Tensor logits = model.forward(X_batch);
@@ -148,13 +132,8 @@ void Trainer::train(Model& model, const DataLoader& train_loader,
             int val_count = 0;
             while (vloader.has_next()) {
                 DataLoader::Batch batch = vloader.next();
-                Tensor X_batch(batch.batch_size, batch.data[0].cols);
-                for (size_t i = 0; i < batch.batch_size; ++i) {
-                    for (size_t c = 0; c < X_batch.cols; ++c) {
-                        X_batch(i, c) = batch.data[i](0, c);
-                    }
-                }
-                Tensor y_batch = targets_to_tensor_impl(batch.targets);
+                Tensor X_batch = batch.data_tensor();
+                Tensor y_batch = batch.targets_tensor();
                 Tensor logits = model.forward(X_batch);
                 val_total += softmax_cross_entropy(logits, y_batch);
                 val_count++;

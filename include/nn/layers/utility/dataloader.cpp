@@ -1,9 +1,45 @@
 #include "dataloader.h"
+#include <string>
+
+namespace {
+
+Tensor stack_rows(const std::vector<Tensor>& rows, const char* name) {
+    if (rows.empty()) return Tensor(0, 0);
+
+    const size_t cols = rows[0].cols;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].rows != 1) {
+            throw std::invalid_argument(std::string(name) + " entries must be row tensors");
+        }
+        if (rows[i].cols != cols) {
+            throw std::invalid_argument(std::string(name) + " entries must have matching column counts");
+        }
+    }
+
+    Tensor out(rows.size(), cols);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        for (size_t j = 0; j < cols; ++j) {
+            out(i, j) = rows[i](0, j);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+Tensor DataLoader::Batch::data_tensor() const {
+    return stack_rows(data, "Batch::data");
+}
+
+Tensor DataLoader::Batch::targets_tensor() const {
+    return stack_rows(targets, "Batch::targets");
+}
 
 DataLoader::DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size,
                        bool shuffle, bool drop_last, unsigned seed)
     : dataset_(std::move(dataset)), batch_size_(batch_size),
       shuffle_(shuffle), drop_last_(drop_last), rng_(seed) {
+    if (!dataset_) throw std::invalid_argument("dataset must not be null");
     if (batch_size_ == 0) throw std::invalid_argument("batch_size must be > 0");
     size_t n = dataset_->size();
     indices_.resize(n);
@@ -19,6 +55,7 @@ void DataLoader::shuffle_indices() {
 
 void DataLoader::reset() {
     pos_ = 0;
+    shuffle_indices();
 }
 
 bool DataLoader::has_next() const {

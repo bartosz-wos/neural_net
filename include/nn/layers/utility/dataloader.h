@@ -23,14 +23,20 @@ class TensorDataset : public Dataset {
     Tensor X_;
     Tensor y_;
 public:
-    TensorDataset(const Tensor& X, const Tensor& y) : X_(X), y_(y) {}
+    TensorDataset(const Tensor& X, const Tensor& y) : X_(X), y_(y) {
+        if (X_.rows != y_.rows) {
+            throw std::invalid_argument("TensorDataset requires X and y to have the same number of rows");
+        }
+    }
     size_t size() const override { return X_.rows; }
     Tensor get_sample(size_t idx) override {
+        if (idx >= X_.rows) throw std::out_of_range("TensorDataset sample index out of range");
         Tensor row(1, X_.cols);
         for (size_t c = 0; c < X_.cols; ++c) row(0, c) = X_(idx, c);
         return row;
     }
     Tensor get_target(size_t idx) override {
+        if (idx >= y_.rows) throw std::out_of_range("TensorDataset target index out of range");
         if (y_.cols == 1) {
             Tensor t(1, 1);
             t(0, 0) = y_(idx, 0);
@@ -57,7 +63,10 @@ public:
     struct Batch {
         std::vector<Tensor> data;
         std::vector<Tensor> targets;
-        size_t batch_size;
+        size_t batch_size = 0;
+
+        Tensor data_tensor() const;
+        Tensor targets_tensor() const;
     };
 
     DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size,
