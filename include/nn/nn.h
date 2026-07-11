@@ -16,6 +16,7 @@
 #include "optimizers/sophia.h"
 #include "optimizers/ademamix.h"
 #include "optimizers/sam.h"
+#include "optimizers/muon.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
