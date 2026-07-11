@@ -78,7 +78,7 @@ make <target>  # build specific demo
 
 **Optimizers** — SGD, Adam, RMSprop, AdamW, SGD+Nesterov, clip_grad_norm_
 
-**Schedulers** — StepLR, ExponentialLR, ReduceLROnPlateau, CosineAnnealingLR, OneCycleLR, SWA
+**Schedulers** — StepLR, ExponentialLR, ReduceLROnPlateau, CosineAnnealingLR, CosineAnnealingWarmRestarts, MultiStepLR, PolynomialLR, CyclicLR, OneCycleLR, SWA
 
 **Training Tools** — GridSearchCV, DataLoader + Dataset, TimingBenchmark, LayerOutputTracker
 
