@@ -43,6 +43,7 @@
 #include "utils/mmd_loss.h"
 #include "utils/contrastive_losses.h"
 #include "utils/metrics.h"
+#include "utils/model_ema.h"
 
 #include "layers/convolutions/conv_layer.h"
 #include "layers/convolutions/depthwise_separable_conv.h"
