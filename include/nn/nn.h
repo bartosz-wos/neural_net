@@ -42,6 +42,7 @@
 #include "utils/distribution_losses.h"
 #include "utils/mmd_loss.h"
 #include "utils/contrastive_losses.h"
+#include "utils/siglip_loss.h"
 #include "utils/metrics.h"
 #include "utils/model_ema.h"
 
