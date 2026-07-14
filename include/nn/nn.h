@@ -165,6 +165,7 @@
 #include "layers/generative/consistency.h"
 #include "layers/generative/affine_coupling.h"
 #include "layers/generative/coupling_layer.h"
+#include "layers/generative/neural_spline_flow.h"
 #include "layers/generative/pixelcnn.h"
 
 // Layers — graph
