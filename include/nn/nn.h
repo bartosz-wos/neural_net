@@ -87,6 +87,7 @@
 // Layers — attention
 #include "layers/attention/transformer.h"
 #include "layers/attention/flash_attention.h"
+#include "layers/attention/flash_attention_v2.h"
 #include "layers/attention/linformer.h"
 #include "layers/attention/nystrom_attention.h"
 #include "layers/attention/rope.h"

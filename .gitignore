@@ -44,4 +44,5 @@ tests/test_*which_*.cpp
 tests/test_*grad_*.cpp
 tests/test_gin_adj_debug.cpp
 tests/test_gin_debug*.cpp
+.hermes/
 .ccache/
