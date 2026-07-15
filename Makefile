@@ -76,6 +76,9 @@ $(BUILD_DIR)/test_crate: $(LIB_OBJS) $(BUILD_DIR)/test_crate.o
 $(BUILD_DIR)/test_rmsnorm: $(LIB_OBJS) $(BUILD_DIR)/test_rmsnorm.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_adaln_zero: $(LIB_OBJS) $(BUILD_DIR)/test_adaln_zero.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_wgan_gp: $(LIB_OBJS) $(BUILD_DIR)/test_wgan_gp.o
 	$(CXX) $^ -o $@
 
@@ -350,7 +353,7 @@ $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
 $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test_ademamix $(BUILD_DIR)/test_sgd_nesterov \
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
-$(BUILD_DIR)/test_gmm
+$(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -415,6 +418,7 @@ run_tests: tests
 	@echo "=== Running LR Schedulers Tests ===" && ./$(BUILD_DIR)/test_lr_schedulers
 	@echo "=== Running Muon Tests ===" && ./$(BUILD_DIR)/test_muon
 	@echo "=== Running GMM Tests ===" && ./$(BUILD_DIR)/test_gmm
+	@echo "=== Running AdaLN-Zero Tests ===" && ./$(BUILD_DIR)/test_adaln_zero
 
 clean:
 	rm -rf $(BUILD_DIR)

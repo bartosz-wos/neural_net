@@ -84,6 +84,7 @@
 #include "layers/normalization/coord_attention.h"
 #include "layers/normalization/scconv.h"
 #include "layers/normalization/crate.h"
+#include "layers/normalization/adaln_zero.h"
 
 // Layers — attention
 #include "layers/attention/transformer.h"
