@@ -124,6 +124,9 @@ $(BUILD_DIR)/test_sgd_nesterov: $(LIB_OBJS) $(BUILD_DIR)/test_sgd_nesterov.o
 $(BUILD_DIR)/test_lr_schedulers: $(LIB_OBJS) $(BUILD_DIR)/test_lr_schedulers.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_gmm: $(LIB_OBJS) $(BUILD_DIR)/test_gmm.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_metrics: $(LIB_OBJS) $(BUILD_DIR)/test_metrics.o
 	$(CXX) $^ -o $@
 
@@ -346,7 +349,8 @@ $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture
 $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
 $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test_ademamix $(BUILD_DIR)/test_sgd_nesterov \
-$(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon
+$(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
+$(BUILD_DIR)/test_gmm
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -410,6 +414,7 @@ run_tests: tests
 	@echo "=== Running SGD-Nesterov Tests ===" && ./$(BUILD_DIR)/test_sgd_nesterov
 	@echo "=== Running LR Schedulers Tests ===" && ./$(BUILD_DIR)/test_lr_schedulers
 	@echo "=== Running Muon Tests ===" && ./$(BUILD_DIR)/test_muon
+	@echo "=== Running GMM Tests ===" && ./$(BUILD_DIR)/test_gmm
 
 clean:
 	rm -rf $(BUILD_DIR)
