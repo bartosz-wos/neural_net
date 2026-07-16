@@ -121,6 +121,9 @@ $(BUILD_DIR)/test_ademamix: $(LIB_OBJS) $(BUILD_DIR)/test_ademamix.o
 $(BUILD_DIR)/test_muon: $(LIB_OBJS) $(BUILD_DIR)/test_muon.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_adafactor: $(LIB_OBJS) $(BUILD_DIR)/test_adafactor.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_sgd_nesterov: $(LIB_OBJS) $(BUILD_DIR)/test_sgd_nesterov.o
 	$(CXX) $^ -o $@
 
@@ -353,7 +356,7 @@ $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
 $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test_ademamix $(BUILD_DIR)/test_sgd_nesterov \
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
-$(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero
+$(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -419,6 +422,7 @@ run_tests: tests
 	@echo "=== Running Muon Tests ===" && ./$(BUILD_DIR)/test_muon
 	@echo "=== Running GMM Tests ===" && ./$(BUILD_DIR)/test_gmm
 	@echo "=== Running AdaLN-Zero Tests ===" && ./$(BUILD_DIR)/test_adaln_zero
+	@echo "=== Running Adafactor Tests ===" && ./$(BUILD_DIR)/test_adafactor
 
 clean:
 	rm -rf $(BUILD_DIR)
