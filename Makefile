@@ -181,6 +181,9 @@ $(BUILD_DIR)/test_yogi: $(LIB_OBJS) $(BUILD_DIR)/test_yogi.o
 $(BUILD_DIR)/test_radam: $(LIB_OBJS) $(BUILD_DIR)/test_radam.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_adan: $(LIB_OBJS) $(BUILD_DIR)/test_adan.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_lion: $(LIB_OBJS) $(BUILD_DIR)/test_lion.o
 	$(CXX) $^ -o $@
 
@@ -343,7 +346,7 @@ $(BUILD_DIR)/test_lookahead: $(LIB_OBJS) $(BUILD_DIR)/test_lookahead.o
 $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 	$(CXX) $^ -o $@
 
-tests: setup $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_neural_spline_flow $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_adabelief \
+tests: setup $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_neural_spline_flow $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_s4 \
 $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
@@ -366,7 +369,7 @@ $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_trans
 $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test_ademamix $(BUILD_DIR)/test_sgd_nesterov \
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
-$(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam
+$(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -436,6 +439,7 @@ run_tests: tests
 	@echo "=== Running Segmentation Losses Tests ===" && ./$(BUILD_DIR)/test_segmentation_losses
 	@echo "=== Running Yogi Tests ===" && ./$(BUILD_DIR)/test_yogi
 	@echo "=== Running RAdam Tests ===" && ./$(BUILD_DIR)/test_radam
+	@echo "=== Running Adan Tests ===" && ./$(BUILD_DIR)/test_adan
 
 clean:
 	rm -rf $(BUILD_DIR)
