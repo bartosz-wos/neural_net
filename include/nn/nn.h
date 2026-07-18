@@ -20,6 +20,7 @@
 #include "optimizers/adafactor.h"
 #include "optimizers/yogi.h"
 #include "optimizers/radam.h"
+#include "optimizers/adan.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
