@@ -5,6 +5,8 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+- **LARS Optimizer (Layer-wise Adaptive Rate Scaling)** — You, Gitman, and Ginsburg 2017 (https://arxiv.org/abs/1708.03888). Add the large-batch SGD optimizer used in ImageNet and self-supervised training: coupled weight decay, per-parameter trust ratio `η·||w||/||g+λw||`, momentum, configurable bias/norm exclusion, inherited-LR scheduler compatibility, and state/trust-ratio introspection. Plan: `docs/plans/2026-07-19_180456-lars-optimizer.md`.
+
 
 ## Done
 
