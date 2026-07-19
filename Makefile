@@ -187,6 +187,9 @@ $(BUILD_DIR)/test_adan: $(LIB_OBJS) $(BUILD_DIR)/test_adan.o
 $(BUILD_DIR)/test_mars: $(LIB_OBJS) $(BUILD_DIR)/test_mars.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_lars: $(LIB_OBJS) $(BUILD_DIR)/test_lars.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_lion: $(LIB_OBJS) $(BUILD_DIR)/test_lion.o
 	$(CXX) $^ -o $@
 
@@ -373,7 +376,7 @@ $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
 $(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead \
-$(BUILD_DIR)/test_mars
+$(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -445,6 +448,7 @@ run_tests: tests
 	@echo "=== Running RAdam Tests ===" && ./$(BUILD_DIR)/test_radam
 	@echo "=== Running Adan Tests ===" && ./$(BUILD_DIR)/test_adan
 	@echo "=== Running MARS Tests ===" && ./$(BUILD_DIR)/test_mars
+	@echo "=== Running LARS Tests ===" && ./$(BUILD_DIR)/test_lars
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -22,6 +22,7 @@
 #include "optimizers/radam.h"
 #include "optimizers/adan.h"
 #include "optimizers/mars.h"
+#include "optimizers/lars.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
