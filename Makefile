@@ -385,7 +385,25 @@ run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
 	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
 	@echo "=== Running Neural Spline Flow Tests ===" && ./$(BUILD_DIR)/test_neural_spline_flow
+	@echo "=== Running RealNVP Tests ===" && ./$(BUILD_DIR)/test_realnvp
+	@echo "=== Running DDPM Tests ===" && ./$(BUILD_DIR)/test_ddpm
+	@echo "=== Running AdaBelief Tests ===" && ./$(BUILD_DIR)/test_adabelief
 	@echo "=== Running Gradient Checks ===" && ./$(BUILD_DIR)/test_gradient_check
+	@echo "=== Running FlashAttention Tests ===" && ./$(BUILD_DIR)/test_flash_attention
+	@echo "=== Running RMSNorm Tests ===" && ./$(BUILD_DIR)/test_rmsnorm
+	@echo "=== Running Average Pooling Tests ===" && ./$(BUILD_DIR)/test_avgpool2d
+	@echo "=== Running DeepGCN Tests ===" && ./$(BUILD_DIR)/test_deep_gcn
+	@echo "=== Running DMon Tests ===" && ./$(BUILD_DIR)/test_dmon
+	@echo "=== Running EdgeConv Tests ===" && ./$(BUILD_DIR)/test_edgeconv
+	@echo "=== Running GAT Gradient Tests ===" && ./$(BUILD_DIR)/test_gat_gradient
+	@echo "=== Running GAT Verification Tests ===" && ./$(BUILD_DIR)/test_gat_verify
+	@echo "=== Running GIN Tests ===" && ./$(BUILD_DIR)/test_gin
+	@echo "=== Running gMLP Tests ===" && ./$(BUILD_DIR)/test_gmlp
+	@echo "=== Running LightGCN Tests ===" && ./$(BUILD_DIR)/test_lightgcn
+	@echo "=== Running LSH Attention Tests ===" && ./$(BUILD_DIR)/test_lsh_attention
+	@echo "=== Running Nyström Attention Tests ===" && ./$(BUILD_DIR)/test_nystrom_attention
+	@echo "=== Running PATCHY-SAN Tests ===" && ./$(BUILD_DIR)/test_patchy_san
+	@echo "=== Running PNA Tests ===" && ./$(BUILD_DIR)/test_pna
 	@echo "=== Running Linformer Tests ===" && ./$(BUILD_DIR)/test_linformer
 	@echo "=== Running Mamba Tests ===" && ./$(BUILD_DIR)/test_mamba
 	@echo "=== Running xLSTM Tests ===" && ./$(BUILD_DIR)/test_xlstm
