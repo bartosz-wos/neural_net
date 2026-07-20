@@ -187,7 +187,7 @@ Tensor DDPMResBlock::forward(const Tensor& x, const Tensor& time_emb) {
     for (size_t b = 0; b < batch; ++b) {
         for (size_t s = 0; s < spatial; ++s) {
             for (size_t c = 0; c < ch; ++c) {
-                last_h_[b][c * spatial + s] += t_proj[b][c];
+                last_h_[b][c * spatial + s] += t_proj[0][c];
             }
         }
     }

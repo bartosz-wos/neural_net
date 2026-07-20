@@ -154,6 +154,22 @@ void test_training_batch() {
     CHECK(eps_theta.rows == 4 && eps_theta.cols == feat_dim,
           "batch=4 training_forward shape correct");
     CHECK_FINITE(loss, "batch=4 loss is finite");
+
+    // Identical rows at one timestep must remain identical: the time embedding
+    // is shared across the batch and must be broadcast from its single row.
+    Tensor repeated(4, feat_dim);
+    for (size_t j = 0; j < feat_dim; ++j)
+        repeated[0][j] = 0.125 * static_cast<double>(j + 1);
+    for (size_t i = 1; i < repeated.rows; ++i)
+        for (size_t j = 0; j < repeated.cols; ++j)
+            repeated[i][j] = repeated[0][j];
+    Tensor repeated_out = model.unet().forward(repeated, 10);
+    bool rows_match = true;
+    for (size_t i = 1; i < repeated_out.rows && rows_match; ++i)
+        for (size_t j = 0; j < repeated_out.cols; ++j)
+            if (std::abs(repeated_out[i][j] - repeated_out[0][j]) > 1e-12)
+                rows_match = false;
+    CHECK(rows_match, "identical batch rows receive the same timestep embedding");
 }
 
 // -------------------------------------------------------------------
