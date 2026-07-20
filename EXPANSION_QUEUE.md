@@ -5,6 +5,7 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+- **NovoGrad optimizer (layer-wise adaptive second moments)** — Implement Ginsburg et al. 2020 NovoGrad with one scalar squared-gradient-norm EMA per parameter tensor, normalized-gradient momentum, paper-compatible weight decay, optional gradient averaging/AMSGrad, inherited-LR scheduler compatibility, state introspection, and deterministic closed-form/mutation tests. Plan: `docs/plans/2026-07-20-novograd-optimizer.md`.
 
 ## Done
 
