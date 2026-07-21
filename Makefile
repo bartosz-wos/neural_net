@@ -196,6 +196,9 @@ $(BUILD_DIR)/test_novograd: $(LIB_OBJS) $(BUILD_DIR)/test_novograd.o
 $(BUILD_DIR)/test_came: $(LIB_OBJS) $(BUILD_DIR)/test_came.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_schedule_free_adamw: $(LIB_OBJS) $(BUILD_DIR)/test_schedule_free_adamw.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_lion: $(LIB_OBJS) $(BUILD_DIR)/test_lion.o
 	$(CXX) $^ -o $@
 
@@ -382,7 +385,7 @@ $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
 $(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead \
-$(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD_DIR)/test_came
+$(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD_DIR)/test_came $(BUILD_DIR)/test_schedule_free_adamw
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -475,6 +478,7 @@ run_tests: tests
 	@echo "=== Running LARS Tests ===" && ./$(BUILD_DIR)/test_lars
 	@echo "=== Running NovoGrad Tests ===" && ./$(BUILD_DIR)/test_novograd
 	@echo "=== Running CAME Tests ===" && ./$(BUILD_DIR)/test_came
+	@echo "=== Running Schedule-Free AdamW Tests ===" && ./$(BUILD_DIR)/test_schedule_free_adamw
 
 clean:
 	rm -rf $(BUILD_DIR)
