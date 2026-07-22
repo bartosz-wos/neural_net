@@ -9,16 +9,16 @@
 //   for t = 1, 2, ...:
 //       inner.step(model)                       // fast weights move
 //       if t % k == 0:
-//           weights  = weights + alpha * (slow - weights)   // slow pull
-//           slow     = weights                              // snapshot
+//           slow     = slow + alpha * (weights - slow)      // interpolate
+//           weights  = slow                                 // synchronize
 //
 // Key properties tested:
 //   - First call initializes slow_weights to current weights
 //   - Inner optimizer drives the fast updates
-//   - On k-th step, weights are pulled toward slow snapshot by alpha
-//   - alpha=0 leaves weights unchanged (no slow pull)
-//   - alpha=1 resets weights exactly to slow snapshot
-//   - Slow snapshots are updated AFTER the interpolation
+//   - On k-th step, slow weights move toward fast weights by alpha
+//   - alpha=0 restores the unchanged slow snapshot
+//   - alpha=1 accepts the fast weights exactly
+//   - Fast weights are synchronized to slow AFTER interpolation
 //   - Inner step() is called EVERY Lookahead step (not gated by k)
 //   - get_k() / get_alpha() / inner() accessors return the configuration
 //
@@ -101,7 +101,7 @@ int main() {
         Tensor W_initial = dense->weights;  // snapshot
         double W_target = 1.0;
         auto* inner = new ConstantWOptimizer(W_target);
-        Lookahead la(inner, 2, 0.5);
+        Lookahead la(inner, 2, 0.25);
 
         // Step 1: initialize slow = W_initial, inner sets W = W_target
         la.step(model);
@@ -109,12 +109,12 @@ int main() {
               std::abs(dense->weights(0, 0) - W_target) < 1e-12);
 
         // Step 2: k-boundary (2 % 2 == 0)
-        //   inner sets W = W_target, then pull:
-        //   weights = weights + 0.5 * (slow - weights)
-        //           = W_target + 0.5 * (W_initial - W_target)
+        //   inner sets W = W_target, then Algorithm 1 synchronization:
+        //   slow = W_initial + 0.25 * (W_target - W_initial)
+        //   weights = slow
         la.step(model);
-        double expected = W_target + 0.5 * (W_initial(0, 0) - W_target);
-        check("Test 2b: step 2 (k-boundary) — weights pulled halfway to slow",
+        double expected = W_initial(0, 0) + 0.25 * (W_target - W_initial(0, 0));
+        check("Test 2b: asymmetric alpha uses slow + alpha*(fast-slow)",
               std::abs(dense->weights(0, 0) - expected) < 1e-12);
 
         // Step 3: inner overwrites W = W_target
@@ -124,16 +124,16 @@ int main() {
 
         // Step 4: k-boundary. slow was updated after step 2 to the
         // post-pull weights, then step 3 inner wrote W_target over it.
-        // After step 4 inner: W = W_target. Pull toward (post-step-2 weights).
-        double post_step2 = W_target + 0.5 * (W_initial(0, 0) - W_target);
-        double expected2 = W_target + 0.5 * (post_step2 - W_target);
+        // After step 4 inner: W = W_target. Slow advances by another 25%.
+        double post_step2 = expected;
+        double expected2 = post_step2 + 0.25 * (W_target - post_step2);
         la.step(model);
-        check("Test 2d: step 4 (k-boundary) — pull toward updated slow",
+        check("Test 2d: second synchronization advances the slow sequence",
               std::abs(dense->weights(0, 0) - expected2) < 1e-12);
     }
 
     // ---------------------------------------------------------------
-    // Test 3: alpha=0 → no pull on k-boundary, weights stay at inner output
+    // Test 3: alpha=0 → slow does not move, fast resets to slow
     // ---------------------------------------------------------------
     cout << endl << "Test 3: alpha=0 means no pull" << endl;
     {
@@ -143,36 +143,33 @@ int main() {
         model.add_layer(dense);
 
         auto* inner = new ConstantWOptimizer(7.0);
-        Lookahead la(inner, 1, 0.0);  // k=1, alpha=0 → pull never moves weights
+        Lookahead la(inner, 1, 0.0);
         la.step(model);
         la.step(model);
 
-        check("Test 3: alpha=0 — weights unchanged by pull",
-              std::abs(dense->weights(0, 0) - 7.0) < 1e-12);
+        check("Test 3: alpha=0 — fast weights restore unchanged slow",
+              std::abs(dense->weights(0, 0) - 0.0) < 1e-12);
     }
 
     // ---------------------------------------------------------------
-    // Test 4: alpha=1 → on k-boundary, weights reset to slow snapshot
+    // Test 4: alpha=1 → on k-boundary, slow accepts fast exactly
     // ---------------------------------------------------------------
     cout << endl << "Test 4: alpha=1 resets weights to slow" << endl;
     {
         Model model;
         Dense* dense = new Dense(2, 2);
-        double W_init = dense->weights(0, 0);  // initial value (Dense inits randomly)
         model.add_layer(dense);
 
         auto* inner = new ConstantWOptimizer(99.0);
         Lookahead la(inner, 1, 1.0);  // k=1, alpha=1
 
-        la.step(model);  // step 1: init slow = W_init, inner sets W = 99, then pull
-                          //   k=1 means EVERY step is a k-boundary, so the pull happens
-                          //   even on step 1: W = 99 + 1.0 * (W_init - 99) = W_init
-        check("Test 4a: step 1 — alpha=1 pull snaps W back to init",
-              std::abs(dense->weights(0, 0) - W_init) < 1e-12);
+        la.step(model);
+        check("Test 4a: alpha=1 accepts the fast point",
+              std::abs(dense->weights(0, 0) - 99.0) < 1e-12);
 
-        la.step(model);  // step 2: k=1 again — same cycle
-        check("Test 4b: alpha=1, k=1 — weights stay at slow (= init)",
-              std::abs(dense->weights(0, 0) - W_init) < 1e-12);
+        la.step(model);
+        check("Test 4b: alpha=1 updates slow to each fast point",
+              std::abs(dense->weights(0, 0) - 99.0) < 1e-12);
     }
 
     // ---------------------------------------------------------------
@@ -231,6 +228,44 @@ int main() {
         check("Test 6: 30 Lookahead steps — weights remain finite", finite);
         check("Test 6b: 30 Lookahead steps — weights moved (not equal to init)",
               std::abs(dense->weights(0, 0) - 0.0) > 1e-6);
+    }
+
+    cout << endl << "Test 7: invalid configuration is rejected" << endl;
+    {
+        bool null_threw = false;
+        try { Lookahead bad(nullptr, 5, 0.5); } catch (const invalid_argument&) { null_threw = true; }
+        check("Test 7a: null inner optimizer throws", null_threw);
+
+        bool zero_k_threw = false;
+        try { Lookahead bad(new CountingOptimizer(), 0, 0.5); } catch (const invalid_argument&) { zero_k_threw = true; }
+        check("Test 7b: k=0 throws", zero_k_threw);
+
+        bool negative_alpha_threw = false;
+        try { Lookahead bad(new CountingOptimizer(), 5, -0.1); } catch (const invalid_argument&) { negative_alpha_threw = true; }
+        check("Test 7c: alpha<0 throws", negative_alpha_threw);
+
+        bool large_alpha_threw = false;
+        try { Lookahead bad(new CountingOptimizer(), 5, 1.1); } catch (const invalid_argument&) { large_alpha_threw = true; }
+        check("Test 7d: alpha>1 throws", large_alpha_threw);
+    }
+
+    cout << endl << "Test 8: state diagnostics and step counter" << endl;
+    {
+        Model model;
+        Dense* dense = new Dense(1, 1);
+        dense->weights(0, 0) = 2.0;
+        model.add_layer(dense);
+        Lookahead la(new CountingOptimizer(), 3, 0.4);
+        check("Test 8a: state absent before first step", !la.has_state(dense));
+        check("Test 8b: step counter starts at zero", la.num_steps() == 0);
+        la.step(model);
+        check("Test 8c: state initialized on first step", la.has_state(dense));
+        check("Test 8d: step counter increments", la.num_steps() == 1);
+        Tensor slow = la.get_slow_weight(dense, 0);
+        check("Test 8e: slow state preserves pre-update weight",
+              slow.rows == 1 && slow.cols == 1 && std::abs(slow(0, 0) - 2.0) < 1e-12);
+        check("Test 8f: invalid state query returns empty",
+              la.get_slow_weight(dense, 99).rows == 0);
     }
 
     cout << endl << "=== Summary: " << passed << " passed, " << failed << " failed ===" << endl;
