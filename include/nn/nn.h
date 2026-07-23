@@ -26,6 +26,7 @@
 #include "optimizers/novograd.h"
 #include "optimizers/came.h"
 #include "optimizers/schedule_free_adamw.h"
+#include "optimizers/schedule_free_sgd.h"
 #include "optimizers/signum.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
