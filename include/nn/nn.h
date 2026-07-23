@@ -57,6 +57,7 @@
 #include "utils/segmentation_losses.h"
 #include "utils/metrics.h"
 #include "utils/model_ema.h"
+#include "utils/early_stopping.h"
 #include "utils/gmm.h"
 
 #include "layers/convolutions/conv_layer.h"
