@@ -145,6 +145,9 @@ $(BUILD_DIR)/test_model_ema: $(LIB_OBJS) $(BUILD_DIR)/test_model_ema.o
 $(BUILD_DIR)/test_early_stopping: $(LIB_OBJS) $(BUILD_DIR)/test_early_stopping.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_training_history: $(LIB_OBJS) $(BUILD_DIR)/test_training_history.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_dataloader: $(LIB_OBJS) $(BUILD_DIR)/test_dataloader.o
 	$(CXX) $^ -o $@
 
@@ -375,7 +378,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_dataloader \
+$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_dataloader \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -470,6 +473,7 @@ run_tests: tests
 	@echo "=== Running Metrics Tests ===" && ./$(BUILD_DIR)/test_metrics
 	@echo "=== Running Model EMA Tests ===" && ./$(BUILD_DIR)/test_model_ema
 	@echo "=== Running Early Stopping Tests ===" && ./$(BUILD_DIR)/test_early_stopping
+	@echo "=== Running Training History Tests ===" && ./$(BUILD_DIR)/test_training_history
 	@echo "=== Running DataLoader Tests ===" && ./$(BUILD_DIR)/test_dataloader
 	@echo "=== Running Activations Tests ===" && ./$(BUILD_DIR)/test_activations
 	@echo "=== Running Legacy Adaptive Optimizers Tests ===" && ./$(BUILD_DIR)/test_legacy_adaptive
