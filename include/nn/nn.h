@@ -29,6 +29,7 @@
 #include "optimizers/schedule_free_sgd.h"
 #include "optimizers/signum.h"
 #include "optimizers/adam_mini.h"
+#include "optimizers/dadaptation.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
