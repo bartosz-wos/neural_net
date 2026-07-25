@@ -20,6 +20,8 @@ tests/*.bak
 tests/test_*debug*.cpp
 tests/test_*trace*.cpp
 tests/test_*check*.cpp
+# Exception: model checkpoint is a shipped training utility, not an ad-hoc check.
+!tests/test_model_checkpoint.cpp
 tests/test_*chain*.cpp
 tests/test_*bugs*.cpp
 tests/test_*isolated*.cpp
