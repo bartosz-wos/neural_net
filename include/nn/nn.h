@@ -30,6 +30,7 @@
 #include "optimizers/signum.h"
 #include "optimizers/adam_mini.h"
 #include "optimizers/dadaptation.h"
+#include "optimizers/diffgrad.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
