@@ -63,6 +63,7 @@
 #include "utils/early_stopping.h"
 #include "utils/training_history.h"
 #include "utils/model_checkpoint.h"
+#include "utils/cross_validation.h"
 #include "utils/gmm.h"
 
 #include "layers/convolutions/conv_layer.h"
