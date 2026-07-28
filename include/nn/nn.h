@@ -31,6 +31,7 @@
 #include "optimizers/adam_mini.h"
 #include "optimizers/dadaptation.h"
 #include "optimizers/diffgrad.h"
+#include "optimizers/gradient_centralization.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
