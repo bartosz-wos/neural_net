@@ -376,6 +376,9 @@ $(BUILD_DIR)/test_adamp: $(LIB_OBJS) $(BUILD_DIR)/test_adamp.o
 $(BUILD_DIR)/test_lamb: $(LIB_OBJS) $(BUILD_DIR)/test_lamb.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_cautious: $(LIB_OBJS) $(BUILD_DIR)/test_cautious.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_gumbel_softmax: $(LIB_OBJS) $(BUILD_DIR)/test_gumbel_softmax.o
 	$(CXX) $^ -o $@
 
@@ -428,7 +431,7 @@ $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
 $(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead $(BUILD_DIR)/test_diffgrad \
 $(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD_DIR)/test_came $(BUILD_DIR)/test_schedule_free_adamw \
-$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb
+$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -536,6 +539,7 @@ run_tests: tests
 	@echo "=== Running Gradient Centralization Tests ===" && ./$(BUILD_DIR)/test_gradient_centralization
 	@echo "=== Running AdamP Tests ===" && ./$(BUILD_DIR)/test_adamp
 	@echo "=== Running LAMB Tests ===" && ./$(BUILD_DIR)/test_lamb
+	@echo "=== Running Cautious Tests ===" && ./$(BUILD_DIR)/test_cautious
 
 clean:
 	rm -rf $(BUILD_DIR)
