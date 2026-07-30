@@ -103,6 +103,18 @@ $(BUILD_DIR)/test_rope_v: $(LIB_OBJS) $(BUILD_DIR)/test_rope_v.o
 $(BUILD_DIR)/test_distribution_losses: $(LIB_OBJS) $(BUILD_DIR)/test_distribution_losses.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_label_smoothing: $(LIB_OBJS) $(BUILD_DIR)/test_label_smoothing.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_clip_grad_norm: $(LIB_OBJS) $(BUILD_DIR)/test_clip_grad_norm.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_mixup_cutmix: $(LIB_OBJS) $(BUILD_DIR)/test_mixup_cutmix.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_elastic_net: $(LIB_OBJS) $(BUILD_DIR)/test_elastic_net.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_segmentation_losses: $(LIB_OBJS) $(BUILD_DIR)/test_segmentation_losses.o
 	$(CXX) $^ -o $@
 
@@ -411,7 +423,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style \
+$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -513,6 +525,10 @@ run_tests: tests
 	@echo "=== Running DataLoader Tests ===" && ./$(BUILD_DIR)/test_dataloader
 	@echo "=== Running Cross-Validation Tests ===" && ./$(BUILD_DIR)/test_cross_validation
 	@echo "=== Running HistogramBoosting Tests ===" && ./$(BUILD_DIR)/test_lightgbm_style
+	@echo "=== Running Label Smoothing Tests ===" && ./$(BUILD_DIR)/test_label_smoothing
+	@echo "=== Running Clip Grad Norm Tests ===" && ./$(BUILD_DIR)/test_clip_grad_norm
+	@echo "=== Running Mixup/CutMix Tests ===" && ./$(BUILD_DIR)/test_mixup_cutmix
+	@echo "=== Running ElasticNet Tests ===" && ./$(BUILD_DIR)/test_elastic_net
 	@echo "=== Running Activations Tests ===" && ./$(BUILD_DIR)/test_activations
 	@echo "=== Running Legacy Adaptive Optimizers Tests ===" && ./$(BUILD_DIR)/test_legacy_adaptive
 	@echo "=== Running InstanceNorm Tests ===" && ./$(BUILD_DIR)/test_instance_norm

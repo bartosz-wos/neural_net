@@ -22,6 +22,7 @@ tests/test_*trace*.cpp
 tests/test_*check*.cpp
 # Exception: model checkpoint is a shipped training utility, not an ad-hoc check.
 !tests/test_model_checkpoint.cpp
+!tests/test_clip_grad_norm.cpp
 tests/test_*chain*.cpp
 tests/test_*bugs*.cpp
 tests/test_*isolated*.cpp
@@ -45,6 +46,7 @@ tests/test_*simple*.cpp
 tests/test_*single_*.cpp
 tests/test_*which_*.cpp
 tests/test_*grad_*.cpp
+!tests/test_clip_grad_norm.cpp
 tests/test_gin_adj_debug.cpp
 tests/test_gin_debug*.cpp
 .hermes/
