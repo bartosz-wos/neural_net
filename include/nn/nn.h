@@ -33,6 +33,7 @@
 #include "optimizers/diffgrad.h"
 #include "optimizers/adamp.h"
 #include "optimizers/gradient_centralization.h"
+#include "optimizers/grokfast.h"
 #include "optimizers/cautious.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
