@@ -37,6 +37,7 @@
 #include "optimizers/cautious.h"
 #include "optimizers/soap.h"
 #include "optimizers/shampoo.h"
+#include "optimizers/prodigy.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
