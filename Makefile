@@ -286,6 +286,9 @@ $(BUILD_DIR)/test_mlp_mixer: $(LIB_OBJS) $(BUILD_DIR)/test_mlp_mixer.o
 $(BUILD_DIR)/test_hyena: $(LIB_OBJS) $(BUILD_DIR)/test_hyena.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_conformer: $(LIB_OBJS) $(BUILD_DIR)/test_conformer.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_linformer: $(LIB_OBJS) $(BUILD_DIR)/test_linformer.o
 	$(CXX) $^ -o $@
 
@@ -452,7 +455,7 @@ $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/tes
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
 $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon \
-$(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_mlp_mixer $(BUILD_DIR)/test_hyena $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm \
+$(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_mlp_mixer $(BUILD_DIR)/test_hyena $(BUILD_DIR)/test_conformer $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm \
 $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm \
 $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local \
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
@@ -490,6 +493,7 @@ run_tests: tests
 	@echo "=== Running gMLP Tests ===" && ./$(BUILD_DIR)/test_gmlp
 	@echo "=== Running MLP-Mixer Tests ===" && ./$(BUILD_DIR)/test_mlp_mixer
 	@echo "=== Running Hyena Tests ===" && ./$(BUILD_DIR)/test_hyena
+	@echo "=== Running Conformer Tests ===" && ./$(BUILD_DIR)/test_conformer
 	@echo "=== Running LightGCN Tests ===" && ./$(BUILD_DIR)/test_lightgcn
 	@echo "=== Running LSH Attention Tests ===" && ./$(BUILD_DIR)/test_lsh_attention
 	@echo "=== Running Nyström Attention Tests ===" && ./$(BUILD_DIR)/test_nystrom_attention

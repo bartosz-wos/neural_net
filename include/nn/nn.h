@@ -162,6 +162,7 @@
 #include "layers/architectures/gmlp.h"
 #include "layers/architectures/mlp_mixer.h"
 #include "layers/architectures/hyena.h"
+#include "layers/architectures/conformer.h"
 #include "layers/architectures/lightgcn.h"
 #include "layers/architectures/deep_gcn.h"
 #include "layers/architectures/egnn.h"
