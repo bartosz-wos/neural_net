@@ -95,6 +95,7 @@
 #include "layers/recurrent/rwkv.h"
 #include "layers/recurrent/retnet.h"
 #include "layers/recurrent/mlstm.h"
+#include "layers/recurrent/h3.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"

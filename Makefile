@@ -310,6 +310,9 @@ $(BUILD_DIR)/test_retnet: $(LIB_OBJS) $(BUILD_DIR)/test_retnet.o
 $(BUILD_DIR)/test_mlstm: $(LIB_OBJS) $(BUILD_DIR)/test_mlstm.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_h3: $(LIB_OBJS) $(BUILD_DIR)/test_h3.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_performer: $(LIB_OBJS) $(BUILD_DIR)/test_performer.o
 	$(CXX) $^ -o $@
 
@@ -459,7 +462,7 @@ $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/tes
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
 $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon \
 $(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_mlp_mixer $(BUILD_DIR)/test_hyena $(BUILD_DIR)/test_conformer $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm \
-$(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm \
+$(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_h3 \
 $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local \
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
 $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier \
@@ -509,6 +512,7 @@ run_tests: tests
 	@echo "=== Running RWKV Tests ===" && ./$(BUILD_DIR)/test_rwkv
 	@echo "=== Running RetNet Tests ===" && ./$(BUILD_DIR)/test_retnet
 	@echo "=== Running mLSTM Tests ===" && ./$(BUILD_DIR)/test_mlstm
+	@echo "=== Running H3 Tests ===" && ./$(BUILD_DIR)/test_h3
 	@echo "=== Running Performer Tests ===" && ./$(BUILD_DIR)/test_performer
 	@echo "=== Running GQA Tests ===" && ./$(BUILD_DIR)/test_gqa
 	@echo "=== Running AFT Tests ===" && ./$(BUILD_DIR)/test_aft
