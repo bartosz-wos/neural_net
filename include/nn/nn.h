@@ -41,6 +41,7 @@
 #include "optimizers/stableadamw.h"
 #include "optimizers/adopt.h"
 #include "optimizers/swa.h"
+#include "optimizers/galore.h"
 #include "optimizers/scheduler.h"
 #include "optimizers/one_cycle_lr.h"
 #include "optimizers/lookahead.h"
