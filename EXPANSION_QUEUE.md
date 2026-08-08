@@ -3,6 +3,10 @@
 Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
+## Ideas
+
+- **Gated Linear Attention (GLA, Yang et al. 2023/2024)** — Linear attention with a learned per-head input-dependent forget gate α_t ∈ (0, 1): `S_t = α_t · S_{t-1} + outer(k_t, v_t)`, `o_t = S_t · q_t`. Complements existing DeltaNet (no decay, delta-rule update) and RetNet (fixed decay). Plan: `docs/plans/2026-08-08-gated-linear-attention.md`.
+
 ## Done
 
 - **DeltaNet (Yang et al. 2024, "Linear Attention with the Delta Rule")** - Implemented in `include/nn/layers/recurrent/deltanet.{h,cpp}`. The delta-rule recurrence replaces linear attention's outer-product update with a residual update: `S_t = S_{t-1} + alpha_t * outer(k_t, v_t - S_{t-1}*k_t)` where `alpha_t = 1/(1 + k_t*S_{t-1}*k_t)`. K-magnitude normalization (per-head beta/|k_t| scaling) keeps the recurrence numerically stable. Multi-head, single-step BPTT including the S_{t-1} carrier via the residual path and the alpha_t chain through both `S_{t-1}*k_t` AND `S_{t-1}^T*k_t` (S_{t-1} is NOT symmetric in general). **24/24 focused checks pass at machine precision** (rel_err 1e-8 to 1e-10) - forward shape, forward finite, state shape, state accumulation non-zero, input gradient (T=3 and T=10), W_Q/W_K/W_V/W_O/W_beta parameter gradients, training reduces loss, determinism, multi-head, longer sequence, zero_grad, constructor validation. Bug fixes during integration: (1) constructor init list fixed to avoid div-by-zero when n_heads=0; (2) grad_q_t used S_t, not gS_t (the gradient of S_t) - `g_q_t[h, i] = sum_j S_t[h, j, i] * g_o_t[h, j]`; (3) g_k_b used transposed S_{t-1} indices - `g_k_t[i] = -sum_j g_r[j] * S_{t-1}[j, i]` (NOT [i, j]); (4) g_k_c missing the S_{t-1}^T * k_t term - `g_k_c[i] = -alpha_t^2 * ((S_{t-1} + S_{t-1}^T) * k_t)[i] * g_alpha` (the `2*Sk[i]` formula only holds when S_{t-1} is symmetric); (5) gS_prev_new needed `gS_dot_k[i] = sum_l gS_t[l, i] * k_t[l]` (NOT [i, l] - the residual path indices were swapped). Plan: `docs/plans/2026-08-07-deltanet.md`.
