@@ -98,6 +98,7 @@
 #include "layers/recurrent/mlstm.h"
 #include "layers/recurrent/h3.h"
 #include "layers/recurrent/deltanet.h"
+#include "layers/recurrent/gla.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
