@@ -92,21 +92,21 @@ public:
     // Returns S_T for each head, stacked shape (n_heads, head_dim * head_dim).
     Tensor last_state() const;
 
+    // Per-head, per-token gate (post-sigmoid) from the most recent forward
+    // call. Shape (T, n_heads). Empty Tensor when forward has not been called.
+    Tensor last_gates() const;
+
     // Setters / accessors for inspectors
     size_t d_model() const { return d_model_; }
     size_t n_heads() const { return n_heads_; }
     size_t head_dim() const { return head_dim_; }
     size_t d_inner() const { return d_inner_; }
 
+    public:
     // Public Dense accessors (for testing)
     Dense W_Q_, W_K_, W_V_, W_O_, W_gate_;
 
 private:
-    size_t d_model_;
-    size_t n_heads_;
-    size_t head_dim_;
-    size_t d_inner_;
-
     // Cache for backward (all per-token, per-head)
     Tensor cache_x_;           // (T, d_model)
     Tensor cache_q_;           // (T, d_inner)
@@ -125,6 +125,11 @@ private:
     Tensor grad_k_;            // (T, d_inner)
     Tensor grad_v_;            // (T, d_inner)
     Tensor grad_x_;            // (T, d_model) — returned by backward()
+
+    size_t d_model_;
+    size_t n_heads_;
+    size_t head_dim_;
+    size_t d_inner_;
 };
 
 #endif // GLA_H

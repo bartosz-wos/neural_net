@@ -19,21 +19,28 @@ static Tensor gla_rand_init(size_t rows, size_t cols) {
 }
 
 GatedLinearAttention::GatedLinearAttention(size_t d_model, size_t n_heads, size_t head_dim)
-    : W_Q_(d_model, 0), W_K_(d_model, 0), W_V_(d_model, 0),
-      W_O_(0, 0), W_gate_(d_model, 0),
+    : W_Q_(0, 0), W_K_(0, 0), W_V_(0, 0),
+      W_O_(0, 0), W_gate_(0, 0),
       d_model_(d_model),
       n_heads_(n_heads),
-      head_dim_(head_dim == 0 ? d_model / n_heads : head_dim),
-      d_inner_(n_heads * (head_dim == 0 ? d_model / n_heads : head_dim))
+      head_dim_(head_dim),
+      d_inner_(0)
 {
     if (d_model_ == 0 || n_heads_ == 0) {
         throw std::invalid_argument("GatedLinearAttention: d_model and n_heads must be > 0");
     }
-    if (head_dim_ == 0 || d_model_ % head_dim_ != 0) {
-        throw std::invalid_argument("GatedLinearAttention: d_model must divide evenly by head_dim");
+    if (d_model_ % n_heads_ != 0) {
+        throw std::invalid_argument("GatedLinearAttention: d_model must divide evenly by n_heads");
     }
-    // Standard convention: d_inner = d_model (so head_dim = d_model / n_heads).
-    d_inner_ = d_model;
+    // Resolve head_dim only after validating n_heads, and keep the explicit
+    // form consistent with the default d_model / n_heads partition.
+    const size_t expected_head_dim = d_model_ / n_heads_;
+    if (head_dim_ == 0) {
+        head_dim_ = expected_head_dim;
+    } else if (head_dim_ != expected_head_dim) {
+        throw std::invalid_argument("GatedLinearAttention: head_dim must equal d_model/n_heads");
+    }
+    d_inner_ = d_model_;
 
     // Build Dense projections (x · W^T + b convention)
     W_Q_   = Dense(d_model, d_inner_);
@@ -131,6 +138,10 @@ Tensor GatedLinearAttention::forward(const Tensor& input) {
 Tensor GatedLinearAttention::last_state() const {
     if (cache_S_.empty()) return Tensor(0, 0);
     return cache_S_.back();  // (n_heads, head_dim * head_dim)
+}
+
+Tensor GatedLinearAttention::last_gates() const {
+    return cache_gate_;  // (T, n_heads); empty Tensor when forward has not been called
 }
 
 // Backward pass (Task 4)
