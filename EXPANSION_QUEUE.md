@@ -5,7 +5,11 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- **Gated Linear Attention (GLA, Yang et al. 2023/2024)** — Linear attention with a learned per-head input-dependent forget gate α_t ∈ (0, 1): `S_t = α_t · S_{t-1} + outer(k_t, v_t)`, `o_t = S_t · q_t`. Complements existing DeltaNet (no decay, delta-rule update) and RetNet (fixed decay). Plan: `docs/plans/2026-08-08-gated-linear-attention.md`.
+- *(empty — pop the next idea from the prior `Done` history if a new direction is needed)*
+
+## Done
+
+- **Gated Linear Attention (GLA, Yang et al. 2023/2024)** — Implemented in `include/nn/layers/recurrent/gla.{h,cpp}`. Linear attention with a learned per-head input-dependent forget gate α_t ∈ (0, 1): `S_t = α_t · S_{t-1} + outer(k_t, v_t)`, `o_t = S_t · q_t`. Complements the existing DeltaNet (no decay, delta-rule update) and RetNet (fixed decay). Plan: `docs/plans/2026-08-08-gated-linear-attention.md`. **31/31 focused checks pass at machine precision** (valgrind clean) — constructor validation (3 cases + explicit-`head_dim` mismatch), forward shape, forward finite, state shape (n_heads × head_dim²), state accumulation non-zero, gate output in (0, 1) with shape (T, n_heads), input gradient (rel_err 6.2e-9), W_Q/W_K/W_V/W_O parameter gradients (rel_err 2–3e-9), W_gate gradient (rel_err 6.1e-8), training reduces loss (0.166 → 0.097 over 50 SGD steps), determinism (bit-exact), multi-head n_heads=3, zero_grad clears, parameters() count = 10 (5 Dense × weights+bias), name() = "GatedLinearAttention", get_weights/get_gradients shape contract, update_weights moves W_O. Bug fixes during integration: (1) constructor now validates `d_model % n_heads == 0` BEFORE resolving `head_dim` and rejects explicit `head_dim` arguments inconsistent with `d_model / n_heads`; (2) cache fields moved back to private, replaced with a narrow `last_gates()` accessor so tests don't depend on internal state. Mutation probe (drop the `α(1−α)` sigmoid derivative on the gate grad) breaks W_gate and W_K gradient checks at rel_err > 1e-4 (29/31), confirming the gate chain is non-vacuous. Added `#include "layers/recurrent/gla.h"` to `include/nn/nn.h`, build rule + tests/run_tests registration, and `build/test_gla` to the aggregate `make tests` target. Commit: `5b9b933`.
 
 ## Done
 
