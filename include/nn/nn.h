@@ -205,6 +205,7 @@
 #include "layers/generative/coupling_layer.h"
 #include "layers/generative/neural_spline_flow.h"
 #include "layers/generative/pixelcnn.h"
+#include "layers/generative/flow_matching.h"
 
 // Layers — graph
 #include "layers/architectures/gnn.h"
