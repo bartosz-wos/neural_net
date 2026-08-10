@@ -5,7 +5,7 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-- *(empty — pop the next idea from the prior `Done` history if a new direction is needed)*
+- **DiT (Diffusion Transformer, Peebles & Xie 2023)** — Implement in `include/nn/layers/generative/dit.{h,cpp}` for sequence data (1-D analogue of the image-DiT patch embed). adaLN-Zero modulation, multi-head attention with per-token conditioning, full DDPM training loss and sampler. Ties together the existing `TransformerBlock`, `LayerNorm`, and `NoiseScheduler` infrastructure. Plan: `docs/plans/2026-08-10-dit.md`.
 
 ## Done
 
