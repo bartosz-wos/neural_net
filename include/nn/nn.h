@@ -208,6 +208,7 @@
 #include "layers/generative/pixelcnn.h"
 #include "layers/generative/flow_matching.h"
 #include "layers/generative/dit.h"
+#include "layers/architectures/timesnet.h"
 
 // Layers — graph
 #include "layers/architectures/gnn.h"
