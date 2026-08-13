@@ -211,6 +211,9 @@
 #include "layers/generative/dit.h"
 #include "layers/architectures/timesnet.h"
 
+// Layers — neural ODE / ODE-RNN
+#include "layers/architectures/neural_ode.h"
+
 // Layers — graph
 #include "layers/architectures/gnn.h"
 #include "layers/architectures/gin.h"
