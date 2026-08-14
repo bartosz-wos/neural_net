@@ -103,6 +103,7 @@
 #include "layers/recurrent/hgrn.h"
 #include "layers/recurrent/ltc.h"
 #include "layers/recurrent/rwkv7.h"
+#include "layers/recurrent/rwkv7_model.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"

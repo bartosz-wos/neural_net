@@ -37,6 +37,7 @@
 #include "nn/core/tensor.h"
 #include "nn/core/layer.h"
 #include "nn/layers/recurrent/rwkv7.h"
+#include "nn/layers/recurrent/rwkv7_model.h"
 #include "nn/utils/gradient_check.h"
 
 #include <cassert>
@@ -480,7 +481,7 @@ void test_all_param_grad_via_fd() {
     check_param("mu_a",        &cell.mu_a,         cell.grad_mu_a_);
 }
 
-// Test 12: longer sequence T=6 W_r grad check
+// Test 13: longer sequence T=6 W_r grad check
 void test_longer_sequence_W_r_grad() {
     RWKV7TimeMix cell(4, 2);
     init_cell_weights(cell, 0.2);
@@ -519,6 +520,167 @@ void test_longer_sequence_W_r_grad() {
     EXPECT(max_rel < 1e-2, "W_r.weights FD on T=6");
 }
 
+// Test 14: RWKV7Model forward shape + finiteness
+void test_model_forward_shape() {
+    RWKV7Model model(/*input_dim=*/3, /*d=*/4, /*output_dim=*/2,
+                     /*num_heads=*/2, /*num_layers=*/2);
+    EXPECT(model.input_dim() == 3, "input_dim");
+    EXPECT(model.d() == 4, "d");
+    EXPECT(model.output_dim() == 2, "output_dim");
+    EXPECT(model.num_layers() == 2, "num_layers");
+    EXPECT(model.num_heads() == 2, "num_heads");
+    EXPECT(std::string(model.name()) == "RWKV7Model", "name");
+
+    Tensor x(5, 3);  // T=5, input_dim=3
+    for (size_t i = 0; i < 5; ++i)
+        for (size_t j = 0; j < 3; ++j) x[i][j] = 0.1 * static_cast<double>(i + j + 1);
+    Tensor y = model.forward(x);
+    EXPECT(y.rows == 1, "model output rows == 1 (last-step classifier)");
+    EXPECT(y.cols == 2, "model output cols == output_dim");
+    bool finite = true;
+    for (double v : y.data) if (!std::isfinite(v)) { finite = false; break; }
+    EXPECT(finite, "model output finite");
+}
+
+// Test 15: model parameters/gradients shape contract
+void test_model_params_grads() {
+    RWKV7Model model(3, 4, 2, 2, 2);
+    // 2 dense (embed, classifier) × (weights + bias) = 4 + 2 × 17 (cell params) = 38
+    EXPECT(model.parameters().size() == 38, "38 model parameter tensors");
+    EXPECT(model.gradients().size() == 38, "38 model gradient tensors");
+
+    Tensor x(3, 3);
+    for (size_t i = 0; i < 3; ++i)
+        for (size_t j = 0; j < 3; ++j) x[i][j] = 0.1 * static_cast<double>(i + j + 1);
+    Tensor y = model.forward(x);
+    Tensor grad(1, 2);
+    grad[0][0] = 0.5; grad[0][1] = -0.3;
+    Tensor gx = model.backward(grad, 0.0);
+
+    // Verify some gradients are nonzero
+    bool any_nonzero = false;
+    for (double v : model.embed.grad_weights.data)
+        if (std::fabs(v) > 1e-12) any_nonzero = true;
+    EXPECT(any_nonzero, "embed grad_weights nonzero");
+
+    for (auto& c : model.cells) {
+        bool c_nz = false;
+        for (double v : c->W_r.grad_weights.data)
+            if (std::fabs(v) > 1e-12) c_nz = true;
+        EXPECT(c_nz, "cell.W_r grad_weights nonzero");
+    }
+
+    bool cls_nz = false;
+    for (double v : model.classifier.grad_weights.data)
+        if (std::fabs(v) > 1e-12) cls_nz = true;
+    EXPECT(cls_nz, "classifier grad_weights nonzero");
+
+    // gx shape and finite
+    EXPECT(gx.rows == 3 && gx.cols == 3, "grad_input shape");
+    bool gx_finite = true;
+    for (double v : gx.data) if (!std::isfinite(v)) { gx_finite = false; break; }
+    EXPECT(gx_finite, "grad_input finite");
+}
+
+// Test 16: model training reduces loss
+void test_model_training_reduces_loss() {
+    RWKV7Model model(3, 4, 1, /*num_heads=*/2, /*num_layers=*/2);
+    Tensor x(5, 3);
+    for (size_t i = 0; i < 5; ++i)
+        for (size_t j = 0; j < 3; ++j) x[i][j] = 0.15 * static_cast<double>(i + j + 1);
+    const double target = 0.5;
+    Tensor y0 = model.forward(x);
+    double L0 = std::pow(y0[0][0] - target, 2);
+    const double lr = 0.03;
+    for (size_t step = 0; step < 80; ++step) {
+        Tensor y = model.forward(x);
+        Tensor g(1, 1);
+        g[0][0] = 2.0 * (y[0][0] - target);
+        model.zero_grad();
+        model.backward(g, 0.0);
+        model.update_weights(lr);
+    }
+    Tensor y1 = model.forward(x);
+    double L1 = std::pow(y1[0][0] - target, 2);
+    std::printf("    model training: L0=%.4f → L1=%.4f (%.1f%% reduction)\n",
+                L0, L1, 100.0 * (L0 - L1) / std::max(L0, 1e-12));
+    EXPECT(L1 < L0, "model training reduces loss");
+}
+
+// Test 17: model parameter gradient check via FD (one big test for classifier)
+void test_model_classifier_grad() {
+    RWKV7Model model(3, 4, 2, 2, 1);  // 1 layer for tractable FD
+    Tensor x(3, 3);
+    for (size_t i = 0; i < 3; ++i)
+        for (size_t j = 0; j < 3; ++j) x[i][j] = 0.2 * static_cast<double>(i + j + 1);
+    Tensor y = model.forward(x);
+    Tensor grad(1, 2);
+    grad[0][0] = 0.5; grad[0][1] = -0.3;
+    model.zero_grad();
+    Tensor gx_ana = model.backward(grad, 0.0);
+
+    auto loss_fn = [&](const Tensor& y_pred) {
+        return grad[0][0] * y_pred[0][0] + grad[0][1] * y_pred[0][1];
+    };
+    auto fwd_fn = [&]() { return model.forward(x); };
+
+    // Check classifier.weights via FD
+    const double eps = 1e-5;
+    Tensor saved = model.classifier.weights.clone();
+    double max_rel = 0.0;
+    for (size_t i = 0; i < model.classifier.weights.rows; ++i) {
+        for (size_t j = 0; j < model.classifier.weights.cols; ++j) {
+            double orig = model.classifier.weights[i][j];
+            model.classifier.weights[i][j] = orig + eps; Tensor yp = fwd_fn(); double lp = loss_fn(yp);
+            model.classifier.weights[i][j] = orig - eps; Tensor ym = fwd_fn(); double lm = loss_fn(ym);
+            model.classifier.weights[i][j] = orig;
+            double fd = (lp - lm) / (2.0 * eps);
+            double ana = model.classifier.grad_weights[i][j];
+            double s = std::max({std::fabs(fd), std::fabs(ana), 1e-12});
+            max_rel = std::max(max_rel, std::fabs(fd - ana) / s);
+        }
+    }
+    model.classifier.weights = saved;
+    std::printf("    model classifier.weights grad: max rel_err = %.3e\n", max_rel);
+    EXPECT(max_rel < 1e-3, "model classifier.weights FD");
+
+    // Check classifier.bias via FD
+    Tensor saved_bias = model.classifier.bias.clone();
+    double max_rel_b = 0.0;
+    for (size_t j = 0; j < model.classifier.bias.cols; ++j) {
+        double orig = model.classifier.bias[0][j];
+        model.classifier.bias[0][j] = orig + eps; Tensor yp = fwd_fn(); double lp = loss_fn(yp);
+        model.classifier.bias[0][j] = orig - eps; Tensor ym = fwd_fn(); double lm = loss_fn(ym);
+        model.classifier.bias[0][j] = orig;
+        double fd = (lp - lm) / (2.0 * eps);
+        double ana = model.classifier.grad_bias[0][j];
+        double s = std::max({std::fabs(fd), std::fabs(ana), 1e-12});
+        max_rel_b = std::max(max_rel_b, std::fabs(fd - ana) / s);
+    }
+    model.classifier.bias = saved_bias;
+    std::printf("    model classifier.bias grad: max rel_err = %.3e\n", max_rel_b);
+    EXPECT(max_rel_b < 1e-3, "model classifier.bias FD");
+
+    // Check embed.weights via FD
+    Tensor saved_embed = model.embed.weights.clone();
+    double max_rel_e = 0.0;
+    for (size_t i = 0; i < model.embed.weights.rows; ++i) {
+        for (size_t j = 0; j < model.embed.weights.cols; ++j) {
+            double orig = model.embed.weights[i][j];
+            model.embed.weights[i][j] = orig + eps; Tensor yp = fwd_fn(); double lp = loss_fn(yp);
+            model.embed.weights[i][j] = orig - eps; Tensor ym = fwd_fn(); double lm = loss_fn(ym);
+            model.embed.weights[i][j] = orig;
+            double fd = (lp - lm) / (2.0 * eps);
+            double ana = model.embed.grad_weights[i][j];
+            double s = std::max({std::fabs(fd), std::fabs(ana), 1e-12});
+            max_rel_e = std::max(max_rel_e, std::fabs(fd - ana) / s);
+        }
+    }
+    model.embed.weights = saved_embed;
+    std::printf("    model embed.weights grad: max rel_err = %.3e\n", max_rel_e);
+    EXPECT(max_rel_e < 1e-3, "model embed.weights FD");
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -540,6 +702,10 @@ int main() {
     test_input_grad_via_fd();
     test_all_param_grad_via_fd();
     test_longer_sequence_W_r_grad();
+    test_model_forward_shape();
+    test_model_params_grads();
+    test_model_training_reduces_loss();
+    test_model_classifier_grad();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", g_tests_passed, g_tests_failed);
     return g_tests_failed == 0 ? 0 : 1;
