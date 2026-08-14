@@ -100,6 +100,7 @@
 #include "layers/recurrent/deltanet.h"
 #include "layers/recurrent/gla.h"
 #include "layers/recurrent/hawk.h"
+#include "layers/recurrent/hgrn.h"
 #include "layers/recurrent/ltc.h"
 
 // Layers — dense / embeddings
