@@ -340,6 +340,9 @@ $(BUILD_DIR)/test_hawk: $(LIB_OBJS) $(BUILD_DIR)/test_hawk.o
 $(BUILD_DIR)/test_hgrn: $(LIB_OBJS) $(BUILD_DIR)/test_hgrn.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_rwkv7: $(LIB_OBJS) $(BUILD_DIR)/test_rwkv7.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_performer: $(LIB_OBJS) $(BUILD_DIR)/test_performer.o
 	$(CXX) $^ -o $@
 
@@ -510,7 +513,7 @@ $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
 $(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead $(BUILD_DIR)/test_diffgrad \
 $(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD_DIR)/test_came $(BUILD_DIR)/test_schedule_free_adamw \
-$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious $(BUILD_DIR)/test_grokfast $(BUILD_DIR)/test_soap $(BUILD_DIR)/test_shampoo $(BUILD_DIR)/test_prodigy $(BUILD_DIR)/test_stableadamw $(BUILD_DIR)/test_adopt $(BUILD_DIR)/test_swa $(BUILD_DIR)/test_galore $(BUILD_DIR)/test_ltc $(BUILD_DIR)/test_neural_ode $(BUILD_DIR)/test_hgrn
+$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious $(BUILD_DIR)/test_grokfast $(BUILD_DIR)/test_soap $(BUILD_DIR)/test_shampoo $(BUILD_DIR)/test_prodigy $(BUILD_DIR)/test_stableadamw $(BUILD_DIR)/test_adopt $(BUILD_DIR)/test_swa $(BUILD_DIR)/test_galore $(BUILD_DIR)/test_ltc $(BUILD_DIR)/test_neural_ode $(BUILD_DIR)/test_hgrn $(BUILD_DIR)/test_rwkv7
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -644,6 +647,7 @@ run_tests: tests
 	@echo "=== Running LTC Tests ===" && ./$(BUILD_DIR)/test_ltc
 	@echo "=== Running Neural ODE Tests ===" && ./$(BUILD_DIR)/test_neural_ode
 	@echo "=== Running HGRN Tests ===" && ./$(BUILD_DIR)/test_hgrn
+	@echo "=== Running RWKV-7 Tests ===" && ./$(BUILD_DIR)/test_rwkv7
 
 clean:
 	rm -rf $(BUILD_DIR)

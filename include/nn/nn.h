@@ -102,6 +102,7 @@
 #include "layers/recurrent/hawk.h"
 #include "layers/recurrent/hgrn.h"
 #include "layers/recurrent/ltc.h"
+#include "layers/recurrent/rwkv7.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
