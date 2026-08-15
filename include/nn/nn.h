@@ -99,6 +99,7 @@
 #include "layers/recurrent/mlstm.h"
 #include "layers/recurrent/h3.h"
 #include "layers/recurrent/deltanet.h"
+#include "layers/recurrent/gated_deltanet.h"
 #include "layers/recurrent/gla.h"
 #include "layers/recurrent/hawk.h"
 #include "layers/recurrent/hgrn.h"
