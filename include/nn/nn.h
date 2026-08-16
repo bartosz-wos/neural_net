@@ -94,6 +94,7 @@
 #include "layers/recurrent/mamba.h"
 #include "layers/recurrent/xlstm.h"
 #include "layers/recurrent/mamba2.h"
+#include "layers/recurrent/mamba3.h"
 #include "layers/recurrent/rwkv.h"
 #include "layers/recurrent/retnet.h"
 #include "layers/recurrent/mlstm.h"
