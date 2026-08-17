@@ -177,6 +177,7 @@
 #include "layers/architectures/hyena.h"
 #include "layers/architectures/jamba.h"
 #include "layers/architectures/griffin.h"
+#include "layers/architectures/xlstm_block.h"
 #include "layers/architectures/conformer.h"
 #include "layers/architectures/lightgcn.h"
 #include "layers/architectures/deep_gcn.h"
