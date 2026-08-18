@@ -31,6 +31,7 @@ tests/test_*eps*.cpp
 tests/test_*flow*.cpp
 !tests/test_neural_spline_flow.cpp
 !tests/test_flow_matching.cpp
+!tests/test_deepseek_moe.cpp
 tests/test_*ref*.cpp
 tests/test_*seed*.cpp
 tests/test_*alignment*.cpp
