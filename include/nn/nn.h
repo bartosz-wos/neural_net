@@ -159,6 +159,7 @@
 #include "layers/architectures/densenet.h"
 #include "layers/architectures/mobilenet_v2.h"
 #include "layers/architectures/memory_network.h"
+#include "layers/architectures/mega.h"
 #include "layers/architectures/mixture_of_experts.h"
 #include "layers/architectures/multi_output_model.h"
 #include "layers/architectures/sparse_moe.h"
