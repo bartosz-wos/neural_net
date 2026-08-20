@@ -109,6 +109,7 @@
 #include "layers/recurrent/ltc.h"
 #include "layers/recurrent/rwkv7.h"
 #include "layers/recurrent/rwkv7_model.h"
+#include "layers/recurrent/linoss.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
