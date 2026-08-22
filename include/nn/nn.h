@@ -145,6 +145,7 @@
 #include "layers/attention/gqa.h"
 #include "layers/attention/aft.h"
 #include "layers/attention/agent_attention.h"
+#include "layers/attention/diff_transformer.h"
 #include "layers/attention/lsh_attention.h"
 #include "layers/attention/conv_attention.h"
 #include "layers/attention/conv_bert.h"
