@@ -157,6 +157,7 @@
 #include "layers/attention/mla.h"
 #include "layers/attention/bigbird.h"
 #include "layers/attention/layer_output_tracker.h"
+#include "layers/attention/sliding_window.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
