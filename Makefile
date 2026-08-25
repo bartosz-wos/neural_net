@@ -520,6 +520,9 @@ $(BUILD_DIR)/test_nsa: $(LIB_OBJS) $(BUILD_DIR)/test_nsa.o
 $(BUILD_DIR)/test_shla: $(LIB_OBJS) $(BUILD_DIR)/test_shla.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_block_sparse_flash: $(LIB_OBJS) $(BUILD_DIR)/test_block_sparse_flash.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_gumbel_softmax: $(LIB_OBJS) $(BUILD_DIR)/test_gumbel_softmax.o
 	$(CXX) $^ -o $@
 
