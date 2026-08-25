@@ -204,6 +204,100 @@ int main() {
         if (sub_pass == sub_total) { ++passed; cout << "ALL CONSTRUCTOR VALIDATION PASSED\n"; }
     }
 
+    cout << "\n--- Test 2: Forward shape with dense mask ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 4, H = 2;
+        Tensor input(n, d);
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        BlockSparseFlashAttention attn(d, H, 0, 2, 2);
+        size_t n_q_blocks = (n + 1) / 2;
+        size_t n_k_blocks = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_dense_mask(n_q_blocks, n_k_blocks);
+        Tensor output = attn.forward_with_mask(input, mask);
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        for (double v : output.data) if (!std::isfinite(v)) { finite = false; break; }
+        cout << "  output shape " << output.rows << "x" << output.cols
+             << "  finite=" << (finite ? "yes" : "no") << "\n";
+        if (shape_ok && finite) { cout << "[PASS] dense-mask forward shape\n"; ++passed; }
+        else { cout << "[FAIL] dense-mask forward shape\n"; }
+    }
+
+    cout << "\n--- Test 3: Forward shape with causal mask ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 4, H = 2;
+        Tensor input(n, d);
+        std::mt19937 rng(8);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        BlockSparseFlashAttention attn(d, H, 0, 2, 2);
+        size_t n_q_blocks = (n + 1) / 2;
+        size_t n_k_blocks = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_causal_mask(n_q_blocks, n_k_blocks);
+        cout << "  causal mask:\n";
+        for (size_t i = 0; i < mask.rows; ++i) {
+            cout << "    ";
+            for (size_t j = 0; j < mask.cols; ++j) cout << (mask(i, j) > 0.5 ? "1 " : "0 ");
+            cout << "\n";
+        }
+        Tensor output = attn.forward_with_mask(input, mask);
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        for (double v : output.data) if (!std::isfinite(v)) { finite = false; break; }
+        cout << "  output shape " << output.rows << "x" << output.cols
+             << "  finite=" << (finite ? "yes" : "no") << "\n";
+        if (shape_ok && finite) { cout << "[PASS] causal-mask forward shape\n"; ++passed; }
+        else { cout << "[FAIL] causal-mask forward shape\n"; }
+    }
+
+    cout << "\n--- Test 4: Forward equivalence with FlashAttentionV2 in dense case ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 4, H = 1;
+        // Use seed-stable random init
+        Tensor input(n, d);
+        std::mt19937 rng(9);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        Tensor target(n, d);
+        for (size_t i = 0; i < target.data.size(); ++i) target.data[i] = dist(rng) * 0.2;
+
+        // Build BSFA with manual weights (copy from FA-2)
+        FlashAttentionV2Layer fa2(d, H, 2, 2, /*causal=*/false);
+        BlockSparseFlashAttention bsfa(d, H, 0, 2, 2);
+        bsfa.W_q = fa2.W_q; bsfa.W_k = fa2.W_k; bsfa.W_v = fa2.W_v; bsfa.W_o = fa2.W_o;
+
+        // Dense mask
+        size_t n_q = (n + 1) / 2;
+        size_t n_k = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_dense_mask(n_q, n_k);
+        Tensor out_bsfa = bsfa.forward_with_mask(input, mask);
+        // FA-2 takes (d_model, seq_len) — transpose
+        Tensor input_T(d, n);
+        Tensor out_T(d, n);
+        for (size_t i = 0; i < d; ++i)
+            for (size_t j = 0; j < n; ++j) input_T(i, j) = input(j, i);
+        Tensor out_fa2 = fa2.forward(input_T);
+        for (size_t i = 0; i < d; ++i)
+            for (size_t j = 0; j < n; ++j) out_T(i, j) = out_fa2(i, j);
+
+        // Compare (transpose FA-2 output)
+        double max_diff = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < d; ++j) {
+                double diff = fabs(out_bsfa(i, j) - out_T(i, j));
+                if (diff > max_diff) max_diff = diff;
+            }
+        }
+        cout << "  max diff BSFA vs FA-2 (dense, same weights): " << max_diff << "\n";
+        if (max_diff < 1e-3) { cout << "[PASS] dense equivalence with FA-2\n"; ++passed; }
+        else { cout << "[FAIL] dense equivalence — max_diff too high\n"; }
+    }
+
     cout << "\n=== Summary: " << passed << "/" << total << " passed ===\n";
     return (passed == total) ? 0 : 1;
 }
