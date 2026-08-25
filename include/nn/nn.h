@@ -159,6 +159,7 @@
 #include "layers/attention/layer_output_tracker.h"
 #include "layers/attention/sliding_window.h"
 #include "layers/attention/nsa.h"
+#include "layers/attention/shla.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
