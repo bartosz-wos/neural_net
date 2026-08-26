@@ -161,6 +161,7 @@
 #include "layers/attention/nsa.h"
 #include "layers/attention/shla.h"
 #include "layers/attention/block_sparse_flash.h"
+#include "layers/attention/rwkv7_parallel.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
