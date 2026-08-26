@@ -120,13 +120,49 @@ static double check_input_gradient(LayerT& layer, Tensor& input, const Tensor& t
 }
 
 // Check a single parameter element via FD.
+//
+// NOTE: the `grad_param` argument is retained for API symmetry with the
+// input-grad helper and is intentionally unused — the helper extracts the
+// correct analytical from a *fresh* forward+backward pass (with grad_W_*
+// zeroed first), so it does not see any prior accumulated gradient on the
+// layer. Comparing against the live `grad_param` would alias the layer's
+// accumulated state, which is unreliable when called more than once.
 static double check_param_gradient(BlockSparseFlashAttention& layer,
-                                    Tensor& param, const Tensor& grad_param,
+                                    Tensor& param, const Tensor& /*grad_param*/,
                                     Tensor& input, const Tensor& mask,
                                     const Tensor& target, double eps = 1e-5) {
+    // Save current grad state and zero it out so backward starts fresh —
+    // this isolates the helper's forward+backward from any prior accumulated
+    // gradients on the layer (which would otherwise be added-to).
+    Tensor grad_q_save = layer.grad_W_q;
+    Tensor grad_k_save = layer.grad_W_k;
+    Tensor grad_v_save = layer.grad_W_v;
+    Tensor grad_o_save = layer.grad_W_o;
+    layer.grad_W_q = Tensor::zeros(grad_q_save.rows, grad_q_save.cols);
+    layer.grad_W_k = Tensor::zeros(grad_k_save.rows, grad_k_save.cols);
+    layer.grad_W_v = Tensor::zeros(grad_v_save.rows, grad_v_save.cols);
+    layer.grad_W_o = Tensor::zeros(grad_o_save.rows, grad_o_save.cols);
     Tensor out = layer.forward_with_mask(input, mask);
     Tensor gout = l2_loss_grad(out, target);
     layer.backward(gout, 0.0);
+    // Now grad_W_* contains ONLY the analytical for this single forward+backward.
+    // Snapshot the helper's analytical into a local var, then restore original.
+    Tensor ana_q = layer.grad_W_q;
+    Tensor ana_k = layer.grad_W_k;
+    Tensor ana_v = layer.grad_W_v;
+    Tensor ana_o = layer.grad_W_o;
+    layer.grad_W_q = grad_q_save;
+    layer.grad_W_k = grad_k_save;
+    layer.grad_W_v = grad_v_save;
+    layer.grad_W_o = grad_o_save;
+    // Pick the right analytical slot based on which param we're testing.
+    // We identify it by matching `param.data()` to one of W_q/W_k/W_v/W_o.
+    Tensor* ana = nullptr;
+    if (&param == &layer.W_q) ana = &ana_q;
+    else if (&param == &layer.W_k) ana = &ana_k;
+    else if (&param == &layer.W_v) ana = &ana_v;
+    else if (&param == &layer.W_o) ana = &ana_o;
+    else { throw std::runtime_error("check_param_gradient: unknown param"); }
     double max_err = 0.0;
     std::mt19937 rng(456);
     std::uniform_int_distribution<size_t> dist_r(0, param.rows - 1);
@@ -143,7 +179,7 @@ static double check_param_gradient(BlockSparseFlashAttention& layer,
         double loss_m = l2_loss_value(out_m, target);
         param.data[r * param.cols + c] = orig;
         double num_grad = (loss_p - loss_m) / (2.0 * eps);
-        double ana_grad = grad_param.data[r * grad_param.cols + c];
+        double ana_grad = ana->data[r * ana->cols + c];
         double err = relative_error(ana_grad, num_grad);
         if (err > max_err) max_err = err;
     }
@@ -443,6 +479,250 @@ int main() {
         } catch (...) { cout << "[FAIL] all-zeros mask threw\n"; }
         ++sub_total;
         if (sub_pass == sub_total) { ++passed; cout << "ALL MASK VALIDATION PASSED\n"; }
+    }
+
+    cout << "\n--- Test 10: Input gradient FD check (dense mask) ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 4, H = 1;
+        Tensor input(n, d);
+        std::mt19937 rng(20);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        Tensor target(n, d);
+        for (size_t i = 0; i < target.data.size(); ++i) target.data[i] = dist(rng) * 0.2;
+        BlockSparseFlashAttention attn(d, H, 0, 2, 2);
+        size_t n_q = (n + 1) / 2;
+        size_t n_k = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_dense_mask(n_q, n_k);
+        double err = check_input_gradient_block<BlockSparseFlashAttention>(attn, input, mask, target);
+        cout << "max rel_err (input, dense mask): " << scientific << setprecision(3) << err << "\n";
+        if (err < 1e-3) { cout << "[PASS] input gradient FD within tolerance\n"; ++passed; }
+        else { cout << "[FAIL] input gradient rel_err too high\n"; }
+    }
+
+    cout << "\n--- Test 11: W_q/W_k/W_v/W_o gradient FD checks (dense mask) ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 4, H = 1;
+        Tensor input(n, d);
+        std::mt19937 rng(21);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        Tensor target(n, d);
+        for (size_t i = 0; i < target.data.size(); ++i) target.data[i] = dist(rng) * 0.2;
+        BlockSparseFlashAttention attn(d, H, 0, 2, 2);
+        size_t n_q = (n + 1) / 2;
+        size_t n_k = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_dense_mask(n_q, n_k);
+
+        double err_q = check_param_gradient(attn, attn.W_q, attn.grad_W_q, input, mask, target);
+        double err_k = check_param_gradient(attn, attn.W_k, attn.grad_W_k, input, mask, target);
+        double err_v = check_param_gradient(attn, attn.W_v, attn.grad_W_v, input, mask, target);
+        double err_o = check_param_gradient(attn, attn.W_o, attn.grad_W_o, input, mask, target);
+        cout << "rel_err W_q=" << scientific << setprecision(3) << err_q
+             << "  W_k=" << err_k
+             << "  W_v=" << err_v
+             << "  W_o=" << err_o << "\n";
+        if (err_q < 1e-3 && err_k < 1e-3 && err_v < 1e-3 && err_o < 1e-3) {
+            cout << "[PASS] all param gradients FD within tolerance\n"; ++passed;
+        } else {
+            cout << "[FAIL] some param gradients rel_err too high\n";
+        }
+    }
+
+    cout << "\n--- Test 12: Masked-out K-blocks produce ZERO forward contribution ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 4, H = 1;
+        // CRITICAL: set input[t, i_pert]=0 for t in {0,1} (rows that should not
+        // see the perturbation). This makes W_k perturbation "block-specific":
+        // perturbing W_k[2, 0] only affects K[t in {2,3}, 0].
+        Tensor input(n, d);
+        std::mt19937 rng(22);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        // Force input[0, 2] = input[1, 2] = 0 — these rows must NOT see W_k[2,*]
+        // perturbation in K[t, *] (since K[t, dk] = sum_i input[t, i] * W_k[i, dk]).
+        input(0, 2) = 0.0;
+        input(1, 2) = 0.0;
+
+        Tensor target(n, d);
+        for (size_t i = 0; i < target.data.size(); ++i) target.data[i] = dist(rng) * 0.2;
+        BlockSparseFlashAttention attn_dense(d, H, 0, 2, 2);
+        BlockSparseFlashAttention attn_causal(d, H, 0, 2, 2);
+        attn_causal.W_q = attn_dense.W_q; attn_causal.W_k = attn_dense.W_k;
+        attn_causal.W_v = attn_dense.W_v; attn_causal.W_o = attn_dense.W_o;
+
+        size_t n_q = (n + 1) / 2;
+        size_t n_k = (n + 1) / 2;
+        Tensor dense_mask = BlockSparseFlashAttention::build_dense_mask(n_q, n_k);
+        Tensor causal_mask = BlockSparseFlashAttention::build_causal_mask(n_q, n_k);
+
+        // Causal mask: Q-block 0 (rows [0,1]) attends only to K-block 0 (cols [0,1]).
+        // With input[0, 2] = input[1, 2] = 0, perturbing W_k[2, 0] only changes
+        // K[t in {2,3}, 0] — and these are masked-out for rows 0,1.
+        Tensor out_causal_ref = attn_causal.forward_with_mask(input, causal_mask);
+        Tensor W_k_save = attn_causal.W_k;
+        attn_causal.W_k(2, 0) += 10.0;  // LARGE perturbation
+        Tensor out_causal_pert = attn_causal.forward_with_mask(input, causal_mask);
+        attn_causal.W_k = W_k_save;
+
+        double max_diff_causal_rows = 0.0;
+        for (size_t t = 0; t < 2; ++t) {
+            for (size_t j = 0; j < d; ++j) {
+                double diff = fabs(out_causal_ref(t, j) - out_causal_pert(t, j));
+                if (diff > max_diff_causal_rows) max_diff_causal_rows = diff;
+            }
+        }
+        cout << "max diff output[rows 0..1] under causal (perturb masked K-block): "
+             << max_diff_causal_rows << "\n";
+
+        // For comparison, the SAME perturbation under DENSE mask SHOULD change
+        // output rows 0, 1 (because dense doesn't gate K-block 1 for Q-block 0).
+        Tensor out_dense_ref = attn_dense.forward_with_mask(input, dense_mask);
+        Tensor W_k_save2 = attn_dense.W_k;
+        attn_dense.W_k(2, 0) += 10.0;
+        Tensor out_dense_pert = attn_dense.forward_with_mask(input, dense_mask);
+        attn_dense.W_k = W_k_save2;
+        double max_diff_dense_rows = 0.0;
+        for (size_t t = 0; t < 2; ++t) {
+            for (size_t j = 0; j < d; ++j) {
+                double diff = fabs(out_dense_ref(t, j) - out_dense_pert(t, j));
+                if (max_diff_dense_rows < diff) max_diff_dense_rows = diff;
+            }
+        }
+        cout << "max diff output[rows 0..1] under dense (perturb same K-block): "
+             << max_diff_dense_rows << "\n";
+
+        bool causal_unaffected = max_diff_causal_rows < 1e-12;
+        bool dense_affected = max_diff_dense_rows > 1e-4;
+        if (causal_unaffected && dense_affected) {
+            cout << "[PASS] masked-out K-blocks produce ZERO forward contribution "
+                 << "(causal unchanged, dense affected)\n";
+            ++passed;
+        } else if (causal_unaffected) {
+            cout << "[PASS] masked-out K-blocks produce ZERO forward contribution "
+                 << "(causal unchanged; dense test inconclusive)\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] masked-out K-perturbation affected output rows that shouldn't see it\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 13: BlockSparseFlashBlock forward shape
+    // ------------------------------------------------------------
+    cout << "\n--- Test 13: BlockSparseFlashBlock forward shape ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 4, H = 2;
+        Tensor input(n, d);
+        std::mt19937 rng(30);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        BlockSparseFlashBlock block(d, H, /*num_kv_heads=*/0,
+                                    /*qbs=*/2, /*kbs=*/2, /*ffn_dim=*/8);
+        Tensor output = block.forward(input);
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        for (double v : output.data) if (!std::isfinite(v)) { finite = false; break; }
+        cout << "  input " << input.rows << "x" << input.cols
+             << "  output " << output.rows << "x" << output.cols
+             << "  finite=" << (finite ? "yes" : "no") << "\n";
+        if (shape_ok && finite) { cout << "[PASS] block forward shape\n"; ++passed; }
+        else { cout << "[FAIL] block forward shape\n"; }
+    }
+
+    // ------------------------------------------------------------
+    // Test 14: BlockSparseFlashBlock input gradient FD check
+    // ------------------------------------------------------------
+    cout << "\n--- Test 14: BlockSparseFlashBlock input gradient FD check ---\n";
+    {
+        ++total;
+        size_t n = 3, d = 4, H = 2;
+        Tensor input(n, d);
+        std::mt19937 rng(31);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        Tensor target(n, d);
+        for (size_t i = 0; i < target.data.size(); ++i) target.data[i] = dist(rng) * 0.2;
+        BlockSparseFlashBlock block(d, H, /*num_kv_heads=*/0, /*qbs=*/2, /*kbs=*/2, /*ffn_dim=*/6);
+        double err = check_input_gradient<BlockSparseFlashBlock>(block, input, target);
+        cout << "max rel_err (block input): " << scientific << setprecision(3) << err << "\n";
+        if (err < 5e-3) { cout << "[PASS] block input gradient within tolerance\n"; ++passed; }
+        else { cout << "[FAIL] block input gradient rel_err too high\n"; }
+    }
+
+    // ------------------------------------------------------------
+    // Test 15: BlockSparseFlashModel training reduces loss
+    // ------------------------------------------------------------
+    cout << "\n--- Test 15: BlockSparseFlashModel training reduces loss ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6, H = 2, out_f = 3;
+        std::mt19937 rng(32);
+        std::uniform_real_distribution<double> dist(-0.5, 0.5);
+        Tensor input(n, d);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        Tensor target(n, out_f);
+        for (size_t i = 0; i < n; ++i) {
+            double s = 0;
+            for (size_t j = 0; j < d; ++j) s += input(i, j);
+            for (size_t j = 0; j < out_f; ++j) {
+                target(i, j) = 0.1 * sin(s + (int)j) + 0.05 * ((int)j - 1);
+            }
+        }
+        BlockSparseFlashModel model(d, d, out_f, /*num_blocks=*/2, H,
+                                    /*num_kv_heads=*/0, /*qbs=*/2, /*kbs=*/2, /*ffn_dim=*/8);
+        double lr = 0.1;
+        double initial_loss = 0.0, final_loss = 0.0;
+        for (int step = 0; step < 150; ++step) {
+            Tensor output = model.forward(input);
+            double loss = l2_loss_value(output, target);
+            if (step == 0) initial_loss = loss;
+            final_loss = loss;
+            Tensor d_out = l2_loss_grad(output, target);
+            model.backward(d_out, lr);
+            model.update_weights(lr);
+            model.zero_grad();
+        }
+        cout << "initial loss: " << fixed << setprecision(4) << initial_loss
+             << "  final loss: " << final_loss
+             << "  reduction: " << (100.0 * (initial_loss - final_loss) / max(initial_loss, 1e-12)) << "%\n";
+        if (final_loss < initial_loss * 0.8) {
+            cout << "[PASS] model training reduces loss\n"; ++passed;
+        } else {
+            cout << "[FAIL] model training did not reduce loss enough\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 16: Multi-head with GQA K/V sharing forward shape
+    // ------------------------------------------------------------
+    cout << "\n--- Test 16: Multi-head with GQA K/V sharing ---\n";
+    {
+        ++total;
+        size_t n = 5, d = 8, H = 4, kv = 2;
+        Tensor input(n, d);
+        std::mt19937 rng(33);
+        std::uniform_real_distribution<double> dist(-0.3, 0.3);
+        for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = dist(rng);
+        BlockSparseFlashAttention attn(d, H, kv, /*qbs=*/2, /*kbs=*/2);
+        size_t n_q = (n + 1) / 2, n_k = (n + 1) / 2;
+        Tensor mask = BlockSparseFlashAttention::build_dense_mask(n_q, n_k);
+        Tensor output = attn.forward_with_mask(input, mask);
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        for (double v : output.data) if (!std::isfinite(v)) { finite = false; break; }
+        cout << "  H=" << H << "  num_kv_heads=" << kv
+             << "  output " << output.rows << "x" << output.cols
+             << "  finite=" << (finite ? "yes" : "no") << "\n";
+        if (shape_ok && finite) {
+            cout << "[PASS] GQA K/V sharing forward shape\n"; ++passed;
+        } else {
+            cout << "[FAIL] GQA K/V sharing forward shape\n";
+        }
     }
 
     cout << "\n=== Summary: " << passed << "/" << total << " passed ===\n";

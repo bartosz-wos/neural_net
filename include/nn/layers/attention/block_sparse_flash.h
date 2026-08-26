@@ -2,6 +2,7 @@
 #define BLOCK_SPARSE_FLASH_H
 
 #include "../../core/layer.h"
+#include "../normalization/layer_norm.h"
 #include <vector>
 #include <cstdint>
 
@@ -121,6 +122,120 @@ private:
     Tensor last_value_;       // (n, d_model)
     Tensor last_context_;     // (n, d_model)  pre-projection attention output
     Tensor last_mask_;        // (n_q_blocks, n_k_blocks)
+
+    // Per-head running max and running sum (from forward's online softmax).
+    // These are needed by the backward pass to recover the GLOBAL softmax
+    // probabilities (not just per-block) — critical for correct gradients.
+    // Stored as Tensors (using aligned allocator) for test access, AND as
+    // plain std::vector<double> for backward access (avoids Tensor copy
+    // assignment overhead and resize issues under repeated forwards).
+    Tensor last_m_h_;   // shape (num_heads, n)
+    Tensor last_L_h_;   // shape (num_heads, n)
+    std::vector<double> last_m_h_storage_;   // size: num_heads * n
+    std::vector<double> last_L_h_storage_;   // size: num_heads * n
+};
+
+// ============================================================================
+// BlockSparseFlashBlock — pre-LN → BlockSparseFlash → residual → optional
+// pre-LN FFN → residual (matches SHLABlock convention).
+// ============================================================================
+
+class BlockSparseFlashBlock : public Layer {
+public:
+    // ffn_dim = 0 disables the FFN sublayer (attention-only block).
+    BlockSparseFlashBlock(size_t d_model, size_t num_heads,
+                          size_t num_kv_heads, size_t query_block_size,
+                          size_t key_block_size, size_t ffn_dim = 0);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
+    std::string name() const override { return "BlockSparseFlashBlock"; }
+
+    // Test accessors — the block rebuilds the same dense mask every forward.
+    size_t d_model() const { return d_model_; }
+    size_t ffn_dim() const { return ffn_dim_; }
+    const Tensor& last_mask() const { return last_mask_; }
+
+    // Public forward that takes an explicit mask (for tests that exercise
+    // sparse patterns inside the residual block).
+    Tensor forward_with_mask(const Tensor& input, const Tensor& mask);
+
+private:
+    size_t d_model_;
+    size_t ffn_dim_;
+    size_t query_block_size_;
+    size_t key_block_size_;
+    size_t n_q_blocks_;
+    size_t n_k_blocks_;
+
+    LayerNorm ln1_;                      // pre-attention
+    BlockSparseFlashAttention attn_;
+    LayerNorm ln2_;                      // pre-FFN
+    Dense ffn_fc1_;
+    Dense ffn_fc2_;
+
+    Tensor last_mask_;                   // (n_q_blocks, n_k_blocks) dense
+    Tensor last_input_;                  // (n, d_model)
+    Tensor last_z1_;                     // post-ln1, pre-attn
+    Tensor last_attn_out_;               // post-attn, pre-residual
+    Tensor last_res1_;                   // post-residual1 (input + attn)
+    Tensor last_z2_;                     // post-ln2 (or last_res1_ if no FFN)
+    Tensor last_ffn_hidden_;             // PRE-GELU
+    Tensor last_ffn_out_;                // post-FFN, pre-residual2
+};
+
+// ============================================================================
+// BlockSparseFlashModel — input projection → N blocks → classifier head.
+// Uses a dense mask inside each block (block-sparse without an external mask
+// is equivalent to standard FlashAttention; explicit mask on the Block is
+// available via block.forward_with_mask for experimental configurations).
+// ============================================================================
+
+class BlockSparseFlashModel : public Layer {
+public:
+    BlockSparseFlashModel(size_t input_dim, size_t d_model, size_t output_dim,
+                          size_t num_blocks, size_t num_heads,
+                          size_t num_kv_heads, size_t query_block_size,
+                          size_t key_block_size, size_t ffn_dim = 0);
+
+    Tensor forward(const Tensor& input) override;
+    Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    void update_weights(double learning_rate) override;
+    void zero_grad() override;
+
+    std::vector<Tensor*> parameters() override;
+    std::vector<Tensor*> gradients() override;
+    Tensor get_weights() const override { return W_in_; }
+    Tensor get_gradients() const override { return grad_W_in_; }
+    std::string name() const override { return "BlockSparseFlashModel"; }
+
+private:
+    size_t input_dim_;
+    size_t d_model_;
+    size_t output_dim_;
+    size_t num_blocks_;
+
+    Tensor W_in_;
+    Tensor b_in_;
+    Tensor W_out_;
+    Tensor b_out_;
+    Tensor grad_W_in_;
+    Tensor grad_b_in_;
+    Tensor grad_W_out_;
+    Tensor grad_b_out_;
+
+    std::vector<BlockSparseFlashBlock> blocks_;
+
+    Tensor last_input_;       // (n, input_dim) — preserved for input grad
+    Tensor last_proj_;        // (n, d_model) — pre-block input
+    Tensor last_block_out_;   // (n, d_model) — pre-output projection
 };
 
 #endif
