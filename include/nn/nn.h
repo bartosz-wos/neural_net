@@ -193,6 +193,7 @@
 #include "layers/architectures/hyena.h"
 #include "layers/architectures/jamba.h"
 #include "layers/architectures/moe_mamba.h"
+#include "layers/architectures/soft_moe.h"
 #include "layers/architectures/griffin.h"
 #include "layers/architectures/xlstm_block.h"
 #include "layers/architectures/deepseek_moe.h"
