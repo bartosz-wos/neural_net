@@ -164,6 +164,7 @@
 #include "layers/attention/fox.h"
 #include "layers/attention/block_sparse_flash.h"
 #include "layers/attention/rwkv7_parallel.h"
+#include "layers/attention/mosa.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
