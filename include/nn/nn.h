@@ -112,6 +112,7 @@
 #include "layers/recurrent/linoss.h"
 #include "layers/recurrent/log_linear_attention.h"
 #include "layers/recurrent/titans_mac.h"
+#include "layers/recurrent/titans_mag.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
