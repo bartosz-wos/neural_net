@@ -115,6 +115,7 @@
 #include "layers/recurrent/titans_mag.h"
 #include "layers/recurrent/titans_mal.h"
 #include "layers/recurrent/ttt_linear.h"
+#include "layers/recurrent/ttt_mlp.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"
