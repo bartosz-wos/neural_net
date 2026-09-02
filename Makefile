@@ -304,6 +304,9 @@ $(BUILD_DIR)/test_xlstm: $(LIB_OBJS) $(BUILD_DIR)/test_xlstm.o
 $(BUILD_DIR)/test_min_gru: $(LIB_OBJS) $(BUILD_DIR)/test_min_gru.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_min_lstm: $(LIB_OBJS) $(BUILD_DIR)/test_min_lstm.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_mamba2: $(LIB_OBJS) $(BUILD_DIR)/test_mamba2.o
 	$(CXX) $^ -o $@
 
@@ -593,7 +596,7 @@ $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/tes
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
 $(BUILD_DIR)/test_patchy_san $(BUILD_DIR)/test_pna $(BUILD_DIR)/test_edgeconv $(BUILD_DIR)/test_dmon \
-$(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_mlp_mixer $(BUILD_DIR)/test_hyena $(BUILD_DIR)/test_conformer $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_min_gru \
+$(BUILD_DIR)/test_gmlp $(BUILD_DIR)/test_mlp_mixer $(BUILD_DIR)/test_hyena $(BUILD_DIR)/test_conformer $(BUILD_DIR)/test_linformer $(BUILD_DIR)/test_mamba $(BUILD_DIR)/test_xlstm $(BUILD_DIR)/test_min_gru $(BUILD_DIR)/test_min_lstm \
 $(BUILD_DIR)/test_mamba2 $(BUILD_DIR)/test_rwkv $(BUILD_DIR)/test_retnet $(BUILD_DIR)/test_mlstm $(BUILD_DIR)/test_h3 $(BUILD_DIR)/test_deltanet $(BUILD_DIR)/test_gated_deltanet $(BUILD_DIR)/test_mamba3 $(BUILD_DIR)/test_jamba $(BUILD_DIR)/test_gla $(BUILD_DIR)/test_griffin $(BUILD_DIR)/test_xlstm_block $(BUILD_DIR)/test_deepseek_moe $(BUILD_DIR)/test_hyper_mixing $(BUILD_DIR)/test_mega $(BUILD_DIR)/test_mambabyte \
 $(BUILD_DIR)/test_flow_matching \
 $(BUILD_DIR)/test_dit \
@@ -645,6 +648,7 @@ run_tests: tests
 	@echo "=== Running Mamba Tests ===" && ./$(BUILD_DIR)/test_mamba
 	@echo "=== Running xLSTM Tests ===" && ./$(BUILD_DIR)/test_xlstm
 	@echo "=== Running MinGRU Tests ===" && ./$(BUILD_DIR)/test_min_gru
+	@echo "=== Running MinLSTM Tests ===" && ./$(BUILD_DIR)/test_min_lstm
 	@echo "=== Running Mamba-2 Tests ===" && ./$(BUILD_DIR)/test_mamba2
 	@echo "=== Running RWKV Tests ===" && ./$(BUILD_DIR)/test_rwkv
 	@echo "=== Running RetNet Tests ===" && ./$(BUILD_DIR)/test_retnet
