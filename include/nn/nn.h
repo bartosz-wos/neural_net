@@ -171,6 +171,7 @@
 #include "layers/attention/rwkv7_parallel.h"
 #include "layers/attention/mosa.h"
 #include "layers/attention/yarn_rope.h"
+#include "layers/attention/based.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
