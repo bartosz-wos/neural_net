@@ -152,6 +152,7 @@
 #include "layers/attention/cosformer.h"
 #include "layers/attention/gqa.h"
 #include "layers/attention/aft.h"
+#include "layers/attention/gau.h"
 #include "layers/attention/agent_attention.h"
 #include "layers/attention/diff_transformer.h"
 #include "layers/attention/lsh_attention.h"
