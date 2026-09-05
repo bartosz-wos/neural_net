@@ -92,6 +92,7 @@
 #include "layers/recurrent/gru.h"
 #include "layers/recurrent/min_gru.h"
 #include "layers/recurrent/min_lstm.h"
+#include "layers/recurrent/mogrifier_lstm.h"
 #include "layers/recurrent/lstm_bidirectional.h"
 #include "layers/recurrent/mamba.h"
 #include "layers/recurrent/xlstm.h"
