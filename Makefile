@@ -403,6 +403,9 @@ $(BUILD_DIR)/test_aft: $(LIB_OBJS) $(BUILD_DIR)/test_aft.o
 $(BUILD_DIR)/test_gau: $(LIB_OBJS) $(BUILD_DIR)/test_gau.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_lambda_layer: $(LIB_OBJS) $(BUILD_DIR)/test_lambda_layer.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_aft_local: $(LIB_OBJS) $(BUILD_DIR)/test_aft_local.o
 	$(CXX) $^ -o $@
 
@@ -627,7 +630,7 @@ $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
 $(BUILD_DIR)/test_gmm $(BUILD_DIR)/test_adaln_zero $(BUILD_DIR)/test_adafactor $(BUILD_DIR)/test_segmentation_losses \
 $(BUILD_DIR)/test_yogi $(BUILD_DIR)/test_radam $(BUILD_DIR)/test_adan $(BUILD_DIR)/test_lookahead $(BUILD_DIR)/test_diffgrad \
 $(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD_DIR)/test_came $(BUILD_DIR)/test_schedule_free_adamw \
-$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious $(BUILD_DIR)/test_grokfast $(BUILD_DIR)/test_soap $(BUILD_DIR)/test_shampoo $(BUILD_DIR)/test_prodigy $(BUILD_DIR)/test_stableadamw $(BUILD_DIR)/test_adopt $(BUILD_DIR)/test_swa $(BUILD_DIR)/test_galore $(BUILD_DIR)/test_apollo $(BUILD_DIR)/test_ltc $(BUILD_DIR)/test_neural_ode $(BUILD_DIR)/test_hgrn $(BUILD_DIR)/test_rwkv7 $(BUILD_DIR)/test_linoss $(BUILD_DIR)/test_agent_attention $(BUILD_DIR)/test_hyper_connection $(BUILD_DIR)/test_diff_transformer $(BUILD_DIR)/test_hymba $(BUILD_DIR)/test_log_linear_attention $(BUILD_DIR)/test_sliding_window $(BUILD_DIR)/test_nsa $(BUILD_DIR)/test_shla $(BUILD_DIR)/test_block_sparse_flash $(BUILD_DIR)/test_rwkv7_parallel $(BUILD_DIR)/test_moe_mamba $(BUILD_DIR)/test_titans_mac $(BUILD_DIR)/test_titans_mag $(BUILD_DIR)/test_titans_mal $(BUILD_DIR)/test_fox $(BUILD_DIR)/test_mosa $(BUILD_DIR)/test_soft_moe $(BUILD_DIR)/test_ttt_linear $(BUILD_DIR)/test_ttt_mlp $(BUILD_DIR)/test_based $(BUILD_DIR)/test_ft_transformer $(BUILD_DIR)/test_gau
+$(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious $(BUILD_DIR)/test_grokfast $(BUILD_DIR)/test_soap $(BUILD_DIR)/test_shampoo $(BUILD_DIR)/test_prodigy $(BUILD_DIR)/test_stableadamw $(BUILD_DIR)/test_adopt $(BUILD_DIR)/test_swa $(BUILD_DIR)/test_galore $(BUILD_DIR)/test_apollo $(BUILD_DIR)/test_ltc $(BUILD_DIR)/test_neural_ode $(BUILD_DIR)/test_hgrn $(BUILD_DIR)/test_rwkv7 $(BUILD_DIR)/test_linoss $(BUILD_DIR)/test_agent_attention $(BUILD_DIR)/test_hyper_connection $(BUILD_DIR)/test_diff_transformer $(BUILD_DIR)/test_hymba $(BUILD_DIR)/test_log_linear_attention $(BUILD_DIR)/test_sliding_window $(BUILD_DIR)/test_nsa $(BUILD_DIR)/test_shla $(BUILD_DIR)/test_block_sparse_flash $(BUILD_DIR)/test_rwkv7_parallel $(BUILD_DIR)/test_moe_mamba $(BUILD_DIR)/test_titans_mac $(BUILD_DIR)/test_titans_mag $(BUILD_DIR)/test_titans_mal $(BUILD_DIR)/test_fox $(BUILD_DIR)/test_mosa $(BUILD_DIR)/test_soft_moe $(BUILD_DIR)/test_ttt_linear $(BUILD_DIR)/test_ttt_mlp $(BUILD_DIR)/test_based $(BUILD_DIR)/test_ft_transformer $(BUILD_DIR)/test_gau $(BUILD_DIR)/test_lambda_layer
 
 run_tests: tests
 	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
@@ -800,6 +803,7 @@ run_tests: tests
 	@echo "=== Running Based Linear Attention Tests ===" && ./$(BUILD_DIR)/test_based
 	@echo "=== Running FT-Transformer Tests ===" && ./$(BUILD_DIR)/test_ft_transformer
 	@echo "=== Running GAU Tests ===" && ./$(BUILD_DIR)/test_gau
+	@echo "=== Running Lambda Layer Tests ===" && ./$(BUILD_DIR)/test_lambda_layer
 
 clean:
 	rm -rf $(BUILD_DIR)
