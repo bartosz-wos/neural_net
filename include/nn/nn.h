@@ -170,6 +170,7 @@
 #include "layers/attention/sliding_window.h"
 #include "layers/attention/nsa.h"
 #include "layers/attention/shla.h"
+#include "layers/attention/stick_breaking.h"
 #include "layers/attention/fox.h"
 #include "layers/attention/block_sparse_flash.h"
 #include "layers/attention/rwkv7_parallel.h"
