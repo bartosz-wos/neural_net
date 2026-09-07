@@ -80,9 +80,9 @@ int main() {
             double ana_grad = grad_input(i, j);
             double err = relative_error(num_grad, ana_grad);
             max_err = max(max_err, err);
-            total++;
         }
     }
+    total++;   // one check: the WORST element over the whole sweep
     if (max_err < 1e-2) { cout << "  [PASS] max_err=" << max_err << endl; passes++; }
     else { cout << "  [FAIL] max_err=" << max_err << endl; }
 
@@ -108,10 +108,10 @@ int main() {
                 double ana = (*Gp)(i, j);
                 double err = relative_error(num, ana);
                 max_err_w = max(max_err_w, err);
-                total++;
             }
         }
     }
+    total++;   // one check: the WORST element over all heads' W
     if (max_err_w < 1e-2) { cout << "  [PASS] max_err=" << max_err_w << endl; passes++; }
     else { cout << "  [FAIL] max_err=" << max_err_w << endl; }
 
@@ -134,9 +134,9 @@ int main() {
             double ana = (*gp)(i, 0);
             double err = relative_error(num, ana);
             max_err_a = max(max_err_a, err);
-            total++;
         }
     }
+    total++;   // one check: the WORST element over all heads' a
     if (max_err_a < 1e-2) { cout << "  [PASS] max_err=" << max_err_a << endl; passes++; }
     else { cout << "  [FAIL] max_err=" << max_err_a << endl; }
 

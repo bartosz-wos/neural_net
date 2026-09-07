@@ -5,7 +5,17 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- Empty. Next run: pick a paper-backed layer not already in include/nn/layers/. -->
+<!-- LIFO: the LAST bullet is the next to pop.
+     Before implementing, confirm absence by CONTENT not filename:
+       grep -ril '<ClassName>\|<PaperName>' include/
+     (a filename grep for "forgetting" missed the already-shipped FoX,
+      which lives in attention/fox.{h,cpp}) -->
+
+- **Multi-Token Prediction head** (Gloeckle et al. 2024, https://arxiv.org/abs/2404.19737, "Better & Faster Large Language Models via Multi-token Prediction") — replace the single next-token head with `n` independent output heads predicting tokens `t+1 .. t+n` from the same trunk representation, trained with the summed cross-entropy. Shared trunk + `n` parallel `Dense` heads; the backward sums the `n` head gradients into the trunk. Confirmed absent from `include/` (grep for `Multi-Token Prediction`). Implement as `MultiTokenPredictionHead(d_model, vocab_size, n_future=4)` in `include/nn/layers/architectures/`. Tests: per-head shape, independent-head signature (perturbing head k's weights leaves head j≠k's logits bit-exact), trunk-gradient equals the sum of the per-head trunk gradients (hand-derived, not just FD), FD on all heads + trunk, training reduces summed loss.
+
+- **Tokenformer / Pattention** (Wang et al. 2024, https://arxiv.org/abs/2410.23168, "Tokenformer: Rethinking Transformer Scaling with Tokenized Model Parameters") — replaces every `Dense` projection with "Pattention": the parameters themselves become key/value token sets, and the projection becomes an attention op between the input and learnable parameter tokens, `out = softmax_variant(X · K_p^T) · V_p` with an L2-normalized non-softmax nonlinearity. Lets a model grow its parameter count by *appending parameter tokens* without retraining from scratch. Confirmed absent from `include/` (grep for `Tokenformer\|Pattention`). Implement `Pattention(d_in, d_out, num_param_tokens)` in `include/nn/layers/attention/`, then a `TokenformerBlock` using it in place of the FFN. Tests: shape, reduction-to-Dense sanity when `num_param_tokens == d_out` with identity nonlinearity, FD on K_p/V_p/input, **token-append invariance** (appending zero-valued parameter tokens leaves the output bit-exact — the paper's core claim), training reduces loss.
+
+- **nGPT — Normalized Transformer on the Hypersphere** (Loshchilov, Hsieh, Sun, Ginsburg — NVIDIA 2024, https://arxiv.org/abs/2410.01131) — every embedding, and every row of every projection matrix, is constrained to unit L2 norm, so all representations live on a hypersphere. Residual updates become normalized LERP toward the sublayer output: `h ← Norm(h + α_i · (Norm(f(h)) − h))` where the per-dimension `α` are the paper's **eigen learning rates** (diagonal of a learnable variable-metric matrix). Removes LayerNorm/RMSNorm entirely and replaces the QK scale with learnable `s_qk`. Paper reports 4–20× fewer training steps to a given accuracy. Confirmed absent from `include/` (grep for `nGPT\|hypersphere`). Implement `HypersphereLinear` (row-normalized weights, with the normalization Jacobian in the backward — `∂/∂w (w/‖w‖) = (I − ŵŵᵀ)/‖w‖`, the part that is easy to get wrong) plus `NGPTBlock`. Tests: unit-norm invariant after every forward AND after `update_weights` (re-normalization is part of the step), the row-normalization Jacobian against FD, eigen-LR `α` gradient FD, hand-derived 1-row normalization case, training reduces loss.
 
 ## Done
 
