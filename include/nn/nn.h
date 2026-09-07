@@ -210,6 +210,7 @@
 #include "layers/architectures/xlstm_block.h"
 #include "layers/architectures/deepseek_moe.h"
 #include "layers/architectures/ft_transformer.h"
+#include "layers/architectures/ngpt.h"
 #include "layers/architectures/hymba.h"
 #include "layers/architectures/hyper_mixing.h"
 #include "layers/architectures/conformer.h"
