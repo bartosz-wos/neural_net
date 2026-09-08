@@ -172,6 +172,7 @@
 #include "layers/attention/shla.h"
 #include "layers/attention/stick_breaking.h"
 #include "layers/attention/fox.h"
+#include "layers/attention/tokenformer.h"
 #include "layers/attention/block_sparse_flash.h"
 #include "layers/attention/rwkv7_parallel.h"
 #include "layers/attention/mosa.h"
