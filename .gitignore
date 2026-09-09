@@ -13,6 +13,8 @@ debug_*
 *.rej
 ref_*
 dbg_*
+diag_*
+tests/diag_*
 *_dbg.*
 tests/debug_*
 tests/*.bak
