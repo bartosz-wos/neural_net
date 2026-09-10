@@ -180,6 +180,7 @@
 #include "layers/attention/based.h"
 #include "layers/attention/deformable_attention.h"
 #include "layers/attention/multi_scale_deformable_attention.h"
+#include "layers/attention/power_attention.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
