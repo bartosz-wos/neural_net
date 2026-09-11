@@ -182,6 +182,7 @@
 #include "layers/attention/multi_scale_deformable_attention.h"
 #include "layers/attention/power_attention.h"
 #include "layers/attention/gated_slot_attention.h"
+#include "layers/attention/hilo_attention.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
