@@ -107,6 +107,7 @@
 #include "layers/recurrent/gated_deltanet.h"
 #include "layers/recurrent/gla.h"
 #include "layers/recurrent/s5.h"
+#include "layers/recurrent/act.h"
 #include "layers/recurrent/mambabyte.h"
 #include "layers/recurrent/hawk.h"
 #include "layers/recurrent/hgrn.h"
