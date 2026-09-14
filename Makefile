@@ -409,6 +409,9 @@ $(BUILD_DIR)/test_cosformer: $(LIB_OBJS) $(BUILD_DIR)/test_cosformer.o
 $(BUILD_DIR)/test_gqa: $(LIB_OBJS) $(BUILD_DIR)/test_gqa.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_expire_span: $(LIB_OBJS) $(BUILD_DIR)/test_expire_span.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_aft: $(LIB_OBJS) $(BUILD_DIR)/test_aft.o
 	$(CXX) $^ -o $@
 
@@ -656,7 +659,7 @@ $(BUILD_DIR)/test_flow_matching \
 $(BUILD_DIR)/test_dit \
 $(BUILD_DIR)/test_timesnet \
 $(BUILD_DIR)/test_hawk \
-$(BUILD_DIR)/test_performer $(BUILD_DIR)/test_cosformer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local \
+$(BUILD_DIR)/test_performer $(BUILD_DIR)/test_cosformer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_expire_span $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local \
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
 $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier \
 $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_yarn_rope $(BUILD_DIR)/test_slot_attention \
@@ -728,6 +731,7 @@ run_tests: tests
 	@echo "=== Running Performer Tests ===" && ./$(BUILD_DIR)/test_performer
 	@echo "=== Running cosFormer Tests ===" && ./$(BUILD_DIR)/test_cosformer
 	@echo "=== Running GQA Tests ===" && ./$(BUILD_DIR)/test_gqa
+	@echo "=== Running Expire-Span Tests ===" && ./$(BUILD_DIR)/test_expire_span
 	@echo "=== Running AFT Tests ===" && ./$(BUILD_DIR)/test_aft
 	@echo "=== Running AFT-Local Tests ===" && ./$(BUILD_DIR)/test_aft_local
 	@echo "=== Running AFT-Conv Tests ===" && ./$(BUILD_DIR)/test_aft_conv
