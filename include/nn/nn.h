@@ -218,6 +218,7 @@
 #include "layers/architectures/soft_moe.h"
 #include "layers/architectures/griffin.h"
 #include "layers/architectures/xlstm_block.h"
+#include "layers/architectures/vision_mamba.h"
 #include "layers/architectures/deepseek_moe.h"
 #include "layers/architectures/ft_transformer.h"
 #include "layers/architectures/ngpt.h"
