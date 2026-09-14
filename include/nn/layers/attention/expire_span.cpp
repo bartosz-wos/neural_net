@@ -539,14 +539,100 @@ void ExpireSpanBlock::update_weights(double learning_rate) {
 }
 
 Tensor ExpireSpanBlock::forward(const Tensor& input) {
-    (void)input;
-    throw std::logic_error("ExpireSpanBlock::forward not yet implemented");
+    const size_t n = input.rows;
+    if (input.cols != d_model_) {
+        throw std::invalid_argument("ExpireSpanBlock.forward: input cols must equal d_model");
+    }
+
+    last_input_ = input.clone();
+
+    // Pre-LN → attention → residual.
+    last_z1_ = ln1_.forward(input);
+    last_attn_out_ = attn_.forward(last_z1_);
+    last_res1_ = Tensor(n, d_model_);
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            last_res1_[i][j] = input[i][j] + last_attn_out_[i][j];
+
+    if (ffn_dim_ == 0) {
+        // No FFN sub-layer — the block is pure attention.
+        return last_res1_.clone();
+    }
+
+    // Pre-LN → GELU FFN → residual.
+    last_z2_ = ln2_.forward(last_res1_);
+    last_ffn_pre_ = ffn_fc1_.forward(last_z2_);
+    Tensor ffn_act = last_ffn_pre_.apply([](double x) {
+        // GELU tanh-approximation matching activations.h convention.
+        double xc = std::max(-4.0, std::min(4.0, x));
+        double u  = std::sqrt(2.0 / M_PI) * (xc + 0.044715 * xc * xc * xc);
+        return 0.5 * xc * (1.0 + std::tanh(u));
+    });
+    Tensor ffn_out = ffn_fc2_.forward(ffn_act);
+
+    Tensor output(n, d_model_);
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            output[i][j] = last_res1_[i][j] + ffn_out[i][j];
+    return output;
 }
 
 Tensor ExpireSpanBlock::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output;
-    (void)learning_rate;
-    throw std::logic_error("ExpireSpanBlock::backward not yet implemented");
+    const size_t n = grad_output.rows;
+    if (grad_output.cols != d_model_) {
+        throw std::invalid_argument("ExpireSpanBlock.backward: grad_output cols must equal d_model");
+    }
+
+    // Standard transformer-block backward (matches GQABlock convention):
+    //   z1      = ln1(input)
+    //   attn_o  = attn(z1)
+    //   res1    = input + attn_o
+    //   z2      = ln2(res1)               [if ffn_dim > 0]
+    //   ffn_pre = fc1(z2)                 [if ffn_dim > 0]
+    //   ffn_h   = GELU(ffn_pre)           [if ffn_dim > 0]
+    //   ffn_o   = fc2(ffn_h)              [if ffn_dim > 0]
+    //   output  = res1 + ffn_o            [or output = res1 if ffn_dim == 0]
+
+    // Step 1: residual split at the top.
+    Tensor d_res1 = grad_output.clone();
+    if (ffn_dim_ > 0) {
+        Tensor d_ffn_o = grad_output.clone();
+
+        // Step 2: fc2 backward → d_ffn_h
+        Tensor d_ffn_h = ffn_fc2_.backward(d_ffn_o, learning_rate);
+
+        // Step 3: GELU backward (recompute pre-GELU from cached ln2).
+        Tensor ffn_pre_recomp = ffn_fc1_.forward(last_z2_);
+        Tensor d_ffn_pre(ffn_pre_recomp.rows, ffn_pre_recomp.cols);
+        for (size_t i = 0; i < ffn_pre_recomp.rows; ++i)
+            for (size_t j = 0; j < ffn_pre_recomp.cols; ++j)
+                d_ffn_pre[i][j] = d_ffn_h[i][j] * gelu_deriv(ffn_pre_recomp[i][j]);
+
+        // Step 4: fc1 backward → d_z2
+        Tensor d_z2 = ffn_fc1_.backward(d_ffn_pre, learning_rate);
+
+        // Step 5: ln2 backward, accumulating into d_res1.
+        Tensor d_res1_from_ln2 = ln2_.backward(d_z2, learning_rate);
+        for (size_t i = 0; i < n; ++i)
+            for (size_t j = 0; j < d_model_; ++j)
+                d_res1[i][j] += d_res1_from_ln2[i][j];
+    }
+
+    // Step 6: residual split at res1 = input + attn_o.
+    Tensor d_attn_o = d_res1.clone();
+
+    // Step 7: attn backward → d_z1.
+    Tensor d_z1 = attn_.backward(d_attn_o, learning_rate);
+
+    // Step 8: ln1 backward + residual add.
+    // d_input = ln1.backward(d_z1) + d_res1 (residual carries through).
+    Tensor d_input = ln1_.backward(d_z1, learning_rate);
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            d_input[i][j] += d_res1[i][j];
+
+    last_d_input_ = d_input.clone();
+    return d_input;
 }
 
 // ============================================================================
@@ -615,12 +701,18 @@ void ExpireSpanModel::update_weights(double learning_rate) {
 }
 
 Tensor ExpireSpanModel::forward(const Tensor& input) {
-    (void)input;
-    throw std::logic_error("ExpireSpanModel::forward not yet implemented");
+    last_input_ = input.clone();
+    Tensor x = W_in_.forward(input);
+    for (auto& b : blocks_) {
+        x = b.forward(x);
+    }
+    return W_out_.forward(x);
 }
 
 Tensor ExpireSpanModel::backward(const Tensor& grad_output, double learning_rate) {
-    (void)grad_output;
-    (void)learning_rate;
-    throw std::logic_error("ExpireSpanModel::backward not yet implemented");
+    Tensor d = W_out_.backward(grad_output, learning_rate);
+    for (auto it = blocks_.rbegin(); it != blocks_.rend(); ++it) {
+        d = it->backward(d, learning_rate);
+    }
+    return W_in_.backward(d, learning_rate);
 }

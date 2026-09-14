@@ -444,6 +444,342 @@ int main() {
         }
     }
 
+    // ------------------------------------------------------------
+    // Test 9: cache shapes after forward.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 9: cache shapes (n=6) ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);
+        ExpireSpanAttention a(d, num_q, num_kv, /*S_max=*/4);
+        a.forward(input);
+
+        bool ok = true;
+        ok = ok && (a.last_z().rows == n && a.last_z().cols == 1);
+        ok = ok && (a.last_span().rows == n && a.last_span().cols == 1);
+        ok = ok && (a.last_mask().rows == n && a.last_mask().cols == n);
+        ok = ok && (a.last_attn_head(0).rows == n && a.last_attn_head(0).cols == n);
+        ok = ok && (a.last_attn_head(num_q - 1).rows == n && a.last_attn_head(num_q - 1).cols == n);
+        // Parameters / gradients count: 6 tensors (W_q, W_k, W_v, W_o, W_span, b_span).
+        ok = ok && (a.parameters().size() == 6);
+        ok = ok && (a.gradients().size() == 6);
+        if (ok) {
+            cout << "[PASS] cache shapes and param count correct\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] cache shape mismatch\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 10: determinism — two fresh layers with same seed produce
+    // bit-exact identical forward output.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 10: determinism ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        Tensor input = Tensor::random(n, d, 1.0);
+
+        // Tensor::random consumes a global RNG, so two fresh layers with
+        // identical init rely on the global state being at the same point.
+        // We test determinism by running the SAME layer twice on the same
+        // input — forward is a deterministic function of (params, input).
+        ExpireSpanAttention a(d, 2, 2, /*S_max=*/4);
+        Tensor out1 = a.forward(input);
+        Tensor out2 = a.forward(input);
+        bool ok = true;
+        for (size_t i = 0; i < out1.data.size(); ++i) {
+            if (std::abs(out1.data[i] - out2.data[i]) > 0.0) { ok = false; break; }
+        }
+        if (ok) {
+            cout << "[PASS] forward deterministic across calls\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] forward differs across calls\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 11: zero_grad clears all 6 gradient tensors.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 11: zero_grad clears all 6 grad tensors ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+        ExpireSpanAttention a(d, 2, 2, /*S_max=*/4);
+
+        a.zero_grad();
+        Tensor output = a.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        a.backward(d_out, 0.0);
+        // Confirm at least one grad is nonzero before zero_grad.
+        double pre = 0.0;
+        for (auto* g : a.gradients()) pre += std::abs(g->data[0]);
+        a.zero_grad();
+        double post = 0.0;
+        for (auto* g : a.gradients()) {
+            for (double v : g->data) post += std::abs(v);
+        }
+        if (pre > 1e-12 && post < 1e-15) {
+            cout << "[PASS] zero_grad clears (pre=" << pre << " post=" << post << ")\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] zero_grad did not clear (pre=" << pre << " post=" << post << ")\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 12: update_weights moves all 6 parameter tensors.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 12: update_weights moves all 6 params ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+        ExpireSpanAttention a(d, 2, 2, /*S_max=*/4);
+
+        // Save pre-update params.
+        std::vector<Tensor> saved;
+        for (auto* p : a.parameters()) saved.push_back(p->clone());
+
+        a.zero_grad();
+        Tensor output = a.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        a.backward(d_out, 0.0);
+        a.update_weights(0.01);
+
+        bool moved = true;
+        auto ps = a.parameters();
+        for (size_t i = 0; i < ps.size(); ++i) {
+            double diff = 0.0;
+            for (size_t j = 0; j < ps[i]->data.size(); ++j) {
+                diff += std::abs(ps[i]->data[j] - saved[i].data[j]);
+            }
+            if (diff < 1e-15) {
+                cout << "  param " << i << " did not move (diff=" << diff << ")\n";
+                moved = false;
+            }
+        }
+        if (moved) {
+            cout << "[PASS] all 6 params moved under update_weights(0.01)\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] at least one param did not move\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 13: mutation test — span head changes the loss.
+    // Use S_max=2 so that span matters: small span → small window → real
+    // pruning. With span=0.5, threshold=1; with span=1.0, threshold=2.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 13: mutation test — span head changes the loss ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+
+        ExpireSpanAttention a(d, 2, 2, /*S_max=*/2);
+        // Override random init with a known configuration.
+        for (size_t k = 0; k < d; ++k) a.W_span[0][k] = 0.3;
+        a.b_span[0][0] = 0.1;
+
+        // Forward at current state (all spans roughly uniform at sigmoid(0.3*~1+0.1)).
+        Tensor out_before = a.forward(input);
+        double loss_before = l2_loss_value(out_before, target);
+
+        // Force DIFFERENT spans per token: token 0 span=0 (clamped, only self),
+        // token 1 span=1 (covers all). Strongly asymmetric mutation.
+        for (size_t k = 0; k < d; ++k) a.W_span[0][k] = 0.0;
+        // Make z_i = -50 for i=0 (sigmoid≈0), z_i = +50 for i>=1 (sigmoid≈1).
+        // Use a token-dependent b by varying b across forward runs? Actually b_span
+        // is a scalar. Instead, we exploit that input differs per token: with
+        // W_span=0, z_i = b_span. So set b_span = -50 → all spans≈0; +50 → ≈1.
+        // For per-token, we'd need W_span per-token, which we don't have — W_span
+        // is shared across tokens. So test with: b_span = -50 (≈0) vs +50 (≈1).
+        // We do both forward calls and verify loss differs.
+        a.b_span[0][0] = -50.0;  // sigmoid ≈ 0 ⇒ span ≈ s_min = 1e-6
+        Tensor out_after_a = a.forward(input);
+        double loss_after_a = l2_loss_value(out_after_a, target);
+
+        a.b_span[0][0] = +50.0;  // sigmoid ≈ 1 ⇒ span ≈ 1.0
+        Tensor out_after_b = a.forward(input);
+        double loss_after_b = l2_loss_value(out_after_b, target);
+
+        // Span should change meaningfully.
+        bool span_changed = (std::abs(a.last_span()[1][0] - 0.5) > 0.1);
+
+        // Loss should change between b_span=-50 and +50 (one hot self-attn vs full).
+        bool loss_changed = (std::abs(loss_after_a - loss_after_b) > 1e-4);
+
+        if (span_changed && loss_changed) {
+            cout << "[PASS] b_span -50 vs +50 → span AND loss differ (chain wired)\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] span_changed=" << span_changed
+                 << " loss_changed=" << loss_changed
+                 << " loss_a=" << loss_after_a << " loss_b=" << loss_after_b << "\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 14: ExpireSpanBlock forward shape (n=6, d=8, ffn_dim=16).
+    // ------------------------------------------------------------
+    cout << "\n--- Test 14: ExpireSpanBlock forward shape ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);
+        ExpireSpanBlock block(d, num_q, num_kv, /*S_max=*/4, /*s_min=*/1e-6, /*ffn_dim=*/16);
+        Tensor output = block.forward(input);
+
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        bool nonzero = false;
+        for (size_t i = 0; i < output.rows && finite; ++i)
+            for (size_t j = 0; j < output.cols; ++j) {
+                if (!std::isfinite(output(i, j))) finite = false;
+                if (std::abs(output(i, j)) > 1e-12) nonzero = true;
+            }
+        if (shape_ok && finite && nonzero) {
+            cout << "[PASS] block forward shape OK, finite, nonzero\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] block forward shape=" << shape_ok
+                 << " finite=" << finite << " nonzero=" << nonzero << "\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 15: ExpireSpanBlock input FD gradient (smaller config, loose tol).
+    // ------------------------------------------------------------
+    cout << "\n--- Test 15: ExpireSpanBlock input FD gradient ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+        ExpireSpanBlock block(d, /*num_q=*/2, /*num_kv=*/2, /*S_max=*/4, /*s_min=*/1e-6, /*ffn_dim=*/16);
+
+        block.zero_grad();
+        Tensor output = block.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        Tensor d_input_ana = block.backward(d_out, 0.0);
+
+        double max_err = 0.0;
+        const double eps = 1e-5;
+        for (size_t idx = 0; idx < input.data.size(); ++idx) {
+            double orig = input.data[idx];
+            input.data[idx] = orig + eps;
+            Tensor out_p = block.forward(input);
+            double Lp = l2_loss_value(out_p, target);
+            input.data[idx] = orig - eps;
+            Tensor out_m = block.forward(input);
+            double Lm = l2_loss_value(out_m, target);
+            input.data[idx] = orig;
+            double num = (Lp - Lm) / (2.0 * eps);
+            double ana = d_input_ana.data[idx];
+            double err = relative_error(ana, num);
+            if (err > max_err) max_err = err;
+        }
+        cout << "max rel_err (block input): " << scientific << setprecision(3) << max_err << "\n";
+        if (max_err < 1e-3) {
+            cout << "[PASS] block input gradient FD match\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] block input gradient rel_err too high\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 16: ExpireSpanModel forward (4, 3) -> (4, 5).
+    // ------------------------------------------------------------
+    cout << "\n--- Test 16: ExpireSpanModel forward shape ---\n";
+    {
+        ++total;
+        size_t n = 4, d_input = 3, d_model = 8, d_output = 5;
+        Tensor input = Tensor::random(n, d_input, 0.5);
+        ExpireSpanModel model(d_input, d_model, d_output, /*num_blocks=*/2,
+                              /*num_q=*/2, /*num_kv=*/2,
+                              /*S_max=*/4, /*s_min=*/1e-6, /*ffn_dim=*/16);
+        Tensor output = model.forward(input);
+
+        bool shape_ok = (output.rows == n && output.cols == d_output);
+        bool finite = true;
+        for (size_t i = 0; i < output.rows && finite; ++i)
+            for (size_t j = 0; j < output.cols; ++j)
+                if (!std::isfinite(output(i, j))) finite = false;
+        if (shape_ok && finite) {
+            cout << "[PASS] model forward shape OK, finite\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] model shape=" << shape_ok << " finite=" << finite << "\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 17: end-to-end training reduces MSE loss on a synthetic task.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 17: ExpireSpanModel training reduces loss ---\n";
+    {
+        ++total;
+        size_t n = 4, d_input = 3, d_model = 8, d_output = 2;
+        Tensor input = Tensor::random(n, d_input, 0.5);
+        Tensor target = Tensor::random(n, d_output, 0.5);
+
+        ExpireSpanModel model(d_input, d_model, d_output, /*num_blocks=*/2,
+                              /*num_q=*/2, /*num_kv=*/2,
+                              /*S_max=*/4, /*s_min=*/1e-6, /*ffn_dim=*/16);
+
+        // Train 60 SGD steps at lr=0.05.
+        const int n_steps = 60;
+        const double lr = 0.05;
+        double first_loss = -1.0, last_loss = -1.0;
+        for (int step = 0; step < n_steps; ++step) {
+            model.zero_grad();
+            Tensor output = model.forward(input);
+            double loss = l2_loss_value(output, target);
+            if (step == 0) first_loss = loss;
+            if (step == n_steps - 1) last_loss = loss;
+            Tensor d_out = l2_loss_grad(output, target);
+            model.backward(d_out, lr);
+            model.update_weights(0.0);  // we do manual SGD via zero_grad+backward+update_weights
+        }
+        // The above uses lr inside backward (applied during update_weights(0)).
+        // But update_weights(lr) applies lr — to do it cleanly, redo the loop.
+        // Reset and do it cleanly:
+        ExpireSpanModel model2(d_input, d_model, d_output, 2, 2, 2, 4, 1e-6, 16);
+        first_loss = -1.0;
+        last_loss = -1.0;
+        for (int step = 0; step < n_steps; ++step) {
+            model2.zero_grad();
+            Tensor output = model2.forward(input);
+            double loss = l2_loss_value(output, target);
+            if (step == 0) first_loss = loss;
+            Tensor d_out = l2_loss_grad(output, target);
+            model2.backward(d_out, 0.0);
+            model2.update_weights(lr);
+            if (step == n_steps - 1) last_loss = loss;
+        }
+        double reduction = (first_loss - last_loss) / std::max(1e-12, first_loss);
+        cout << "first_loss=" << first_loss << " last_loss=" << last_loss
+             << " reduction=" << (reduction * 100.0) << "%\n";
+        if (reduction > 0.30) {
+            cout << "[PASS] model training reduces loss > 30%\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] model training loss reduction < 30%\n";
+        }
+    }
+
     cout << "\n=== Results: " << passed << "/" << total << " tests passed ===" << endl;
     return (passed == total) ? 0 : 1;
 }
