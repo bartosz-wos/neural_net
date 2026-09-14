@@ -134,6 +134,140 @@ int main() {
         }
     }
 
+    // ------------------------------------------------------------
+    // Test 3: mask signature — all-span=1, S_max >= n ⇒ no mask anywhere
+    //         in the lower triangle (window covers everything).
+    // Set W_span, b_span to a large positive value so sigmoid(z) ≈ 1.0
+    // for every token, and use S_max=20 (>> n=6) so every position's
+    // window covers all future queries. Verify last_mask_ is all zeros
+    // in the lower triangle and all -1e9 in the strict upper triangle.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 3: mask signature — all-span=1, S_max>=n ⇒ full lower-tri ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);
+
+        ExpireSpanAttention a(d, num_q, num_kv, /*S_max=*/20);
+        // Force sigmoid(z) ≈ 1.0 → z ≈ 50.
+        for (size_t j = 0; j < d; ++j) a.W_span[0][j] = 50.0;
+        a.b_span[0][0] = 50.0;
+
+        Tensor output = a.forward(input);
+
+        bool lower_ok = true;
+        for (size_t i = 0; i < n && lower_ok; ++i)
+            for (size_t j = 0; j <= i; ++j)
+                if (std::abs(a.last_mask()[i][j]) > 1e-12) lower_ok = false;
+        bool upper_ok = true;
+        for (size_t i = 0; i < n && upper_ok; ++i)
+            for (size_t j = i + 1; j < n; ++j)
+                if (std::abs(a.last_mask()[i][j] + 1e9) > 1e-3) upper_ok = false;
+        bool span_ok = true;
+        for (size_t i = 0; i < n && span_ok; ++i)
+            if (std::abs(a.last_span()[i][0] - 1.0) > 1e-6) span_ok = false;
+
+        if (lower_ok && upper_ok && span_ok) {
+            cout << "[PASS] mask signature correct; span ≈ 1.0\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] lower=" << lower_ok << " upper=" << upper_ok
+                 << " span=" << span_ok << "\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 4: mask signature — zero span ⇒ self-only attention.
+    // Set b_span to -50 (z ≈ -50 ⇒ sigmoid ≈ 0).
+    // Verify last_span_ ≈ 0 (clamped to s_min=1e-6), and last_mask_[i,j]=-1e9
+    // for j<i, last_mask_[i,i]=0.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 4: mask signature — zero span ⇒ self-only attention ---\n";
+    {
+        ++total;
+        size_t n = 5, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);
+
+        ExpireSpanAttention a(d, num_q, num_kv, /*S_max=*/4);
+        for (size_t j = 0; j < d; ++j) a.W_span[0][j] = 0.0;
+        a.b_span[0][0] = -50.0;
+
+        a.forward(input);
+
+        bool diag_ok = true;
+        for (size_t i = 0; i < n; ++i)
+            if (std::abs(a.last_mask()[i][i]) > 1e-12) diag_ok = false;
+        bool drop_ok = true;
+        for (size_t i = 0; i < n && drop_ok; ++i)
+            for (size_t j = 0; j < i; ++j)
+                if (std::abs(a.last_mask()[i][j] + 1e9) > 1e-3) drop_ok = false;
+        bool span_floor = true;
+        for (size_t i = 0; i < n && span_floor; ++i)
+            // span clamped to s_min = 1e-6 (not exactly 0).
+            if (a.last_span()[i][0] > 1e-5) span_floor = false;
+
+        if (diag_ok && drop_ok && span_floor) {
+            cout << "[PASS] self-only mask correct; span clamped to floor\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] diag=" << diag_ok << " drop=" << drop_ok
+                 << " span_floor=" << span_floor << "\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 5: mask signature — span = 0.5, S_max = 4 ⇒ window of 2.
+    // Force last_span_ = 0.5 * ones(n, 1) by setting z = 0 (sigmoid(0) = 0.5).
+    // Effective threshold = 0.5 * 4 = 2.
+    // For query i, keys j ∈ [max(0, i-2), i] survive; others (j < i-2)
+    // get -1e9, j > i get -1e9 (causal).
+    // ------------------------------------------------------------
+    cout << "\n--- Test 5: mask signature — span=0.5, S_max=4 ⇒ window of 2 ---\n";
+    {
+        ++total;
+        size_t n = 7, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);
+
+        ExpireSpanAttention a(d, num_q, num_kv, /*S_max=*/4);
+        for (size_t j = 0; j < d; ++j) a.W_span[0][j] = 0.0;
+        a.b_span[0][0] = 0.0;  // z = 0 ⇒ sigmoid = 0.5
+
+        a.forward(input);
+
+        bool ok = true;
+        // Check: diag (j == i) is 0; j ∈ [i-2, i] survive (last 2 incl. self); others drop.
+        for (size_t i = 0; i < n && ok; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                if (j > i) {
+                    // Causal: -1e9
+                    if (std::abs(a.last_mask()[i][j] + 1e9) > 1e-3) ok = false;
+                } else {
+                    // age = i - j; survive iff age <= 2.
+                    size_t age = i - j;
+                    bool survive = (age <= 2);
+                    if (survive) {
+                        if (std::abs(a.last_mask()[i][j]) > 1e-12) ok = false;
+                    } else {
+                        if (std::abs(a.last_mask()[i][j] + 1e9) > 1e-3) ok = false;
+                    }
+                }
+            }
+        }
+        bool span_ok = true;
+        for (size_t i = 0; i < n && span_ok; ++i)
+            if (std::abs(a.last_span()[i][0] - 0.5) > 1e-5) span_ok = false;
+
+        if (ok && span_ok) {
+            cout << "[PASS] window-of-2 mask correct\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] mask=" << ok << " span=" << span_ok << "\n";
+        }
+    }
+
     cout << "\n=== Results: " << passed << "/" << total << " tests passed ===" << endl;
     return (passed == total) ? 0 : 1;
 }
