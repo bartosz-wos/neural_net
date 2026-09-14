@@ -268,6 +268,182 @@ int main() {
         }
     }
 
+    // ------------------------------------------------------------
+    // Test 6: FD input gradient check
+    // Random non-uniform init (mandatory: uniform init would pass vacuously
+    // for the row-vs-column confusion). Larger-magnitude input keeps the
+    // gradient signal well above the double-precision noise floor.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 6: ExpireSpanAttention input gradient (FD vs analytical) ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        size_t num_q = 2, num_kv = 1;
+        // Random non-uniform input.
+        Tensor input = Tensor::random(n, d, 1.0);
+        // Random non-uniform target.
+        Tensor target = Tensor::random(n, d, 1.0);
+
+        ExpireSpanAttention attn(d, num_q, num_kv, /*S_max=*/4);
+        // Random non-uniform W_span / b_span init — replace the deterministic init.
+        for (size_t k = 0; k < d; ++k) attn.W_span[0][k] = 0.5 * (static_cast<double>((k * 7) % 13) / 13.0 - 0.5);
+        attn.b_span[0][0] = 0.1;
+
+        // Forward + backward at current params.
+        attn.zero_grad();
+        Tensor output = attn.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        Tensor d_input_ana = attn.backward(d_out, 0.0);
+
+        // FD across input.
+        double max_err = 0.0;
+        const double eps = 1e-5;
+        for (size_t idx = 0; idx < input.data.size(); ++idx) {
+            double orig = input.data[idx];
+            input.data[idx] = orig + eps;
+            Tensor out_p = attn.forward(input);
+            double Lp = l2_loss_value(out_p, target);
+            input.data[idx] = orig - eps;
+            Tensor out_m = attn.forward(input);
+            double Lm = l2_loss_value(out_m, target);
+            input.data[idx] = orig;
+            double num = (Lp - Lm) / (2.0 * eps);
+            double ana = d_input_ana.data[idx];
+            double err = relative_error(ana, num);
+            if (err > max_err) max_err = err;
+        }
+        cout << "max rel_err (input): " << scientific << setprecision(3) << max_err << "\n";
+        if (max_err < 1e-4) {
+            cout << "[PASS] input gradient FD match\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] input gradient rel_err too high\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 7: FD W_q, W_k, W_v, W_o parameter gradient checks.
+    // ------------------------------------------------------------
+    cout << "\n--- Test 7: ExpireSpanAttention W_q/W_k/W_v/W_o gradient (FD) ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        size_t num_q = 2, num_kv = 2;  // MHA mode keeps K/V grads non-degenerate
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+
+        ExpireSpanAttention attn(d, num_q, num_kv, /*S_max=*/4);
+        // randomize W_span, b_span to exercise span-head path
+        for (size_t k = 0; k < d; ++k) attn.W_span[0][k] = 0.3 * (static_cast<double>((k * 11) % 17) / 17.0 - 0.5);
+        attn.b_span[0][0] = 0.2;
+
+        attn.zero_grad();
+        Tensor output = attn.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        attn.backward(d_out, 0.0);
+
+        // FD per-parameter, sampled entries.
+        const double eps = 1e-5;
+        std::vector<std::string> names = {"W_q", "W_k", "W_v", "W_o"};
+        std::vector<Tensor*> ps = attn.parameters();
+        std::vector<Tensor*> gs = attn.gradients();
+        double global_max = 0.0;
+        bool ok = true;
+        for (size_t p = 0; p < 4; ++p) {  // W_q, W_k, W_v, W_o
+            Tensor* Wp = ps[p];
+            Tensor* Wg = gs[p];
+            double max_err = 0.0;
+            // Check first 5 entries.
+            size_t n_check = std::min<size_t>(5, Wp->data.size());
+            for (size_t idx = 0; idx < n_check; ++idx) {
+                double orig = Wp->data[idx];
+                Wp->data[idx] = orig + eps;
+                Tensor out_p = attn.forward(input);
+                double Lp = l2_loss_value(out_p, target);
+                Wp->data[idx] = orig - eps;
+                Tensor out_m = attn.forward(input);
+                double Lm = l2_loss_value(out_m, target);
+                Wp->data[idx] = orig;
+                double num = (Lp - Lm) / (2.0 * eps);
+                double ana = Wg->data[idx];
+                double err = relative_error(ana, num);
+                if (err > max_err) max_err = err;
+            }
+            cout << "  " << names[p] << ": max_err=" << scientific << setprecision(3) << max_err << "\n";
+            if (max_err > global_max) global_max = max_err;
+            if (max_err > 1e-4) ok = false;
+        }
+        if (ok) {
+            cout << "[PASS] W_q/W_k/W_v/W_o gradient FD match (max=" << global_max << ")\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] some parameter FD rel_err too high (max=" << global_max << ")\n";
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Test 8: FD W_span, b_span gradient (the new piece).
+    // ------------------------------------------------------------
+    cout << "\n--- Test 8: ExpireSpanAttention W_span/b_span gradient (FD) ---\n";
+    {
+        ++total;
+        size_t n = 4, d = 6;
+        size_t num_q = 2, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 1.0);
+        Tensor target = Tensor::random(n, d, 1.0);
+
+        ExpireSpanAttention attn(d, num_q, num_kv, /*S_max=*/4);
+        // Random non-zero span head init.
+        for (size_t k = 0; k < d; ++k) attn.W_span[0][k] = 0.4 * (static_cast<double>((k * 5) % 19) / 19.0 - 0.5);
+        attn.b_span[0][0] = 0.15;
+
+        attn.zero_grad();
+        Tensor output = attn.forward(input);
+        Tensor d_out = l2_loss_grad(output, target);
+        attn.backward(d_out, 0.0);
+
+        // FD on W_span[0][k] for k in 0..d-1 and b_span[0][0].
+        const double eps = 1e-5;
+        double max_err = 0.0;
+        // W_span
+        for (size_t k = 0; k < d; ++k) {
+            double orig = attn.W_span[0][k];
+            attn.W_span[0][k] = orig + eps;
+            Tensor out_p = attn.forward(input);
+            double Lp = l2_loss_value(out_p, target);
+            attn.W_span[0][k] = orig - eps;
+            Tensor out_m = attn.forward(input);
+            double Lm = l2_loss_value(out_m, target);
+            attn.W_span[0][k] = orig;
+            double num = (Lp - Lm) / (2.0 * eps);
+            double ana = attn.grad_W_span[0][k];
+            double err = relative_error(ana, num);
+            if (err > max_err) max_err = err;
+        }
+        // b_span
+        {
+            double orig = attn.b_span[0][0];
+            attn.b_span[0][0] = orig + eps;
+            Tensor out_p = attn.forward(input);
+            double Lp = l2_loss_value(out_p, target);
+            attn.b_span[0][0] = orig - eps;
+            Tensor out_m = attn.forward(input);
+            double Lm = l2_loss_value(out_m, target);
+            attn.b_span[0][0] = orig;
+            double num = (Lp - Lm) / (2.0 * eps);
+            double ana = attn.grad_b_span[0][0];
+            double err = relative_error(ana, num);
+            if (err > max_err) max_err = err;
+        }
+        cout << "max rel_err (W_span, b_span): " << scientific << setprecision(3) << max_err << "\n";
+        if (max_err < 1e-3) {
+            cout << "[PASS] span head gradient FD match\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] span head gradient FD rel_err too high\n";
+        }
+    }
+
     cout << "\n=== Results: " << passed << "/" << total << " tests passed ===" << endl;
     return (passed == total) ? 0 : 1;
 }
