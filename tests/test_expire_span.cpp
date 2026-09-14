@@ -102,6 +102,38 @@ int main() {
         }
     }
 
+    // ------------------------------------------------------------
+    // Test 2: ExpireSpanAttention forward shape + finiteness
+    // ------------------------------------------------------------
+    cout << "\n--- Test 2: ExpireSpanAttention forward shape + finiteness ---\n";
+    {
+        ++total;
+        size_t n = 6, d = 8;
+        size_t num_q = 4, num_kv = 2;
+        Tensor input = Tensor::random(n, d, 0.5);  // non-degenerate scale
+
+        ExpireSpanAttention a(d, num_q, num_kv, /*S_max=*/4);
+        Tensor output = a.forward(input);
+        cout << "Input:  " << input.rows << "x" << input.cols
+             << "  Output: " << output.rows << "x" << output.cols << "\n";
+
+        bool shape_ok = (output.rows == n && output.cols == d);
+        bool finite = true;
+        bool nonzero = false;
+        for (size_t i = 0; i < output.rows && finite; ++i)
+            for (size_t j = 0; j < output.cols; ++j) {
+                if (!std::isfinite(output(i, j))) finite = false;
+                if (std::abs(output(i, j)) > 1e-12) nonzero = true;
+            }
+
+        if (shape_ok && finite && nonzero) {
+            cout << "[PASS] forward shape OK, all outputs finite and nonzero\n";
+            ++passed;
+        } else {
+            cout << "[FAIL] shape=" << shape_ok << " finite=" << finite << " nonzero=" << nonzero << "\n";
+        }
+    }
+
     cout << "\n=== Results: " << passed << "/" << total << " tests passed ===" << endl;
     return (passed == total) ? 0 : 1;
 }

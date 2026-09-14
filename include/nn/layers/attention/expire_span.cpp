@@ -142,8 +142,149 @@ void ExpireSpanAttention::update_weights(double learning_rate) {
 }
 
 Tensor ExpireSpanAttention::forward(const Tensor& input) {
-    (void)input;
-    throw std::logic_error("ExpireSpanAttention::forward not yet implemented");
+    const size_t n = input.rows;
+    if (input.cols != d_model_) {
+        throw std::invalid_argument("ExpireSpanAttention.forward: input cols must equal d_model");
+    }
+
+    last_input_ = input.clone();
+
+    // Q/K/V projections: (n, d_model) each, no biases.
+    Tensor Q(n, d_model_), K(n, d_model_), V(n, d_model_);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < d_model_; ++j) {
+            double qv = 0.0, kv = 0.0, vv = 0.0;
+            for (size_t k = 0; k < d_model_; ++k) {
+                qv += input[i][k] * W_q[k][j];
+                kv += input[i][k] * W_k[k][j];
+                vv += input[i][k] * W_v[k][j];
+            }
+            Q[i][j] = qv;
+            K[i][j] = kv;
+            V[i][j] = vv;
+        }
+    }
+    last_q_ = Q;
+    last_k_ = K;
+    last_v_ = V;
+
+    // Span head: z_i = sum_k W_span[0][k] * x_i[k] + b_span[0][0], shape (n, 1)
+    Tensor z(n, 1);
+    for (size_t i = 0; i < n; ++i) {
+        double s = b_span[0][0];
+        for (size_t k = 0; k < d_model_; ++k) s += W_span[0][k] * input[i][k];
+        z[i][0] = s;
+    }
+    last_z_ = z;
+
+    // span = clamp(sigmoid(z), s_min, 1.0)
+    Tensor span(n, 1);
+    for (size_t i = 0; i < n; ++i) {
+        double sig = 1.0 / (1.0 + std::exp(-z[i][0]));
+        if (sig < s_min_) sig = s_min_;
+        if (sig > 1.0)   sig = 1.0;
+        span[i][0] = sig;
+    }
+    last_span_ = span;
+
+    // Effective max age. If user passed S_max=0, use n (effectively no prun).
+    const double S_max_eff = (S_max_ == 0) ? static_cast<double>(n) : static_cast<double>(S_max_);
+
+    // Build the soft mask (last_soft_mask_) and the saturated last_mask_.
+    // last_soft_mask_[i,j] = -soft_threshold * sigmoid((i - j - s_j * S_max_eff) / temperature)
+    // last_mask_[i,j]      = -1e9 if (i > j AND soft_mask value < -1e9/2) else 0
+    //   (i.e. visually equivalent to "j > i: -1e9" for j > i and "drop" for j ≤ i with too-old age.)
+    last_soft_mask_ = Tensor(n, n);
+    last_mask_ = Tensor(n, n);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            double v;
+            if (j > i) {
+                // Causal: always drop.
+                v = 0.0; // logit value
+                last_soft_mask_[i][j] = -soft_threshold_;
+                last_mask_[i][j] = -1e9;
+            } else {
+                double age = static_cast<double>(i) - static_cast<double>(j);
+                double thr = span[j][0] * S_max_eff;
+                // Note: arg = (age - threshold) / temperature; positive → drop.
+                double arg = (age - thr) / temperature_;
+                double sig = 1.0 / (1.0 + std::exp(-arg));
+                double soft = -soft_threshold_ * sig;
+                last_soft_mask_[i][j] = soft;
+                // For the visible mask tensor, saturate to either 0 or -1e9.
+                last_mask_[i][j] = (arg > 0.0) ? -1e9 : 0.0;
+            }
+            (void)v;
+        }
+    }
+
+    // Per-head attention.
+    Tensor head_out(n, d_model_);
+    head_out.fill(0.0);
+    last_attn_ = Tensor(num_query_heads_ * n, n);
+    last_attn_by_head_.clear();
+    last_attn_by_head_.reserve(num_query_heads_);
+
+    for (size_t qh = 0; qh < num_query_heads_; ++qh) {
+        const size_t kh = qh / group_size_;
+        const size_t q_off  = qh * head_dim_;
+        const size_t kv_off = kh * head_dim_;
+
+        // scores = (Q_h @ K_h^T) * scale  : (n, n)
+        Tensor scores(n, n);
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                double s = 0.0;
+                for (size_t d = 0; d < head_dim_; ++d) {
+                    s += Q[i][q_off + d] * K[j][kv_off + d];
+                }
+                scores[i][j] = s * scale_;
+            }
+        }
+
+        // Add the soft mask additively: pre_softmax = scores + soft_mask.
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                scores[i][j] += last_soft_mask_[i][j];
+            }
+        }
+
+        // row softmax → A.
+        Tensor A = row_softmax(scores);
+
+        // Cache A per-head for tests + BPTT.
+        for (size_t i = 0; i < n; ++i)
+            for (size_t j = 0; j < n; ++j)
+                last_attn_[qh * n + i][j] = A[i][j];
+        last_attn_by_head_.push_back(A);
+
+        // head_out[:, q_off : q_off+head_dim] = A @ V_h  : (n, n) @ (n, head_dim) = (n, head_dim)
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t d = 0; d < head_dim_; ++d) {
+                double v = 0.0;
+                for (size_t j = 0; j < n; ++j) {
+                    v += A[i][j] * V[j][kv_off + d];
+                }
+                head_out[i][q_off + d] = v;
+            }
+        }
+    }
+
+    last_head_out_ = head_out;
+
+    // output = head_out @ W_o : (n, d_model) @ (d_model, d_model) = (n, d_model)
+    Tensor output(n, d_model_);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < d_model_; ++j) {
+            double v = 0.0;
+            for (size_t k = 0; k < d_model_; ++k) {
+                v += head_out[i][k] * W_o[k][j];
+            }
+            output[i][j] = v;
+        }
+    }
+    return output;
 }
 
 Tensor ExpireSpanAttention::backward(const Tensor& grad_output, double learning_rate) {
