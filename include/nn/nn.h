@@ -176,6 +176,7 @@
 #include "layers/attention/fox.h"
 #include "layers/attention/tokenformer.h"
 #include "layers/attention/expire_span.h"
+#include "layers/attention/axial_attention.h"
 #include "layers/attention/block_sparse_flash.h"
 #include "layers/attention/rwkv7_parallel.h"
 #include "layers/attention/mosa.h"
