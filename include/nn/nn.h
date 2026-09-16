@@ -219,6 +219,7 @@
 #include "layers/architectures/moe_mamba.h"
 #include "layers/architectures/soft_moe.h"
 #include "layers/architectures/sparse_mixer.h"
+#include "layers/architectures/focal_modulation.h"
 #include "layers/architectures/griffin.h"
 #include "layers/architectures/xlstm_block.h"
 #include "layers/architectures/vision_mamba.h"
