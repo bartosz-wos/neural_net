@@ -355,6 +355,9 @@ $(BUILD_DIR)/test_three_d_axial_attention: $(LIB_OBJS) $(BUILD_DIR)/test_three_d
 $(BUILD_DIR)/test_sparse_mixer: $(LIB_OBJS) $(BUILD_DIR)/test_sparse_mixer.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_mixture_of_softmaxes: $(LIB_OBJS) $(BUILD_DIR)/test_mixture_of_softmaxes.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_focal_modulation: $(LIB_OBJS) $(BUILD_DIR)/test_focal_modulation.o
 	$(CXX) $^ -o $@
 
@@ -884,6 +887,7 @@ run_tests: tests
 	@echo "=== Running 3D Axial Attention Tests ===" && ./$(BUILD_DIR)/test_three_d_axial_attention
 	@echo "=== Running Sparse Mixer Tests ===" && ./$(BUILD_DIR)/test_sparse_mixer
 	@echo "=== Running Focal Modulation Tests ===" && ./$(BUILD_DIR)/test_focal_modulation
+	@echo "=== Running Mixture of Softmaxes Tests ===" && ./$(BUILD_DIR)/test_mixture_of_softmaxes
 
 clean:
 	rm -rf $(BUILD_DIR)

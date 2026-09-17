@@ -188,6 +188,7 @@
 #include "layers/attention/power_attention.h"
 #include "layers/attention/gated_slot_attention.h"
 #include "layers/attention/hilo_attention.h"
+#include "layers/attention/mixture_of_softmaxes.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/resnet.h"
