@@ -487,6 +487,9 @@ $(BUILD_DIR)/test_egnn: $(LIB_OBJS) $(BUILD_DIR)/test_egnn.o
 $(BUILD_DIR)/test_sparse_moe: $(LIB_OBJS) $(BUILD_DIR)/test_sparse_moe.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_moe_router: $(LIB_OBJS) $(BUILD_DIR)/test_moe_router.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_knn_classifier: $(LIB_OBJS) $(BUILD_DIR)/test_knn_classifier.o
 	$(CXX) $^ -o $@
 
@@ -676,7 +679,7 @@ $(BUILD_DIR)/test_timesnet \
 $(BUILD_DIR)/test_hawk \
 $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_cosformer $(BUILD_DIR)/test_gqa $(BUILD_DIR)/test_expire_span $(BUILD_DIR)/test_aft $(BUILD_DIR)/test_aft_local \
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
-$(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_knn_classifier \
+$(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_moe_router $(BUILD_DIR)/test_knn_classifier \
 $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_yarn_rope $(BUILD_DIR)/test_slot_attention \
 $(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer \
 $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage \
@@ -755,6 +758,7 @@ run_tests: tests
 	@echo "=== Running PixelCNN Tests ===" && ./$(BUILD_DIR)/test_pixelcnn
 	@echo "=== Running EGNN Tests ===" && ./$(BUILD_DIR)/test_egnn
 	@echo "=== Running Sparse MoE Tests ===" && ./$(BUILD_DIR)/test_sparse_moe
+	@echo "=== Running MoeRouter Tests ===" && ./$(BUILD_DIR)/test_moe_router
 	@echo "=== Running KNN Classifier Tests ===" && ./$(BUILD_DIR)/test_knn_classifier
 	@echo "=== Running Tree-LSTM Tests ===" && ./$(BUILD_DIR)/test_tree_lstm
 	@echo "=== Running Modern Hopfield Tests ===" && ./$(BUILD_DIR)/test_hopfield
