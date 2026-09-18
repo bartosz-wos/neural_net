@@ -191,6 +191,7 @@
 #include "layers/attention/mixture_of_softmaxes.h"
 
 // Layers — architectures (full model definitions)
+#include "layers/architectures/dcn_v2.h"
 #include "layers/architectures/resnet.h"
 #include "layers/architectures/vit.h"
 #include "layers/architectures/unet.h"
