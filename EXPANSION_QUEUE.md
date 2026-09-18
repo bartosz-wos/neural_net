@@ -4,6 +4,7 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+- **LoRA — Low-Rank Adaptation** (Hu et al. 2021, https://arxiv.org/abs/2106.09685)
 
 <!-- LIFO: the LAST bullet is the next to pop.
      Before implementing, confirm absence by CONTENT not filename:
