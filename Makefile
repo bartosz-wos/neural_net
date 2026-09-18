@@ -514,6 +514,9 @@ $(BUILD_DIR)/test_magnitude_pruning: $(LIB_OBJS) $(BUILD_DIR)/test_magnitude_pru
 $(BUILD_DIR)/test_stochastic_depth: $(LIB_OBJS) $(BUILD_DIR)/test_stochastic_depth.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_lora: $(LIB_OBJS) $(BUILD_DIR)/test_lora.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_ff_layer: $(LIB_OBJS) $(BUILD_DIR)/test_ff_layer.o
 	$(CXX) $^ -o $@
 
@@ -684,7 +687,7 @@ $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_cosformer $(BUILD_DIR)/test_gqa $(
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
 $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_moe_router $(BUILD_DIR)/test_knn_classifier \
 $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_yarn_rope $(BUILD_DIR)/test_slot_attention \
-$(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer \
+$(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_lora \
 $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage \
 $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
@@ -771,6 +774,7 @@ run_tests: tests
 	@echo "=== Running FNet Tests ===" && ./$(BUILD_DIR)/test_fnet
 	@echo "=== Running Magnitude Pruning Tests ===" && ./$(BUILD_DIR)/test_magnitude_pruning
 	@echo "=== Running Stochastic Depth Tests ===" && ./$(BUILD_DIR)/test_stochastic_depth
+	@echo "=== Running LoRA Tests ===" && ./$(BUILD_DIR)/test_lora
 	@echo "=== Running FF Layer Tests ===" && ./$(BUILD_DIR)/test_ff_layer
 	@echo "=== Running Span Extractor Tests ===" && ./$(BUILD_DIR)/test_span_extractor
 	@echo "=== Running MLA Tests ===" && ./$(BUILD_DIR)/test_mla
