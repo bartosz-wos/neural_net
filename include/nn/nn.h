@@ -240,6 +240,7 @@
 #include "layers/architectures/span_extractor.h"
 #include "layers/architectures/mixture_of_depths.h"
 #include "layers/architectures/graphsage.h"
+#include "layers/architectures/monarch_mixer.h"
 
 // Layers — utility
 #include "layers/utility/skip_connection.h"
