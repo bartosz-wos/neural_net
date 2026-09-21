@@ -121,6 +121,7 @@
 #include "layers/recurrent/titans_mal.h"
 #include "layers/recurrent/ttt_linear.h"
 #include "layers/recurrent/ttt_mlp.h"
+#include "layers/recurrent/mamba_bidirectional.h"
 
 // Layers — dense / embeddings
 #include "layers/dense/embedding.h"

@@ -78,6 +78,12 @@ public:
 
     Tensor forward(const Tensor& input) override;
     Tensor backward(const Tensor& grad_output, double learning_rate) override;
+    // Backward variant: caller supplies the gradient w.r.t. the gated output
+    // `silu(gate) * y` directly (i.e. the input to out_proj), skipping the
+    // out_proj chain. Used by wrappers like MambaBidirectional that have
+    // their own output projection and want to reuse the SSM/Δ/B/C/in_proj
+    // backward machinery without re-deriving it.
+    Tensor backward_from_gated(const Tensor& grad_gated, double learning_rate);
     void update_weights(double learning_rate) override;
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
@@ -104,10 +110,20 @@ public:
     Tensor grad_A_log_;     // (d_inner, d_state)
     Tensor grad_D_skip_;    // (1, d_inner)
 
+    // Cached outputs (public accessors for wrappers like MambaBidirectional that
+    // need the post-SSM gated output BEFORE the output projection).
+    const Tensor& last_gated() const { return last_gated_; }
+    const Tensor& last_input() const { return last_input_; }
+
 private:
     size_t d_model_;
     size_t d_state_;
     size_t d_inner_;
+
+    // Shared backward helper used by both backward() (chains through out_proj)
+    // and backward_from_gated() (skips out_proj, treats input as dL/dgated).
+    // Returns grad_input (T, d_model).
+    Tensor backward_impl(const Tensor& grad_output, double learning_rate, bool input_is_gated);
 
     // Caches for forward (all reshaped to (T, d_inner) or (T, d_inner, d_state))
     Tensor last_input_;         // (T, d_model)

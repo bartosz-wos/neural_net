@@ -194,51 +194,67 @@ Tensor MambaBlock::forward(const Tensor& input) {
 
 // ---------- backward ----------
 
-Tensor MambaBlock::backward(const Tensor& grad_output, double /*learning_rate*/) {
+// Shared internal backward helper. Caller passes either:
+//   - grad_output = dL/d(MambaBlock::last_gated_) (the gated output), or
+//   - grad_output = dL/d(MambaBlock output) which is then chained through out_proj
+//     to derive the gradient w.r.t. gated internally.
+// The mode is selected by `input_is_gated`: if true, grad_output is already
+// dL/dgated; if false (the default), grad_output is dL/d(out) and we chain
+// through out_proj. The caller is responsible for clearing parameter grads
+// before calling (or passing them already cleared via zero_grad).
+//
+// Returns: grad_input (T, d_model) for the caller to chain further.
+Tensor MambaBlock::backward_impl(const Tensor& grad_output, double /*learning_rate*/, bool input_is_gated)
+{
     size_t T = last_input_.rows;
-    if (grad_output.rows != T || grad_output.cols != d_model_) {
-        throw std::invalid_argument("MambaBlock: grad_output shape mismatch");
+
+    if (!input_is_gated) {
+        // grad_output is dL/d(out). Chain through out_proj to get dL/dgated.
+        if (grad_output.rows != T || grad_output.cols != d_model_) {
+            throw std::invalid_argument("MambaBlock: grad_output shape mismatch");
+        }
+        // Zero out_proj grads (we don't accumulate them when caller passed
+        // grad_output in input_is_gated=false mode).
+        out_proj.zero_grad();
+    } else {
+        if (grad_output.rows != T || grad_output.cols != d_inner_) {
+            throw std::invalid_argument("MambaBlock: grad_gated shape mismatch");
+        }
     }
 
-    // We'll accumulate parameter gradients on Dense::grad_weights / grad_bias
-    // for the 5 projections, and on A_log / D_skip directly.
-
-    // Zero out param grads first (callers usually call zero_grad, but be safe)
-    in_proj.zero_grad();
-    out_proj.zero_grad();
-    dt_proj.zero_grad();
-    B_proj.zero_grad();
-    C_proj.zero_grad();
-
-    // Gradient w.r.t. gated (input to out_proj)
-    // Forward: out_t = gated_t @ W_out^T + b_out  (Dense convention: y = x W^T + b)
-    //        W_out is (d_model, d_inner)
-    //        dL/dgated[t][i] = sum_j dL/dout[t][j] * W_out[j][i]
+    // Compute grad_gated (T, d_inner)
     Tensor grad_gated(T, d_inner_);
-    for (size_t t = 0; t < T; ++t) {
-        for (size_t i = 0; i < d_inner_; ++i) {
-            double acc = 0.0;
-            for (size_t j = 0; j < d_model_; ++j) {
-                acc += grad_output(t, j) * out_proj.weights(j, i);
+    if (input_is_gated) {
+        // grad_output is already dL/dgated
+        for (size_t t = 0; t < T; ++t)
+            for (size_t i = 0; i < d_inner_; ++i)
+                grad_gated(t, i) = grad_output(t, i);
+    } else {
+        // grad_output is dL/d(out); chain through out_proj + accumulate grads
+        for (size_t t = 0; t < T; ++t) {
+            for (size_t i = 0; i < d_inner_; ++i) {
+                double acc = 0.0;
+                for (size_t j = 0; j < d_model_; ++j) {
+                    acc += grad_output(t, j) * out_proj.weights(j, i);
+                }
+                grad_gated(t, i) = acc;
             }
-            grad_gated(t, i) = acc;
+        }
+        for (size_t j = 0; j < d_model_; ++j)
+            for (size_t i = 0; i < d_inner_; ++i) {
+                double acc = 0.0;
+                for (size_t t = 0; t < T; ++t)
+                    acc += grad_output(t, j) * last_gated_(t, i);
+                out_proj.grad_weights(j, i) += acc;
+            }
+        for (size_t j = 0; j < d_model_; ++j) {
+            double acc = 0.0;
+            for (size_t t = 0; t < T; ++t) acc += grad_output(t, j);
+            out_proj.grad_bias(0, j) += acc;
         }
     }
 
-    // dL/dW_out[j][i] = sum_t dL/dout[t][j] * gated[t][i]
-    for (size_t j = 0; j < d_model_; ++j)
-        for (size_t i = 0; i < d_inner_; ++i) {
-            double acc = 0.0;
-            for (size_t t = 0; t < T; ++t)
-                acc += grad_output(t, j) * last_gated_(t, i);
-            out_proj.grad_weights(j, i) += acc;
-        }
-    // dL/db_out[j] = sum_t dL/dout[t][j]
-    for (size_t j = 0; j < d_model_; ++j) {
-        double acc = 0.0;
-        for (size_t t = 0; t < T; ++t) acc += grad_output(t, j);
-        out_proj.grad_bias(0, j) += acc;
-    }
+    // Now chain through silu, D_skip, SSM, projections — same logic for both modes.
 
     // Now split: gated = silu(gate) * y
     //   dL/dgate[t][i] = dL/dgated[t][i] * silu'(gate[t][i]) * y[t][i]
@@ -560,7 +576,30 @@ Tensor MambaBlock::backward(const Tensor& grad_output, double /*learning_rate*/)
     return grad_input;
 }
 
-// ---------- update_weights ----------
+Tensor MambaBlock::backward(const Tensor& grad_output, double learning_rate) {
+    // Standard mode: caller passes dL/d(MambaBlock output). We chain
+    // through out_proj internally and accumulate out_proj grads.
+    // Zero param grads first (callers usually call zero_grad, but be safe).
+    in_proj.zero_grad();
+    out_proj.zero_grad();
+    dt_proj.zero_grad();
+    B_proj.zero_grad();
+    C_proj.zero_grad();
+    return backward_impl(grad_output, learning_rate, /*input_is_gated=*/false);
+}
+
+Tensor MambaBlock::backward_from_gated(const Tensor& grad_gated, double learning_rate) {
+    // Wrapper mode: caller passes dL/d(MambaBlock::last_gated_) directly,
+    // bypassing the out_proj chain. Used by MambaBidirectional (which has
+    // its own out_proj_) and any future wrapper that wants the SSM/Δ/B/C
+    // backward without re-applying out_proj.
+    in_proj.zero_grad();
+    out_proj.zero_grad();
+    dt_proj.zero_grad();
+    B_proj.zero_grad();
+    C_proj.zero_grad();
+    return backward_impl(grad_gated, learning_rate, /*input_is_gated=*/true);
+}
 
 void MambaBlock::update_weights(double learning_rate) {
     in_proj.update_weights(learning_rate);
