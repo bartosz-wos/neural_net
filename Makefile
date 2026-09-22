@@ -526,6 +526,9 @@ $(BUILD_DIR)/test_monarch_mixer: $(LIB_OBJS) $(BUILD_DIR)/test_monarch_mixer.o
 $(BUILD_DIR)/test_set_transformer: $(LIB_OBJS) $(BUILD_DIR)/test_set_transformer.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_fastformer: $(LIB_OBJS) $(BUILD_DIR)/test_fastformer.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_ff_layer: $(LIB_OBJS) $(BUILD_DIR)/test_ff_layer.o
 	$(CXX) $^ -o $@
 
@@ -702,6 +705,7 @@ $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v 
 $(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_lora $(BUILD_DIR)/test_dcn_v2 \
 $(BUILD_DIR)/test_monarch_mixer \
 $(BUILD_DIR)/test_set_transformer \
+$(BUILD_DIR)/test_fastformer \
 $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage \
 $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
@@ -910,6 +914,7 @@ run_tests: tests
 	@echo "=== Running Sparse Mixer Tests ===" && ./$(BUILD_DIR)/test_sparse_mixer
 	@echo "=== Running Focal Modulation Tests ===" && ./$(BUILD_DIR)/test_focal_modulation
 	@echo "=== Running Mixture of Softmaxes Tests ===" && ./$(BUILD_DIR)/test_mixture_of_softmaxes
+	@echo "=== Running FastFormer Tests ===" && ./$(BUILD_DIR)/test_fastformer
 
 clean:
 	rm -rf $(BUILD_DIR)

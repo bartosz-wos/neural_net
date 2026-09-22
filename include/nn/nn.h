@@ -190,6 +190,7 @@
 #include "layers/attention/gated_slot_attention.h"
 #include "layers/attention/hilo_attention.h"
 #include "layers/attention/mixture_of_softmaxes.h"
+#include "layers/attention/fastformer.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/dcn_v2.h"
