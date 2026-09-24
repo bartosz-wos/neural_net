@@ -114,6 +114,7 @@
 #include "layers/recurrent/ltc.h"
 #include "layers/recurrent/rwkv7.h"
 #include "layers/recurrent/rwkv6.h"
+#include "layers/recurrent/rwkv5.h"
 #include "layers/recurrent/rwkv7_model.h"
 #include "layers/recurrent/linoss.h"
 #include "layers/recurrent/log_linear_attention.h"
