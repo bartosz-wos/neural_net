@@ -520,6 +520,9 @@ $(BUILD_DIR)/test_stochastic_depth: $(LIB_OBJS) $(BUILD_DIR)/test_stochastic_dep
 $(BUILD_DIR)/test_lora: $(LIB_OBJS) $(BUILD_DIR)/test_lora.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_bitnet: $(LIB_OBJS) $(BUILD_DIR)/test_bitnet.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_dcn_v2: $(LIB_OBJS) $(BUILD_DIR)/test_dcn_v2.o
 	$(CXX) $^ -o $@
 
@@ -705,7 +708,7 @@ $(BUILD_DIR)/test_performer $(BUILD_DIR)/test_cosformer $(BUILD_DIR)/test_gqa $(
 $(BUILD_DIR)/test_aft_conv $(BUILD_DIR)/test_lsh_attention $(BUILD_DIR)/test_conv_attention $(BUILD_DIR)/test_conv_bert \
 $(BUILD_DIR)/test_pixelcnn $(BUILD_DIR)/test_egnn $(BUILD_DIR)/test_sparse_moe $(BUILD_DIR)/test_moe_router $(BUILD_DIR)/test_knn_classifier \
 $(BUILD_DIR)/test_tree_lstm $(BUILD_DIR)/test_hopfield $(BUILD_DIR)/test_rope_v $(BUILD_DIR)/test_yarn_rope $(BUILD_DIR)/test_slot_attention \
-$(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_lora $(BUILD_DIR)/test_dcn_v2 \
+$(BUILD_DIR)/test_fnet $(BUILD_DIR)/test_magnitude_pruning $(BUILD_DIR)/test_stochastic_depth $(BUILD_DIR)/test_ff_layer $(BUILD_DIR)/test_lora $(BUILD_DIR)/test_bitnet $(BUILD_DIR)/test_dcn_v2 \
 $(BUILD_DIR)/test_monarch_mixer \
 $(BUILD_DIR)/test_set_transformer \
 $(BUILD_DIR)/test_fastformer \
@@ -796,6 +799,7 @@ run_tests: tests
 	@echo "=== Running Magnitude Pruning Tests ===" && ./$(BUILD_DIR)/test_magnitude_pruning
 	@echo "=== Running Stochastic Depth Tests ===" && ./$(BUILD_DIR)/test_stochastic_depth
 	@echo "=== Running LoRA Tests ===" && ./$(BUILD_DIR)/test_lora
+	@echo "=== Running BitNet b1.58 Tests ===" && ./$(BUILD_DIR)/test_bitnet
 	@echo "=== Running DCN-v2 Tests ===" && ./$(BUILD_DIR)/test_dcn_v2
 	@echo "=== Running Monarch Mixer Tests ===" && ./$(BUILD_DIR)/test_monarch_mixer
 	@echo "=== Running Set Transformer Tests ===" && ./$(BUILD_DIR)/test_set_transformer

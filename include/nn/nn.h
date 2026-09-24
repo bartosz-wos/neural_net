@@ -264,6 +264,7 @@
 #include "layers/utility/gumbel_softmax.h"
 #include "layers/utility/hypernetwork.h"
 #include "layers/utility/lora.h"
+#include "layers/utility/bitnet.h"
 #include "utils/trainer.h"
 #include "layers/utility/weight_init.h"
 
