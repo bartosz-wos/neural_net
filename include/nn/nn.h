@@ -66,6 +66,7 @@
 #include "utils/mixup_cutmix.h"
 #include "utils/triplet_loss_siamese.h"
 #include "utils/distribution_losses.h"
+#include "utils/self_supervised_losses.h"
 #include "utils/mmd_loss.h"
 #include "utils/contrastive_losses.h"
 #include "utils/siglip_loss.h"

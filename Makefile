@@ -106,6 +106,9 @@ $(BUILD_DIR)/test_yarn_rope: $(LIB_OBJS) $(BUILD_DIR)/test_yarn_rope.o
 $(BUILD_DIR)/test_distribution_losses: $(LIB_OBJS) $(BUILD_DIR)/test_distribution_losses.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_self_supervised_losses: $(LIB_OBJS) $(BUILD_DIR)/test_self_supervised_losses.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_label_smoothing: $(LIB_OBJS) $(BUILD_DIR)/test_label_smoothing.o
 	$(CXX) $^ -o $@
 
@@ -695,7 +698,7 @@ tests: setup $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_neural_spline_flow $(BU
 $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
-$(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
+$(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
 $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
@@ -826,6 +829,7 @@ run_tests: tests
 	@echo "=== Running Transformer Decoder Tests ===" && ./$(BUILD_DIR)/test_transformer_decoder
 	@echo "=== Running HyperNetwork Tests ===" && ./$(BUILD_DIR)/test_hypernetwork
 	@echo "=== Running Distribution Losses Tests ===" && ./$(BUILD_DIR)/test_distribution_losses
+	@echo "=== Running Self-Supervised Losses Tests ===" && ./$(BUILD_DIR)/test_self_supervised_losses
 	@echo "=== Running MMD Loss Tests ===" && ./$(BUILD_DIR)/test_mmd_loss
 	@echo "=== Running Contrastive Losses Tests ===" && ./$(BUILD_DIR)/test_contrastive_losses
 	@echo "=== Running SigLIP Loss Tests ===" && ./$(BUILD_DIR)/test_siglip_loss
