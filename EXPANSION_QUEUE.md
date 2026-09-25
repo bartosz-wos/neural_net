@@ -13,6 +13,8 @@ After completing an item, move it to the "Done" section.
 
 - *(empty — see Done section for the most recent items)*
 
+- **GATv2 — Improved Graph Attention Network** (Brody, Alon, Yahav 2022, "How Attentive are Graph Attention Networks?", https://arxiv.org/abs/2105.14491) — modifies the GAT attention from `α_ij = softmax_j(a^T [W·h_i ‖ W·h_j])` to `α_ij = softmax_j(a^T W [h_i ‖ h_j])`. The reordering makes attention strictly more expressive (GAT's "static" attention problem where the ranking of neighbors can be rank-deficient is fixed) while using the same number of parameters. Will live in `include/nn/layers/attention/gatv2.{h,cpp}` as `GATv2Layer(in_dim, out_dim, num_heads)` plus `GATv2Model(...)` stack.
+
 <!-- popped 2026-09-25: Self-Supervised Learning Losses (DINO, BYOL, VICReg, BarlowTwins, W-MSE) -->
 
 
