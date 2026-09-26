@@ -157,6 +157,7 @@
 #include "layers/attention/alibi.h"
 #include "layers/attention/gat.h"
 #include "layers/attention/gatv2.h"
+#include "layers/attention/sagpool.h"
 #include "layers/attention/performer.h"
 #include "layers/attention/cosformer.h"
 #include "layers/attention/gqa.h"
