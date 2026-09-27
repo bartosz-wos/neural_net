@@ -454,6 +454,9 @@ $(BUILD_DIR)/test_sagpool: $(LIB_OBJS) $(BUILD_DIR)/test_sagpool.o
 $(BUILD_DIR)/test_tome: $(LIB_OBJS) $(BUILD_DIR)/test_tome.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_clustered_attention: $(LIB_OBJS) $(BUILD_DIR)/test_clustered_attention.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_lambda_layer: $(LIB_OBJS) $(BUILD_DIR)/test_lambda_layer.o
 	$(CXX) $^ -o $@
 
@@ -730,6 +733,7 @@ $(BUILD_DIR)/test_fastformer \
 $(BUILD_DIR)/test_gatv2 \
 $(BUILD_DIR)/test_sagpool \
 $(BUILD_DIR)/test_tome \
+$(BUILD_DIR)/test_clustered_attention \
 $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage \
 $(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
@@ -946,6 +950,8 @@ run_tests: tests
 	@echo "=== Running GATv2 Tests ===" && ./$(BUILD_DIR)/test_gatv2
 	@echo "=== Running SAGPool Tests ===" && ./$(BUILD_DIR)/test_sagpool
 	@echo "=== Running Token Merging Tests ===" && ./$(BUILD_DIR)/test_tome
+
+	@echo "=== Running Clustered Attention Tests ===" && ./$(BUILD_DIR)/test_clustered_attention
 
 clean:
 	rm -rf $(BUILD_DIR)
