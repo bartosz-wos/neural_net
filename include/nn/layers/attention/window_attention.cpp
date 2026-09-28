@@ -232,11 +232,176 @@ Tensor WindowAttention::forward(const Tensor& input) {
     return out_flat;
 }
 
-// Stub — full impl in Task 4. Returns zeros so the calling test fails at
-// runtime (rel_err > 1 against FD), not at link time.
+// =============================================================================
+// Backward: per-window local MHA reverse chain.
+//   out = (A @ V) @ W_o^T + b_o     (where A is the per-window softmax)
+//   dA = d_head_out @ V^T
+//   dV = A^T @ d_head_out
+//   dscores = A ⊙ (dA − Σ_k A ⊙ dA) row-wise   (softmax backward)
+//   dQ_slice = dscores @ K_slice
+//   dK_slice = dscores^T @ Q_slice
+// Then accumulate dscores[h, qi, ki] into grad_relative_position_bias_.
+// Finally d_Q, d_K, d_V → d_input, d_W_q, d_W_k, d_W_v.
+// =============================================================================
 Tensor WindowAttention::backward(const Tensor& grad_output, double /*learning_rate*/) {
+    if (grad_output.rows != last_out_pre_.rows || grad_output.cols != d_model_)
+        throw std::invalid_argument(
+            "WindowAttention.backward: grad_output shape mismatch");
+    const size_t N = grad_output.rows;
+
+    // ---- 1. Output projection backward ----
+    Tensor d_head_out(N, d_model_);
+    d_head_out.fill(0.0);
+    grad_W_o.fill(0.0);
+    grad_b_o.fill(0.0);
+    for (size_t t = 0; t < N; ++t) {
+        for (size_t j = 0; j < d_model_; ++j) {
+            double g = grad_output[t][j];
+            grad_b_o[0][j] += g;
+            for (size_t k = 0; k < d_model_; ++k) {
+                grad_W_o[k][j] += last_head_out_[t][k] * g;
+                d_head_out[t][k] += W_o[k][j] * g;
+            }
+        }
+    }
+
+    // ---- 2. Per-window attention backward ----
+    Tensor d_Q(N, d_model_), d_K(N, d_model_), d_V(N, d_model_);
+    d_Q.fill(0.0); d_K.fill(0.0); d_V.fill(0.0);
     grad_W_q.fill(0.0); grad_W_k.fill(0.0); grad_W_v.fill(0.0);
-    grad_W_o.fill(0.0); grad_b_o.fill(0.0);
     grad_relative_position_bias_.fill(0.0);
-    return Tensor(grad_output.rows, grad_output.cols);
+
+    for (size_t w = 0; w < num_windows_; ++w) {
+        for (size_t h = 0; h < num_heads_; ++h) {
+            const size_t h_off = h * head_dim_;
+            // Pull cached A row-by-row
+            const size_t attn_base = (w * num_heads_ + h) * M2_;
+
+            // dV_slice (M², head_dim_):  dV[ki, d] = Σ_qi A[qi, ki] · d_head_out[qi, d]
+            Tensor dVs(M2_, head_dim_);
+            dVs.fill(0.0);
+            for (size_t ki = 0; ki < M2_; ++ki) {
+                for (size_t d = 0; d < head_dim_; ++d) {
+                    double s = 0.0;
+                    for (size_t qi = 0; qi < M2_; ++qi) {
+                        const size_t g_q = window_indices_[w * M2_ + qi];
+                        s += last_attn_[attn_base + qi][ki] * d_head_out[g_q][h_off + d];
+                    }
+                    dVs[ki][d] = s;
+                }
+            }
+
+            // dA (M², M²):  dA[qi, ki] = Σ_d d_head_out[qi, d] · V[ki, d]
+            Tensor dA(M2_, M2_);
+            for (size_t qi = 0; qi < M2_; ++qi) {
+                const size_t g_q = window_indices_[w * M2_ + qi];
+                for (size_t ki = 0; ki < M2_; ++ki) {
+                    const size_t g_k = window_indices_[w * M2_ + ki];
+                    double s = 0.0;
+                    for (size_t d = 0; d < head_dim_; ++d) {
+                        s += d_head_out[g_q][h_off + d] * last_v_[g_k][h_off + d];
+                    }
+                    dA[qi][ki] = s;
+                }
+            }
+
+            // Softmax backward:  dscores = A ⊙ (dA − Σ_ki A[qi, ki]·dA[qi, ki])
+            // This is dL/d(scores_final) where scores_final = scale * QK^T + rpb.
+            Tensor dscores(M2_, M2_);
+            for (size_t qi = 0; qi < M2_; ++qi) {
+                double dot = 0.0;
+                for (size_t ki = 0; ki < M2_; ++ki)
+                    dot += last_attn_[attn_base + qi][ki] * dA[qi][ki];
+                for (size_t ki = 0; ki < M2_; ++ki) {
+                    dscores[qi][ki] =
+                        last_attn_[attn_base + qi][ki] * (dA[qi][ki] - dot);
+                }
+            }
+
+            // Accumulate relative position bias gradient (no scale; rpb is added
+            // to scores AFTER scaling, so dL/d(rpb) = dscores exactly).
+            if (bias_type_ == "relative") {
+                for (size_t qi = 0; qi < M2_; ++qi) {
+                    const size_t qr = qi / M_;
+                    const size_t qc = qi % M_;
+                    for (size_t ki = 0; ki < M2_; ++ki) {
+                        const size_t kr = ki / M_;
+                        const size_t kc = ki % M_;
+                        const long dr = (long)kr - (long)qr;
+                        const long dc = (long)kc - (long)qc;
+                        const size_t bias_idx =
+                            ((size_t)(dr + (long)(M_ - 1))) * (2 * M_ - 1)
+                            + ((size_t)(dc + (long)(M_ - 1)));
+                        grad_relative_position_bias_[h][bias_idx] += dscores[qi][ki];
+                    }
+                }
+            }
+
+            // Now scale dscores for the QK^T path: scores_qk = (QK^T) * scale.
+            Tensor dscores_qk = dscores;  // copy
+            for (size_t qi = 0; qi < M2_; ++qi)
+                for (size_t ki = 0; ki < M2_; ++ki)
+                    dscores_qk[qi][ki] *= scale_;
+
+            // dQ_slice (M², head_dim_):  dQ[qi, d] = Σ_ki dscores_qk[qi, ki] · K[ki, d]
+            // dK_slice (M², head_dim_):  dK[ki, d] = Σ_qi dscores_qk[qi, ki] · Q[qi, d]
+            Tensor dQs(M2_, head_dim_);
+            Tensor dKs(M2_, head_dim_);
+            dQs.fill(0.0); dKs.fill(0.0);
+            // dQ: outer = qi, inner = ki  (Σ_ki dscores_qk[qi, ki] · K[ki, d])
+            for (size_t qi = 0; qi < M2_; ++qi) {
+                for (size_t d = 0; d < head_dim_; ++d) {
+                    double sQ = 0.0;
+                    for (size_t ki = 0; ki < M2_; ++ki) {
+                        const size_t g_k = window_indices_[w * M2_ + ki];
+                        sQ += dscores_qk[qi][ki] * last_k_[g_k][h_off + d];
+                    }
+                    dQs[qi][d] = sQ;
+                }
+            }
+            // dK: outer = ki, inner = qi  (Σ_qi dscores_qk[qi, ki] · Q[qi, d])
+            for (size_t ki = 0; ki < M2_; ++ki) {
+                for (size_t d = 0; d < head_dim_; ++d) {
+                    double sK = 0.0;
+                    for (size_t qi = 0; qi < M2_; ++qi) {
+                        const size_t g_q = window_indices_[w * M2_ + qi];
+                        sK += dscores_qk[qi][ki] * last_q_[g_q][h_off + d];
+                    }
+                    dKs[ki][d] = sK;
+                }
+            }
+
+            // Scatter into d_Q, d_K, d_V (per global token row)
+            for (size_t qi = 0; qi < M2_; ++qi) {
+                const size_t g = window_indices_[w * M2_ + qi];
+                for (size_t d = 0; d < head_dim_; ++d) {
+                    d_Q[g][h_off + d] += dQs[qi][d];
+                    d_K[g][h_off + d] += dKs[qi][d];
+                    d_V[g][h_off + d] += dVs[qi][d];
+                }
+            }
+        }
+    }
+
+    // ---- 3. QKV projection backward ----
+    // Forward:  Q[t][j] = Σ_f input[t][f] · W_q[j][f]
+    //   ⇒  grad_W_q[j][f] += Σ_t input[t][f] · d_Q[t][j]
+    //   ⇒  grad_input[t][f] += Σ_j (d_Q[t][j] · W_q[j][f] + d_K · W_k + d_V · W_v)
+    Tensor grad_input(N, d_model_);
+    grad_input.fill(0.0);
+    for (size_t t = 0; t < N; ++t) {
+        for (size_t f = 0; f < d_model_; ++f) {
+            double x = last_input_[t][f];
+            for (size_t j = 0; j < d_model_; ++j) {
+                grad_W_q[j][f] += x * d_Q[t][j];
+                grad_W_k[j][f] += x * d_K[t][j];
+                grad_W_v[j][f] += x * d_V[t][j];
+                grad_input[t][f] += d_Q[t][j] * W_q[j][f];
+                grad_input[t][f] += d_K[t][j] * W_k[j][f];
+                grad_input[t][f] += d_V[t][j] * W_v[j][f];
+            }
+        }
+    }
+
+    return grad_input;
 }
