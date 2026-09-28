@@ -199,6 +199,7 @@
 #include "layers/attention/fastformer.h"
 #include "layers/attention/clustered_attention.h"
 #include "layers/attention/window_attention.h"
+#include "layers/attention/linear_attention.h"
 
 // Layers — architectures (full model definitions)
 #include "layers/architectures/dcn_v2.h"
