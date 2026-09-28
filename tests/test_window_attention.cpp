@@ -280,6 +280,15 @@ static void test_fd_rpb_grad() {
     cout << "Test 10: FD relative_position_bias_ gradient\n";
     srand(11);
     WindowAttention wa(8, 2, 2, 4, 4, "relative");
+    // Manually set Q/K/V projections to small magnitude so the RPB contribution
+    // dominates the FD signal — otherwise the FD-vs-analytical disagreement
+    // on RPB is hidden under the much larger QK^T signal.
+    for (size_t i = 0; i < wa.W_q.data.size(); ++i) wa.W_q.data[i] *= 0.05;
+    for (size_t i = 0; i < wa.W_k.data.size(); ++i) wa.W_k.data[i] *= 0.05;
+    for (size_t i = 0; i < wa.W_v.data.size(); ++i) wa.W_v.data[i] *= 0.05;
+    // Boost RPB so its contribution to scores is comparable to QK^T
+    for (size_t i = 0; i < wa.relative_position_bias_.data.size(); ++i)
+        wa.relative_position_bias_.data[i] = 0.5;
     Tensor input = make_input(16, 8, 11);
     Tensor target = make_input(16, 8, 12);
     Tensor out = wa.forward(input);
