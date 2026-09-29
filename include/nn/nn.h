@@ -142,6 +142,7 @@
 #include "layers/normalization/eca.h"
 #include "layers/normalization/coord_attention.h"
 #include "layers/normalization/dynamic_tanh.h"
+#include "layers/normalization/layer_scale.h"
 #include "layers/normalization/scconv.h"
 #include "layers/normalization/crate.h"
 #include "layers/normalization/adaln_zero.h"

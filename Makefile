@@ -82,6 +82,9 @@ $(BUILD_DIR)/test_spectral_norm: $(LIB_OBJS) $(BUILD_DIR)/test_spectral_norm.o
 $(BUILD_DIR)/test_dynamic_tanh: $(LIB_OBJS) $(BUILD_DIR)/test_dynamic_tanh.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_layer_scale: $(LIB_OBJS) $(BUILD_DIR)/test_layer_scale.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_adaln_zero: $(LIB_OBJS) $(BUILD_DIR)/test_adaln_zero.o
 	$(CXX) $^ -o $@
 
@@ -718,7 +721,7 @@ $(BUILD_DIR)/test_suite: $(LIB_OBJS) $(BUILD_DIR)/test_suite.o
 tests: setup $(BUILD_DIR)/test_realnvp $(BUILD_DIR)/test_neural_spline_flow $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_adabelief $(BUILD_DIR)/test_s4 \
 $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
-$(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
+$(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_layer_scale $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
 $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
@@ -767,6 +770,7 @@ run_tests: tests
 	@echo "=== Running RMSNorm Tests ===" && ./$(BUILD_DIR)/test_rmsnorm
 	@echo "=== Running SpectralNorm Tests ===" && ./$(BUILD_DIR)/test_spectral_norm
 	@echo "=== Running DynamicTanh Tests ===" && ./$(BUILD_DIR)/test_dynamic_tanh
+	@echo "=== Running LayerScale Tests ===" && ./$(BUILD_DIR)/test_layer_scale
 	@echo "=== Running Average Pooling Tests ===" && ./$(BUILD_DIR)/test_avgpool2d
 	@echo "=== Running DeepGCN Tests ===" && ./$(BUILD_DIR)/test_deep_gcn
 	@echo "=== Running DMon Tests ===" && ./$(BUILD_DIR)/test_dmon
