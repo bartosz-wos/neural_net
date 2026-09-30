@@ -200,6 +200,7 @@
 #include "layers/attention/mixture_of_softmaxes.h"
 #include "layers/attention/fastformer.h"
 #include "layers/attention/clustered_attention.h"
+#include "layers/attention/qk_norm.h"
 #include "layers/attention/window_attention.h"
 #include "layers/attention/linear_attention.h"
 
