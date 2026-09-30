@@ -589,6 +589,9 @@ $(BUILD_DIR)/test_capsule: $(LIB_OBJS) $(BUILD_DIR)/test_capsule.o
 $(BUILD_DIR)/test_kan: $(LIB_OBJS) $(BUILD_DIR)/test_kan.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_fourier_kan: $(LIB_OBJS) $(BUILD_DIR)/test_fourier_kan.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_lightgbm_style: $(LIB_OBJS) $(BUILD_DIR)/test_lightgbm_style.o
 	$(CXX) $^ -o $@
 
@@ -752,7 +755,7 @@ $(BUILD_DIR)/test_clustered_attention \
 $(BUILD_DIR)/test_window_attention \
 $(BUILD_DIR)/test_linear_attention \
 $(BUILD_DIR)/test_span_extractor $(BUILD_DIR)/test_mla $(BUILD_DIR)/test_mixture_of_depths $(BUILD_DIR)/test_graphsage \
-$(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
+$(BUILD_DIR)/test_capsule $(BUILD_DIR)/test_kan $(BUILD_DIR)/test_fourier_kan $(BUILD_DIR)/test_gumbel_softmax $(BUILD_DIR)/test_bigbird \
 $(BUILD_DIR)/test_tabnet $(BUILD_DIR)/test_alibi $(BUILD_DIR)/test_spatial_transformer $(BUILD_DIR)/test_transformer_decoder \
 $(BUILD_DIR)/test_hypernetwork $(BUILD_DIR)/test_instance_norm $(BUILD_DIR)/test_ademamix $(BUILD_DIR)/test_sgd_nesterov \
 $(BUILD_DIR)/test_lr_schedulers $(BUILD_DIR)/test_muon \
@@ -851,6 +854,7 @@ run_tests: tests
 	@echo "=== Running GraphSAGE Tests ===" && ./$(BUILD_DIR)/test_graphsage
 	@echo "=== Running CapsuleLayer Tests ===" && ./$(BUILD_DIR)/test_capsule
 	@echo "=== Running KAN Tests ===" && ./$(BUILD_DIR)/test_kan
+	@echo "=== Running FourierKAN Tests ===" && ./$(BUILD_DIR)/test_fourier_kan
 	@echo "=== Running Gumbel-Softmax Tests ===" && ./$(BUILD_DIR)/test_gumbel_softmax
 	@echo "=== Running Lion Tests ===" && ./$(BUILD_DIR)/test_lion
 	@echo "=== Running Sophia Tests ===" && ./$(BUILD_DIR)/test_sophia

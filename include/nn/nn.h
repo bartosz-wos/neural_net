@@ -272,6 +272,7 @@
 #include "layers/utility/stochastic_depth.h"
 #include "layers/utility/ff_layer.h"
 #include "layers/utility/kan.h"
+#include "layers/utility/fourier_kan.h"
 #include "layers/utility/gumbel_softmax.h"
 #include "layers/utility/hypernetwork.h"
 #include "layers/utility/lora.h"
