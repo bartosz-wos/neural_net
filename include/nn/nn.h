@@ -146,6 +146,7 @@
 #include "layers/normalization/scconv.h"
 #include "layers/normalization/crate.h"
 #include "layers/normalization/adaln_zero.h"
+#include "layers/normalization/timestep_norm.h"
 
 // Layers — attention
 #include "layers/attention/transformer.h"

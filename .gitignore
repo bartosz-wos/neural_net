@@ -29,6 +29,11 @@ tests/test_*chain*.cpp
 tests/test_*bugs*.cpp
 tests/test_*isolated*.cpp
 tests/test_*step*.cpp
+# Exception: TimestepNorm is a shipped MEGALODON layer (arXiv:2404.08801
+# §3.2), not an ad-hoc per-step debug test. The `*step*` rule above exists to
+# catch scratch gradient-tracing files and would otherwise swallow it.
+!tests/test_timestep_norm.cpp
+!tests/test_timestep_norm_grad.cpp
 tests/test_*eps*.cpp
 tests/test_*flow*.cpp
 !tests/test_neural_spline_flow.cpp
