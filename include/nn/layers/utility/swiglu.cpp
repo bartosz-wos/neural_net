@@ -1,4 +1,5 @@
 #include "swiglu.h"
+#include <stdexcept>
 
 template<typename A>
 SwiGLU<A>::SwiGLU(size_t dim_input, size_t dim_hidden, bool use_bias)
@@ -8,6 +9,7 @@ SwiGLU<A>::SwiGLU(size_t dim_input, size_t dim_hidden, bool use_bias)
       dim_hidden_(dim_hidden),
       use_bias_(use_bias),
       last_input_(0, 0),
+      last_h1_raw_(0, 0),
       last_h1_(0, 0),
       last_h2_(0, 0),
       last_output_(0, 0)
@@ -22,6 +24,10 @@ Tensor SwiGLU<A>::forward(const Tensor& input) {
 
     // h1 = W1 @ x  (batch, dim_hidden)
     Tensor h1 = w1_.forward(input);
+    // CACHE THE PRE-ACTIVATION. The backward pass needs sigmoid(h1_raw) to
+    // evaluate the swish derivative; recomputing it there is impossible
+    // because w1_'s own Dense only caches its INPUT, not its output.
+    last_h1_raw_ = h1.clone();
     // h2 = W2 @ x  (batch, dim_hidden)
     Tensor h2 = w2_.forward(input);
 
@@ -61,11 +67,17 @@ Tensor SwiGLU<A>::backward(const Tensor& grad_output, double /* learning_rate */
     // last_h1_ = act(W1 @ x) = swish(h1_raw)
     Tensor grad_h2 = grad_output.hadamard(last_h1_);
 
-    // For swish'(h1_raw): we need sigmoid(h1_raw), not swish value
-    // last_h2_ holds W2 @ x (not the activation), so we need raw h1.
-    // But we only cached last_h1_ = act(h1_raw). We need raw h1 for sigmoid.
-    // Recompute h1_raw = W1 @ last_input_ to get sigmoid.
-    Tensor h1_raw = w1_.last_input;           // (batch, dim_hidden)
+    // grad_h1 = grad_h1_raw .* swish'(h1_raw)
+    //
+    // h1_raw must be the PRE-ACTIVATION W1 @ x + b1, cached by forward().
+    // It is NOT w1_.last_input: Dense caches its own *input* there, and when
+    // dim_input != dim_hidden that tensor is both the wrong value and the
+    // wrong shape (reading sigmoid(x) out of it was a heap over-read).
+    Tensor& h1_raw = last_h1_raw_;
+    if (h1_raw.rows != grad_output.rows || h1_raw.cols != grad_output.cols) {
+        throw std::logic_error("SwiGLU::backward called before forward (or with a "
+                               "grad_output whose shape does not match the forward output)");
+    }
     Tensor sigmoid_h1_raw(h1_raw.rows, h1_raw.cols);
     for (size_t i = 0; i < h1_raw.data.size(); ++i) {
         double x = h1_raw.data[i];

@@ -103,6 +103,15 @@ $(BUILD_DIR)/test_complex_ema: $(LIB_OBJS) $(BUILD_DIR)/test_complex_ema.o
 $(BUILD_DIR)/test_complex_ema_grad: $(LIB_OBJS) $(BUILD_DIR)/test_complex_ema_grad.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_megalodon: $(LIB_OBJS) $(BUILD_DIR)/test_megalodon.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_swiglu: $(LIB_OBJS) $(BUILD_DIR)/test_swiglu.o
+	$(CXX) $^ -o $@
+
+$(BUILD_DIR)/test_megalodon_grad: $(LIB_OBJS) $(BUILD_DIR)/test_megalodon_grad.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_adaln_zero: $(LIB_OBJS) $(BUILD_DIR)/test_adaln_zero.o
 	$(CXX) $^ -o $@
 

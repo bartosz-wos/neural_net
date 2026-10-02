@@ -43,7 +43,8 @@ private:
     size_t dim_hidden_;
     bool use_bias_;
 
-    Tensor last_input_;   // cached for backward pass: (batch, dim_input)
+    Tensor last_input_;   // cached: forward input, shape (batch, dim_input)
+    Tensor last_h1_raw_;  // cached: W1 @ x + b1, PRE-activation, shape (batch, dim_hidden)
     Tensor last_h1_;      // cached: SiLU(W1 @ x), shape (batch, dim_hidden)
     Tensor last_h2_;      // cached: W2 @ x (gate), shape (batch, dim_hidden)
     Tensor last_output_;  // cached: forward output for debugging
