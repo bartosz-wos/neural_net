@@ -34,6 +34,11 @@ tests/test_*step*.cpp
 # catch scratch gradient-tracing files and would otherwise swallow it.
 !tests/test_timestep_norm.cpp
 !tests/test_timestep_norm_grad.cpp
+# Exception: ComplexEMA is a shipped MEGALODON layer (arXiv:2404.08801 §3.1),
+# not an ad-hoc per-step debug test. Its FD suite is `*grad*` so it needs the
+# same exemption.
+!tests/test_complex_ema.cpp
+!tests/test_complex_ema_grad.cpp
 tests/test_*eps*.cpp
 tests/test_*flow*.cpp
 !tests/test_neural_spline_flow.cpp
