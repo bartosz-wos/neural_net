@@ -36,6 +36,22 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
     std::string name() const override { return "SwiGLU"; }
 
+    // Direct access to the two underlying Dense projections. The public
+    // parameters()/gradients() accessors return a fresh vector of POINTERS,
+    // which is all a caller needs for generic SGD; these return stable
+    // addresses for callers that need to hold onto a specific tensor
+    // (e.g. embedding a SwiGLU inside a composite Layer's parameter list).
+    Tensor& w1_weights() { return w1_.weights; }
+    Tensor& w1_bias()     { return w1_.bias; }
+    Tensor& w2_weights() { return w2_.weights; }
+    Tensor& w2_bias()     { return w2_.bias; }
+    Tensor& grad_w1_weights() { return w1_.grad_weights; }
+    Tensor& grad_w1_bias()     { return w1_.grad_bias; }
+    Tensor& grad_w2_weights() { return w2_.grad_weights; }
+    Tensor& grad_w2_bias()     { return w2_.grad_bias; }
+    size_t dim_input()  const { return dim_input_; }
+    size_t dim_hidden() const { return dim_hidden_; }
+
 private:
     Dense w1_;                          // (dim_hidden, dim_input)
     Dense w2_;                          // (dim_hidden, dim_input)
