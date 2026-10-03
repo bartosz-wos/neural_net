@@ -235,6 +235,7 @@
 #include "layers/architectures/gmlp.h"
 #include "layers/architectures/mlp_mixer.h"
 #include "layers/architectures/hyena.h"
+#include "layers/architectures/striped_hyena.h"
 #include "layers/architectures/jamba.h"
 #include "layers/architectures/moe_mamba.h"
 #include "layers/architectures/soft_moe.h"
