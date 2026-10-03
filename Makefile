@@ -1,5 +1,12 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -march=native
+# -MMD -MP: emit a .d sidecar per translation unit recording every header it
+# included, and add phony targets for headers that get deleted. Without this the
+# build has NO header dependency tracking: changing a class layout in a header
+# (adding a member to SwiGLU / MegalodonBlock) recompiles only the .cpp that
+# owns it, every other translation unit keeps the OLD layout, and linking the
+# two produces an ODR violation that surfaces far from the cause (double free
+# in a destructor, or silently stale accessor values). See the -include below.
+CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -march=native -MMD -MP
 INCLUDES = -Iinclude
 
 BUILD_DIR = build
@@ -15,7 +22,22 @@ LIB_OBJS := $(LIB_SRCS:include/nn/%.cpp=$(BUILD_DIR)/%.o)
 # All unique dirs needed
 ALL_DIRS := $(sort $(dir $(LIB_OBJS)))
 
-.PHONY: all clean setup tests run_tests
+# Header dependency sidecars emitted by -MMD (see CXXFLAGS). These are
+# included as makefiles so that editing a header rebuilds every .cpp that
+# includes it. Without this line make never sees the .d files and header edits
+# silently produce stale objects.
+DEPS := $(LIB_OBJS:.o=.d) \
+        $(patsubst $(DEMOS_DIR)/%.cpp,$(BUILD_DIR)/%.d,$(wildcard $(DEMOS_DIR)/*.cpp)) \
+        $(patsubst tests/%.cpp,$(BUILD_DIR)/test_%.d,$(wildcard tests/*.cpp))
+-include $(DEPS)
+
+# make treats objects built only to satisfy an implicit rule (the demos, which
+# have no explicit $(BUILD_DIR)/demo_x target) as INTERMEDIATE files and deletes
+# them after linking, which defeats incremental builds — every `make all` would
+# relink every demo from scratch. .SECONDARY keeps them.
+.SECONDARY:
+
+.PHONY: all clean setup tests run_tests nuke-deps
 
 all: setup \
 	$(BUILD_DIR)/nn_demo \
@@ -1014,3 +1036,12 @@ run_tests: tests
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Escape hatch for the ODR-violation failure mode that -MMD now prevents in the
+# normal case. If a header layout change ever still produces a stale object
+# (e.g. a header swapped wholesale, or a .d sidecar pruned), nuke-deps forces a
+# full rebuild, which is the only reliable recovery. A full rebuild is ~40 s.
+nuke-deps:
+	@find $(BUILD_DIR) -name '*.o' -delete
+	@echo "Removed all object files. Next build will be a full rebuild."
+
