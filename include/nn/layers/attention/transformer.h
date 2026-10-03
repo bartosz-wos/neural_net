@@ -13,6 +13,7 @@ public:
     Tensor last_q, last_k, last_v;   // cached Q, K, V after projection
     Tensor last_scores;              // cached attention scores for backward
     Tensor last_attn_out;
+    Tensor last_attn_acc;   // pre-W_o attention output (input to the W_o matmul)
     Tensor last_x;
     size_t batch_size;
 

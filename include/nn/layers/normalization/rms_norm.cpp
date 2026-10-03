@@ -5,7 +5,16 @@ RMSNorm::RMSNorm(size_t features, double eps)
     : gamma(Tensor::random(1, features, 0.01))
     , eps(eps)
     , training(true)
+    // Allocate the gradient buffers here rather than lazily inside backward().
+    // LayerNorm does the same, and the lazy path breaks the repo-wide contract
+    // that parameters()[i] and gradients()[i] have matching shapes: any
+    // composite Layer that embeds an RMSNorm and exposes it via
+    // parameters()/gradients() would report a (0,0) gradient tensor until the
+    // first backward call ever happened.
+    , grad_gamma_(1, features)
+    , grad_x(0, 0)
 {
+    grad_gamma_.fill(0.0);
 }
 
 Tensor RMSNorm::forward(const Tensor& input) {

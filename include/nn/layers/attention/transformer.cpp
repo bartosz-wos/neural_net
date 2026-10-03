@@ -160,6 +160,11 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
         }
     }
     last_attn_out = output;
+    // Cache the PRE-W_o attention output as well. grad_W_o is an outer product
+    // with the layer INPUT of the W_o matmul, which is output_acc — using the
+    // post-projection `output` here instead silently gives every W_o gradient
+    // element the wrong value. See grad_W_o accumulation in backward().
+    last_attn_acc = output_acc;
 
     // Reshape output back to (d_model, seq_len)
     Tensor out_back(d_model, seq_len);
@@ -180,28 +185,43 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
         for (size_t s = 0; s < seq_len; ++s)
             grad_out[s][f] = grad_output[f][s];
 
-    // 2. Propagate through W_o: grad_proj = grad_out @ W_o^T
-    // grad_proj: (tokens, d_model), W_o: (d_model, d_model)
-    // grad_proj[i][j] = sum_k grad_out[i][k] * W_o[k][j]
+    // 2. Propagate through W_o to reach the pre-projection attention output.
+    //
+    //    forward: output[i][j] = sum_k acc[i][k] * W_o[k][j]
+    //    so:     grad_acc[i][k] = sum_j grad_out[i][j] * W_o[k][j]
+    //
+    //    The contraction is over the OUTPUT index j, with W_o's row index k
+    //    held fixed. The previous code summed grad_out[i][k] * W_o[k][j],
+    //    contracting over k and keeping j free — that is the transpose of the
+    //    correct expression, and it is the source of the large input-gradient
+    //    error (the wrong tensor then feeds the Q/K/V splits below).
     Tensor grad_proj(tokens, d_model);
     for (size_t i = 0; i < tokens; ++i) {
-        for (size_t j = 0; j < d_model; ++j) {
+        for (size_t k = 0; k < d_model; ++k) {
             double v = 0.0;
-            for (size_t k = 0; k < d_model; ++k)
-                v += grad_out[i][k] * W_o[k][j];
-            grad_proj[i][j] = v;
+            for (size_t j = 0; j < d_model; ++j)
+                v += grad_out[i][j] * W_o[k][j];
+            grad_proj[i][k] = v;
         }
     }
 
-    // Accumulate grad_W_o += grad_out^T @ last_attn_out
-    // grad_out: (tokens, d_model), last_attn_out: (tokens, d_model)
-    // grad_W_o += grad_out^T @ last_attn_out = (d_model, tokens) @ (tokens, d_model) = (d_model, d_model)
-    for (size_t i = 0; i < d_model; ++i) {
+    // Accumulate grad_W_o += grad_out^T @ last_attn_acc
+    //
+    // W_o's matmul is  output[i][j] = sum_k acc[i][k] * W_o[k][j],
+    // i.e. `out = acc @ W_o^T`. Differentiating w.r.t. W_o[k][j]:
+    //
+    //   dL/dW_o[k][j] = sum_i dL/dout[i][j] * acc[i][k]
+    //
+    // The previous code computed sum_t grad_out[t][i] * acc[t][j], i.e. it
+    // filled element (i,j) with the value that belongs at (j,i) — the whole
+    // matrix came out transposed, and it also used the post-projection
+    // `output` instead of the pre-projection `acc`. Both are fixed here.
+    for (size_t k = 0; k < d_model; ++k) {
         for (size_t j = 0; j < d_model; ++j) {
             double v = 0.0;
             for (size_t t = 0; t < tokens; ++t)
-                v += grad_out[t][i] * last_attn_out[t][j];
-            grad_W_o[i][j] += v;
+                v += grad_out[t][j] * last_attn_acc[t][k];
+            grad_W_o[k][j] += v;
         }
     }
 
@@ -248,61 +268,90 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
                 attn_probs[i][j] = attn_scores[i][j] / sum_exp;
         }
 
-        // Compute dL/dV_h_t = grad_attn_h^T @ attn_probs
-        // grad_attn_h: (tokens, d_k), attn_probs: (tokens, tokens)
-        // grad_V_h_t[i][dk] = sum_t grad_attn_h[t][dk] * attn_probs[t][i]
+        // ------------------------------------------------------------------
+        // Attention backward, per head.
+        //
+        // Forward chain:  scores[i][j] = (Q[i]·K[j])/sqrt(d_k)
+        //                 P[i][j]      = softmax_j(scores[i][j])
+        //                 out[i]       = sum_j P[i][j] * V[j]
+        //
+        // So, with grad_out = grad_attn_h (tokens, d_k):
+        //   dV[j][dk]   = sum_i P[i][j] * grad_out[i][dk]
+        //   dP[i][j]    = sum_dk grad_out[i][dk] * V[j][dk]
+        //   dScores     = P .* (dP - rowsum_i(P .* dP))      <- softmax Jacobian
+        //   dQ[i][dk]   = (sum_j dScores[i][j] * K[j][dk]) / sqrt(d_k)
+        //   dK[j][dk]   = (sum_i dScores[i][j] * Q[i][dk]) / sqrt(d_k)
+        //
+        // The previous implementation SKIPPED the softmax Jacobian and treated
+        // the attention map as linear in the scores. That is a real bug, not
+        // an approximation: it makes the analytical input gradient disagree
+        // with centered finite differences by a factor ~1, and the
+        // disagreement does not shrink as eps shrinks. See
+        // tests/test_mha_backward.cpp.
+        // ------------------------------------------------------------------
+
+        // dV[j][dk] = sum_i P[i][j] * grad_out[i][dk]
         Tensor grad_V_h_t(tokens, d_k);
-        for (size_t i = 0; i < tokens; ++i) {
-            for (size_t dk = 0; dk < d_k; ++dk) {
-                double v = 0.0;
-                for (size_t t = 0; t < tokens; ++t)
-                    v += grad_attn_h[t][dk] * attn_probs[t][i];
-                grad_V_h_t[i][dk] = v;
-            }
-        }
-
-        // Compute dL/dK_h_t = grad_attn_h @ Q_h hadamard attn_probs / sqrt(d_k)
-        // First compute M = grad_attn_h @ Q_h: (tokens, d_k) @ (d_k, tokens) = (tokens, tokens)
-        // Then grad_K_h_t[i][dk] = sum_j attn_probs[j][i] * M[j][dk] / sqrt(d_k)
-        Tensor M(tokens, d_k);
         for (size_t j = 0; j < tokens; ++j) {
             for (size_t dk = 0; dk < d_k; ++dk) {
                 double v = 0.0;
-                for (size_t t = 0; t < tokens; ++t)
-                    v += grad_attn_h[t][dk] * Q_h[dk][t];
-                M[j][dk] = v;
-            }
-        }
-        Tensor grad_K_h_t(tokens, d_k);
-        for (size_t i = 0; i < tokens; ++i) {
-            for (size_t dk = 0; dk < d_k; ++dk) {
-                double v = 0.0;
-                for (size_t j = 0; j < tokens; ++j)
-                    v += attn_probs[j][i] * M[j][dk];
-                grad_K_h_t[i][dk] = v / std::sqrt((double)d_k);
+                for (size_t i = 0; i < tokens; ++i)
+                    v += attn_probs[i][j] * grad_attn_h[i][dk];
+                grad_V_h_t[j][dk] = v;
             }
         }
 
-        // Compute dL/dQ_h_t = grad_attn_h @ K_h hadamard attn_probs / sqrt(d_k)
-        // N = grad_attn_h @ K_h: (tokens, d_k) @ (d_k, tokens) = (tokens, tokens)
-        Tensor N(tokens, d_k);
-        for (size_t j = 0; j < tokens; ++j) {
-            for (size_t dk = 0; dk < d_k; ++dk) {
+        // dP[i][j] = sum_dk grad_out[i][dk] * V[j][dk]
+        Tensor dP(tokens, tokens);
+        for (size_t i = 0; i < tokens; ++i)
+            for (size_t j = 0; j < tokens; ++j) {
                 double v = 0.0;
-                for (size_t t = 0; t < tokens; ++t)
-                    v += grad_attn_h[t][dk] * K_h[dk][t];
-                N[j][dk] = v;
+                for (size_t dk = 0; dk < d_k; ++dk)
+                    v += grad_attn_h[i][dk] * V_h[dk][j];
+                dP[i][j] = v;
+            }
+
+        // Softmax Jacobian: dScores[i][j] = P[i][j] * (dP[i][j] - sum_k P[i][k]*dP[i][k])
+        //
+        // The forward applies a CAUSAL MASK as an additive -1e9 constant to
+        // scores[i][j] for j > i. That constant has zero derivative, so the
+        // gradient w.r.t. every masked score is exactly 0. P[i][j] is already
+        // ~exp(-1e9) there, which is 0 to double precision, so the product
+        // below vanishes on its own — but relying on exp(-1e9) underflowing is
+        // implicit and fragile. Zero the masked entries explicitly.
+        Tensor dScores(tokens, tokens);
+        for (size_t i = 0; i < tokens; ++i) {
+            double rowsum = 0.0;
+            for (size_t k = 0; k < tokens; ++k) rowsum += attn_probs[i][k] * dP[i][k];
+            for (size_t j = 0; j < tokens; ++j) {
+                // The forward's causal mask is structural (j > i), so the
+                // mask is recoverable without keeping a second copy of the
+                // scores — attn_scores above has already been overwritten in
+                // place by the exponentials.
+                dScores[i][j] = (j > i) ? 0.0
+                                        : attn_probs[i][j] * (dP[i][j] - rowsum);
             }
         }
+
+        // dQ[i][dk] = (sum_j dScores[i][j] * K[j][dk]) / sqrt(d_k)
         Tensor grad_Q_h_t(tokens, d_k);
-        for (size_t i = 0; i < tokens; ++i) {
+        for (size_t i = 0; i < tokens; ++i)
             for (size_t dk = 0; dk < d_k; ++dk) {
                 double v = 0.0;
                 for (size_t j = 0; j < tokens; ++j)
-                    v += attn_probs[j][i] * N[j][dk];
+                    v += dScores[i][j] * K_h[dk][j];
                 grad_Q_h_t[i][dk] = v / std::sqrt((double)d_k);
             }
-        }
+
+        // dK[j][dk] = (sum_i dScores[i][j] * Q[i][dk]) / sqrt(d_k)
+        Tensor grad_K_h_t(tokens, d_k);
+        for (size_t j = 0; j < tokens; ++j)
+            for (size_t dk = 0; dk < d_k; ++dk) {
+                double v = 0.0;
+                for (size_t i = 0; i < tokens; ++i)
+                    v += dScores[i][j] * Q_h[dk][i];
+                grad_K_h_t[j][dk] = v / std::sqrt((double)d_k);
+            }
 
         // Reshape grad_Q_h_t (tokens, d_k) -> full Q gradient (tokens, d_model)
         for (size_t t = 0; t < tokens; ++t) {
@@ -331,16 +380,37 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
         }
     }
 
-    // 5. Backprop through Q=x@W_q^T: grad_x = grad_q @ W_q
-    // grad_q: (tokens, d_model), W_q: (d_model, d_model)
-    // grad_x[i][j] = sum_k grad_q[i][k] * W_q[k][j]
+    // 5. Backprop through the three input projections.
+    //
+    //    Q = x @ W_q^T, i.e.  Q[i][j] = sum_k x[i][k] * W_q[k][j]
+    //    so  dQ[i][j] / dx[i][k] = W_q[k][j], and x feeds all three projections:
+    //
+    //      grad_x[i][k] = sum_j ( grad_q[i][j] * W_q[k][j]
+    //                        + grad_k[i][j] * W_k[k][j]
+    //                        + grad_v[i][j] * W_v[k][j] )
+    //
+    //    The FREE index of grad_x is k (the x column); the CONTRACTED index is
+    //    j (the W output column). The previous code wrote
+    //
+    //      grad_x[i][j] = sum_k grad_q[i][k] * W[k][j]
+    //
+    //    which contracts over k and leaves j free — the transpose of the
+    //    correct expression. Because W is (d_model, d_model) this compiles and
+    //    runs without complaint, and it produces a plausible-magnitude wrong
+    //    number, so it survived every shape check. It is visible only against
+    //    finite differences: the parameter gradients in step 4 above use
+    //    grad_W[i][j] = sum_t x[t][i] * grad[t][j] (k contracted, j free — the
+    //    correct pairing), which is why grad_W_* verified to 1e-10 while
+    //    grad_x disagreed by ~0.5 and did not improve as eps shrank.
     Tensor grad_x(tokens, d_model);
     for (size_t i = 0; i < tokens; ++i) {
-        for (size_t j = 0; j < d_model; ++j) {
+        for (size_t k = 0; k < d_model; ++k) {
             double v = 0.0;
-            for (size_t k = 0; k < d_model; ++k)
-                v += grad_q[i][k] * W_q[k][j];
-            grad_x[i][j] = v;
+            for (size_t j = 0; j < d_model; ++j)
+                v += grad_q[i][j] * W_q[k][j]
+                   + grad_k[i][j] * W_k[k][j]
+                   + grad_v[i][j] * W_v[k][j];
+            grad_x[i][k] = v;
         }
     }
 
