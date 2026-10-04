@@ -858,13 +858,48 @@ static double fd_op_param_grad(HyenaDNAOperator& op, Tensor& param, size_t i,
     return (lp - lm) / (2.0 * eps);
 }
 
+// Rescale an operator's multiplicative weights so its forward output and
+// gradients sit in a well-conditioned range (~1e-1 rather than ~1e-6). Without
+// this the FD check is vacuous — see systematic-debugging 5c on test-config
+// degeneracy. The FILTER SHAPE is untouched: only the magnitude of the
+// short-conv weights and the filter's final projection change, so every
+// structural property under test is preserved.
+static void well_conditioned_operator(HyenaDNAOperator& op) {
+    const double TARGET = 3.0;   // scale factor
+    for (size_t i = 0; i < op.short_W.rows; ++i)
+        for (size_t j = 0; j < op.short_W.cols; ++j) op.short_W[i][j] *= TARGET;
+    for (size_t i = 0; i < op.filter.mlp_out_W.rows; ++i)
+        for (size_t j = 0; j < op.filter.mlp_out_W.cols; ++j)
+            op.filter.mlp_out_W[i][j] *= TARGET;
+    // Give the skip bias a non-zero value so the per-channel skip term is
+    // load-bearing (at bias=0 the `+ bias*v` path contributes nothing and
+    // dropping it would pass vacuously).
+    for (size_t c = 0; c < op.filter.bias.cols; ++c)
+        op.filter.bias[0][c] = 0.3 + 0.11 * (double)c;
+}
+
 static void test_operator_fd_gradients() {
     std::printf("Test 6: operator FD gradients\n");
 
     // order=3 so the recurrence loop runs TWICE (order=2 runs once and a
     // `+=`-vs-`=` bug there is invisible to FD).
+    //
+    // FIXTURE SCALING (systematic-debugging 5c). At the default init the
+    // operator is numerically DEGENERATE for a gradient check: every
+    // recurrence step multiplies several ~0.1-scale quantities (the
+    // sin-bounded implicit MLP output, the short conv, the exponentially
+    // damped filter), so the forward output lands at ~1e-6 and the input
+    // gradient at ~1e-15. A centered difference with eps=1e-6 on a 1e-12
+    // loss is pure noise — rel_err comes out "0" because BOTH sides are
+    // 0, which is a vacuous pass, not a pass.
+    //
+    // The fix is the config, not the implementation: rescale the two
+    // multiplicative knobs (short conv weights and the filter's final
+    // projection) so the operator operates in a well-conditioned range.
+    // `well_conditioned_operator` is the helper.
     size_t L = 5, D = 4;
     HyenaDNAOperator op(D, 6, 2, 3, 4, 3);
+    well_conditioned_operator(op);
     Tensor x = random_tensor(L, D, 0.5);
 
     Tensor y = op.forward(x);
@@ -927,6 +962,7 @@ static void test_operator_fd_gradients() {
     // test could not reach.
     {
         HyenaDNAOperator bop(D, 6, 2, 3, 4, 3);
+        well_conditioned_operator(bop);
         Tensor bx = random_tensor(L, D, 0.5);
         Tensor by = bop.forward(bx);
         bop.zero_grad();
@@ -958,6 +994,7 @@ static void test_operator_fd_gradients() {
     // --- short conv params
     {
         HyenaDNAOperator sop(D, 6, 1, 2, 4, 3);
+        well_conditioned_operator(sop);
         Tensor sx = random_tensor(L, D, 0.5);
         Tensor sy = sop.forward(sx);
         sop.zero_grad();
@@ -971,6 +1008,7 @@ static void test_operator_fd_gradients() {
     // --- zero_grad / update_weights
     {
         HyenaDNAOperator zop(D, 6, 1, 2, 4, 3);
+        well_conditioned_operator(zop);
         Tensor zx = random_tensor(L, D, 0.5);
         Tensor zy = zop.forward(zx);
         zop.zero_grad();

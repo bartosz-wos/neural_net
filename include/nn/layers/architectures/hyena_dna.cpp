@@ -446,14 +446,22 @@ Tensor HyenaDNAOperator::forward(const Tensor& input) {
             for (size_t l = 0; l < L; ++l)
                 v[c][l] = uc[l][h * (O + 1) * HD + O * HD + c];
 
-        // --- the recurrence, for o = O-1 down to 1 (matching the reference's
-        //     `for o, x_i in enumerate(reversed(x[1:]))`):
+        // --- the recurrence, for gate index o = O-1 down to 1 (matching the
+        //     reference's `for o, x_i in enumerate(reversed(x[1:]))`, which
+        //     walks gates x_{O-1}, x_{O-2}, ..., x_1 — i.e. O-1 iterations):
         //         v = v * x[o]                          (element-wise gate D_x)
-        //         v = long_conv(v, k_o) + bias_o * v    (T_h then the skip)
-        // Filter k_o for head h is k[:, h*(O-1) + o] and the skip is
-        // bias[:, h*(O-1) + o] — the reference index layout
-        // `rearrange(k, "c l (v o) -> c o v l", v=head_dim, o=order-1)`.
+        //         v = long_conv(v, k_i) + bias_i * v    (T_h then the skip)
+        //
+        // INDEXING (the subtle part): the gate index o and the filter index i
+        // are NOT the same. The reference enumerates the reversed gate list
+        // from 0, so the FILTER for gate x_o is k[(O-1) - o]. With o = O-1 the
+        // filter is k[0]; with o = 1 the filter is k[O-2] — the last one. Using
+        // filter index == gate index reads k[O-1], which is one past the end of
+        // a head_dim*(order-1)-wide bank (a heap overflow, caught by ASan when
+        // the suite ran with order=2 and head_dim=1).
         for (size_t o = O; o-- > 1;) {
+            const size_t fi = (O - 1) - o;      // filter/skip index within the head
+            const size_t fcol = h * (O - 1) + fi;
             for (size_t c = 0; c < HD; ++c) {
                 for (size_t l = 0; l < L; ++l) {
                     double before = v[c][l];
@@ -462,9 +470,9 @@ Tensor HyenaDNAOperator::forward(const Tensor& input) {
                     last_v_gated[o][l][h * HD + c] = before * g;
                     v_sig[l] = before * g;
                 }
-                for (size_t l = 0; l < L; ++l) k_sig[l] = k[l][h * (O - 1) + o];
+                for (size_t l = 0; l < L; ++l) k_sig[l] = k[l][fcol];
                 causal_long_conv_1d(v_sig, k_sig, L, conv);
-                double b = filter.bias[0][h * (O - 1) + o];
+                double b = filter.bias[0][fcol];
                 for (size_t l = 0; l < L; ++l) {
                     v_sig[l] = conv[l] + b * v_sig[l];
                     v[c][l] = v_sig[l];
@@ -485,8 +493,141 @@ Tensor HyenaDNAOperator::forward(const Tensor& input) {
     return out_proj.forward(y);
 }
 
-Tensor HyenaDNAOperator::backward(const Tensor&, double) {
-    throw std::runtime_error("HyenaDNAOperator::backward: not implemented");
+Tensor HyenaDNAOperator::backward(const Tensor& grad_output, double) {
+    if (grad_output.rows != last_y_pre_out.rows ||
+        grad_output.cols != d_model_)
+        throw std::invalid_argument("HyenaDNAOperator: grad_output shape mismatch");
+
+    size_t L = last_y_pre_out.rows;
+    size_t H = num_heads_, HD = head_dim_, O = order_;
+
+    // ---- out_proj backward: d(y_pre_out) = grad_output * W_o
+    // Dense::backward accumulates grad_W_o / grad_b_o and returns the input grad.
+    Tensor gpre = out_proj.backward(grad_output, 0.0);   // (L, D)
+
+    // Accumulate the short-conv input gradient and the filter gradient.
+    Tensor g_uc(L, (O + 1) * d_model_);
+    Tensor g_k(L, HD * (O - 1));        // (L, head_dim*(O-1))
+    Tensor g_bias(1, HD * (O - 1));
+    g_bias.fill(0.0);
+
+    std::vector<double> gv(L), gk(L), vsig(L);
+
+    for (size_t h = 0; h < H; ++h) {
+        // Final gate: y[l][c] = v[c][l] * x0[l][c]
+        //   d v[c][l]  += gpre[l][c] * x0[l][c]
+        //   d x0[l][c] += gpre[l][c] * v[c][l]
+        // The value gradient is PER-CHANNEL (HD independent operators per
+        // head), so it lives in g_v[HD][L] — a single (L,) vector would fold
+        // the head's channels together and compute a rank-1 operator.
+        std::vector<std::vector<double>> g_v(HD, std::vector<double>(L, 0.0));
+        for (size_t l = 0; l < L; ++l)
+            for (size_t c = 0; c < HD; ++c) {
+                double g = gpre[l][h * HD + c];
+                double v_before = last_v_before[0][l][h * HD + c];
+                g_v[c][l] += g * last_gate[0][l][h * HD + c];
+                g_uc[l][h * (O + 1) * HD + 0 * HD + c] += g * v_before;
+            }
+
+        // Walk the recurrence back to front: o = 1 .. O-1 (forward ran O-1 .. 1).
+        // `fi` is the filter index for this gate — see the forward for why the
+        // filter index is (O-1)-o and not o.
+        for (size_t o = 1; o < O; ++o) {
+            const size_t fi = (O - 1) - o;
+            const size_t fcol = h * (O - 1) + fi;
+            // y = conv(v_gate, k) + b * v_gate
+            //   d v_gate[l] = sum_{t>=l} g[l] * k[t-l]  + b * g[l]
+            //   d k[s]      = sum_{l>=s}   g[l] * v_gate[l-s]
+            //   d b         = sum_l       g[l] * v_gate[l]
+            for (size_t c = 0; c < HD; ++c) {
+                for (size_t l = 0; l < L; ++l) gk[l] = 0.0;
+                // d v_gate: for y[t] = sum_{s<=t} k[s] * v[t-s], the adjoint is
+                //     dv[l] = sum_{t>=l} g[t] * k[t - l]
+                // i.e. the OUTGOING gradient g[t] against the filter tap at
+                // lag t-l. (Writing g[l]*k[t] instead — a same-index product —
+                // is the transposed-correlation bug; it passes a uniform-init
+                // test and fails as soon as the filter is non-symmetric.)
+                for (size_t l = 0; l < L; ++l) {
+                    double acc = 0.0;
+                    for (size_t t = l; t < L; ++t)
+                        acc += g_v[c][t] * last_filter_h[t - l][fcol];
+                    gv[l] = acc;
+                }
+                double b = filter.bias[0][fcol];
+                for (size_t l = 0; l < L; ++l) gv[l] += b * g_v[c][l];
+
+                // d k[s] = sum_l g[l] * v_gate[l-s]
+                for (size_t s = 0; s < L; ++s) {
+                    double acc = 0.0;
+                    for (size_t t = s; t < L; ++t)
+                        acc += g_v[c][t] * last_v_gated[o][t - s][h * HD + c];
+                    gk[s] = acc;
+                    g_k[s][fcol] += acc;
+                }
+                // d b = sum_l g[l] * v_gate[l]
+                double accb = 0.0;
+                for (size_t l = 0; l < L; ++l)
+                    accb += g_v[c][l] * last_v_gated[o][l][h * HD + c];
+                g_bias[0][fcol] += accb;
+
+                // Gate: v_gate[l][c] = v_before[l][c] * x_o[l][c]
+                for (size_t l = 0; l < L; ++l) {
+                    double gx = gv[l] * last_v_before[o][l][h * HD + c];
+                    double gvb = gv[l] * last_gate[o][l][h * HD + c];
+                    g_uc[l][h * (O + 1) * HD + o * HD + c] += gx;
+                    g_v[c][l] = gvb;
+                }
+            }
+            // v (the value stream) is per-channel and independent across the
+            // loop iterations, so the carry above is already correct.
+        }
+
+        // d x_o for o >= 1 accumulated above; the value projection o == O is
+        // the carrier: d uc[..., O] = g_v.
+        for (size_t l = 0; l < L; ++l)
+            for (size_t c = 0; c < HD; ++c)
+                g_uc[l][h * (O + 1) * HD + O * HD + c] += g_v[c][l];
+    }
+
+    // ---- filter backward: accumulate grad_bias, then the filter MLP chain.
+    filter.grad_bias += g_bias;
+    filter.backward(g_k);
+
+    // ---- short depthwise conv backward.
+    // y[t][c] = b[c] + sum_{j<=t} W[c][j] * x[t-j][c]
+    //   dW[c][j] = sum_{t>=j} g[t][c] * x[t-j][c]
+    //   db[c]    = sum_t     g[t][c]
+    //   dx[t][c] = sum_{j} g[t+j][c] * W[c][j]   for t+j < L
+    // NOTE the dx term: it is an anti-causal correlation of g with W, and it is
+    // the ONLY path by which the short convolution feeds gradient back to its own
+    // input. Omitting it (returning g_uc unchanged) leaves the operator's input
+    // gradient wrong by a term whose relative weight GROWS along the sequence —
+    // which is exactly the 0.11 / 0.42 / 0.84 ratio pattern seen at L=3.
+        {
+            const Tensor& u = last_in_proj;
+            for (size_t c = 0; c < (O + 1) * d_model_; ++c) {
+                for (size_t j = 0; j < short_filter_order_; ++j) {
+                    double acc = 0.0;
+                    for (size_t t = j; t < L; ++t) acc += g_uc[t][c] * u[t - j][c];
+                    grad_short_W[c][j] += acc;
+                }
+                double accb = 0.0;
+                for (size_t t = 0; t < L; ++t) accb += g_uc[t][c];
+                grad_short_b[c][0] += accb;
+            }
+            // dx: the anti-causal correlation. g_uc is the OUTPUT gradient, so the
+            // INPUT gradient is
+            //   dx[t][c] = sum_{j=0}^{S-1, t+j < L} g_uc[t+j][c] * W[c][j]
+            Tensor g_u(L, (O + 1) * d_model_);
+            for (size_t c = 0; c < (O + 1) * d_model_; ++c)
+                for (size_t t = 0; t < L; ++t) {
+                    double acc = 0.0;
+                    for (size_t j = 0; j < short_filter_order_ && t + j < L; ++j)
+                        acc += g_uc[t + j][c] * short_W[c][j];
+                    g_u[t][c] = acc;
+                }
+            return in_proj.backward(g_u, 0.0);
+        }
 }
 
 void HyenaDNAOperator::update_weights(double lr) {
