@@ -218,7 +218,7 @@ static void test_positional_embedding() {
 
     // Independent recomputation of the (L, emb_dim) closed form.
     const double TWO_PI = 2.0 * 3.14159265358979323846;
-    size_t L = 8, emb = 3, bands = 1;
+    size_t L = 8;
     double worst = 0.0;
     for (size_t l = 0; l < L; ++l) {
         double t = (double)l / (double)(L - 1);
@@ -1165,6 +1165,131 @@ static void test_block() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Test 8: model.
+//   h = block_0 -> block_1 -> ... -> block_{depth-1}
+//   out = classifier(mean_over_tokens(h))      (1, num_classes)
+// ---------------------------------------------------------------------------
+static void test_model() {
+    std::printf("Test 8: model\n");
+
+    const size_t L = 5, D = 4, C = 3, DEPTH = 2;
+
+    HyenaDNAModel m(D, 6, DEPTH, C, 2, 3, 4, 2);
+    for (size_t i = 0; i < m.blocks.size(); ++i) well_conditioned_operator(m.blocks[i].op);
+    Tensor x = random_tensor(L, D, 0.5);
+    Tensor y = m.forward(x);
+    check(y.rows == 1 && y.cols == C, "model forward (L,D) -> (1, num_classes)");
+    check(all_finite(y), "model output finite");
+    check(max_abs(y) > 1e-9, "model output non-zero (max=" + sci(max_abs(y)) + ")");
+
+    bool threw = false;
+    try { m.forward(random_tensor(L, D + 1, 0.5)); } catch (...) { threw = true; }
+    check(threw, "model throws on wrong input width");
+    threw = false;
+    try { m.forward(random_tensor(7, D, 0.5)); } catch (...) { threw = true; }
+    check(threw, "model throws on L > l_max");
+
+    // --- parameters()/gradients() contract across ALL depth blocks.
+    {
+        std::vector<Tensor*> ps = m.parameters();
+        std::vector<Tensor*> gs = m.gradients();
+        check(ps.size() == gs.size(), "model parameters()/gradients() same length");
+        bool shapes_ok = true;
+        for (size_t k = 0; k < ps.size(); ++k)
+            if (ps[k]->rows != gs[k]->rows || ps[k]->cols != gs[k]->cols)
+                shapes_ok = false;
+        check(shapes_ok, "model param/grad shapes match elementwise");
+        // depth=2 with FFN: per block = ln1(2) + op(?) + ffn1(2) + ffn2(2) + ln2(2).
+        // Assert the count scales with depth rather than hard-coding a number.
+        HyenaDNAModel d1(D, 6, 1, C, 1, 2, 4, 2);
+        HyenaDNAModel d2(D, 6, 2, C, 1, 2, 4, 2);
+        size_t per_block = d2.parameters().size() - d1.parameters().size();
+        check(per_block > 0 && d1.parameters().size() > per_block,
+              "model param count grows with depth (1 block: " +
+              std::to_string(d1.parameters().size()) + ", per extra block: " +
+              std::to_string(per_block) + ")");
+    }
+
+    // --- FD input gradient through ALL depth blocks + the classifier.
+    // depth=2 exercises the reverse-order stack backward; a forward-order loop
+    // would still agree on the FIRST block and disagree on the second.
+    {
+        HyenaDNAModel fm(D, 6, DEPTH, C, 2, 3, 4, 2);
+        for (size_t i = 0; i < fm.blocks.size(); ++i) well_conditioned_operator(fm.blocks[i].op);
+        Tensor fx = random_tensor(L, D, 0.5);
+        Tensor fy = fm.forward(fx);
+        fm.zero_grad();
+        Tensor dx = fm.backward(grad_from_out(fy), 0.0);
+        double max_dx = 0.0;
+        for (size_t i = 0; i < dx.rows; ++i)
+            for (size_t j = 0; j < dx.cols; ++j)
+                if (std::fabs(dx[i][j]) > max_dx) max_dx = std::fabs(dx[i][j]);
+        check(max_dx > 1e-9, "model input grad non-degenerate (max=" + sci(max_dx) + ")");
+
+        const double eps = 1e-6;
+        double worst = 0.0;
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < D; ++j) {
+                Tensor xp = fx.clone(), xm = fx.clone();
+                xp[i][j] += eps; xm[i][j] -= eps;
+                double num = (loss_of(fm.forward(xp)) - loss_of(fm.forward(xm))) / (2.0 * eps);
+                double er = rel_err(dx[i][j], num);
+                if (er > worst) worst = er;
+            }
+        check(worst < 1e-4, "model FD input grad rel_err < 1e-4 worst=" + sci(worst));
+    }
+
+    // --- The reverse-order stack backward at depth=3. At depth=2 the
+    // forward-order mutation only moves rel_err to ~6.6e-4 (the first block
+    // still receives the right gradient, so the error is diluted); at depth=3
+    // the signal is unambiguous. This is the "single-iteration vacuity" trap
+    // from the TDD skill applied to a stack loop.
+    {
+        const size_t DEPTH3 = 3;
+        HyenaDNAModel sm(D, 6, DEPTH3, C, 2, 3, 4, 2);
+        for (size_t i = 0; i < sm.blocks.size(); ++i) well_conditioned_operator(sm.blocks[i].op);
+        Tensor sx = random_tensor(L, D, 0.5);
+        Tensor sy = sm.forward(sx);
+        sm.zero_grad();
+        Tensor dx = sm.backward(grad_from_out(sy), 0.0);
+        const double eps = 1e-6;
+        double worst = 0.0;
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < D; ++j) {
+                Tensor xp = sx.clone(), xm = sx.clone();
+                xp[i][j] += eps; xm[i][j] -= eps;
+                double num = (loss_of(sm.forward(xp)) - loss_of(sm.forward(xm))) / (2.0 * eps);
+                double er = rel_err(dx[i][j], num);
+                if (er > worst) worst = er;
+            }
+        check(worst < 1e-4, "model depth=3 FD input grad rel_err < 1e-4 worst=" + sci(worst));
+    }
+
+    // --- end-to-end training reduces the loss. The standard loop is
+    // zero_grad / forward / backward / update_weights — forward+backward alone
+    // changes no parameter, so the loss would print L0 == L1 exactly.
+    {
+        HyenaDNAModel tm(D, 6, DEPTH, C, 2, 3, 4, 2);
+        for (size_t i = 0; i < tm.blocks.size(); ++i) well_conditioned_operator(tm.blocks[i].op);
+        Tensor tx = random_tensor(L, D, 0.5);
+        const double lr = 0.05;
+        double first = 0.0, last = 0.0;
+        for (int step = 0; step < 30; ++step) {
+            tm.zero_grad();
+            Tensor ty = tm.forward(tx);
+            double L = loss_of(ty);
+            if (step == 0) first = L;
+            last = L;
+            tm.backward(grad_from_out(ty), 0.0);
+            tm.update_weights(lr);
+        }
+        check(last < first * 0.9,
+              "model training reduces loss over 30 SGD steps (" + sci(first) +
+              " -> " + sci(last) + ")");
+    }
+}
+
 int main() {
     std::printf("=== HyenaDNA Tests ===\n");
     test_constructor_validation();
@@ -1174,6 +1299,7 @@ int main() {
     test_operator_forward();
     test_operator_fd_gradients();
     test_block();
+    test_model();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", tests_passed, tests_failed);
     return tests_failed == 0 ? 0 : 1;

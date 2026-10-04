@@ -380,13 +380,17 @@ HyenaDNAOperator::HyenaDNAOperator(size_t d_model, size_t l_max, size_t num_head
       short_W(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1,
                             short_filter_order ? short_filter_order : 1)),
       short_b(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1, 1)),
-      grad_short_W(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1,
-                                 short_filter_order ? short_filter_order : 1)),
-      grad_short_b(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1, 1)),
+      // `filter` is declared BEFORE grad_short_W/grad_short_b in the class, so
+      // it has to be initialized before them here too — initializers run in
+      // DECLARATION order, not source order, and the mismatch is a -Wreorder
+      // warning that hides real ones.
       filter(num_heads && d_model && order >= 2
                  ? (d_model / num_heads) * (order - 1)
                  : 1,
-             l_max ? l_max : 1, filter_order ? filter_order : 1) {
+             l_max ? l_max : 1, filter_order ? filter_order : 1),
+      grad_short_W(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1,
+                                 short_filter_order ? short_filter_order : 1)),
+      grad_short_b(Tensor::zeros((order >= 2) ? (order + 1) * (d_model ? d_model : 1) : 1, 1)) {
     if (d_model == 0)
         throw std::invalid_argument("HyenaDNAOperator: d_model must be > 0");
     if (l_max == 0)
@@ -852,12 +856,52 @@ HyenaDNAModel::HyenaDNAModel(size_t d_model, size_t l_max, size_t depth,
     }
 }
 
-Tensor HyenaDNAModel::forward(const Tensor&) {
-    throw std::runtime_error("HyenaDNAModel::forward: not implemented");
+Tensor HyenaDNAModel::forward(const Tensor& input) {
+    if (input.cols != d_model_)
+        throw std::invalid_argument("HyenaDNAModel::forward: input.cols != d_model_");
+    if (input.rows > l_max_)
+        throw std::invalid_argument("HyenaDNAModel::forward: L > l_max_");
+
+    last_input = input;
+
+    // Stack the blocks in order. Each block's forward caches its own state, so
+    // the reverse-order backward below has everything it needs.
+    Tensor h = input;
+    for (size_t i = 0; i < depth_; ++i) h = blocks[i].forward(h);
+
+    // Per-token mean pool over the sequence, then the classifier head.
+    // (v1 divergence from the paper: the paper uses a per-token LM head.)
+    Tensor pooled(1, d_model_);
+    for (size_t j = 0; j < d_model_; ++j) {
+        double acc = 0.0;
+        for (size_t i = 0; i < h.rows; ++i) acc += h[i][j];
+        pooled[0][j] = acc / (double)h.rows;
+    }
+    return classifier.forward(pooled);
 }
 
-Tensor HyenaDNAModel::backward(const Tensor&, double) {
-    throw std::runtime_error("HyenaDNAModel::backward: not implemented");
+Tensor HyenaDNAModel::backward(const Tensor& grad_output, double lr) {
+    if (grad_output.rows != 1 || grad_output.cols != num_classes_)
+        throw std::invalid_argument("HyenaDNAModel::backward: grad_output must be (1, num_classes_)");
+
+    // d_pooled: the mean pool is a uniform average, so every token row of h
+    // receives the SAME gradient — the 1/L factor is inside each entry because
+    // pooled was divided by h.rows.
+    Tensor d_pooled(1, d_model_);
+    Tensor d_c = classifier.backward(grad_output, lr);   // (1, d_model_)
+    d_pooled = d_c;
+
+    Tensor d_h(last_input.rows, d_model_);
+    for (size_t i = 0; i < d_h.rows; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            d_h[i][j] = d_pooled[0][j] / (double)last_input.rows;
+
+    // Reverse order: block_{depth-1} saw the output of block_{depth-2}, so its
+    // input gradient is the next block's output gradient. Running this loop
+    // forward would be silently wrong for every block except the first.
+    Tensor d_x = d_h;
+    for (size_t i = depth_; i-- > 0;) d_x = blocks[i].backward(d_x, lr);
+    return d_x;
 }
 
 void HyenaDNAModel::update_weights(double lr) {
