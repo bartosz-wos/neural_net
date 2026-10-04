@@ -223,6 +223,8 @@ public:
 
     Tensor last_input;        // (L, D)
     Tensor last_res1;         // (L, D) block input after the first residual
+    Tensor last_ffn_pre;      // (L, ffn_mult*D) ffn1 output BEFORE the GELU,
+                              // cached for the GELU derivative in backward
 
     HyenaDNABlock(size_t d_model, size_t l_max, size_t num_heads = 1,
                   size_t order = 2, size_t filter_order = 16,

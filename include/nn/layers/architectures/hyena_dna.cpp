@@ -7,6 +7,21 @@
 // operator derivation and the reference-implementation provenance.
 // ============================================================================
 
+// GELU (tanh approximation) + derivative, matching the ExpireSpan /
+// axial-attention convention used elsewhere in the repo.
+static inline double gelu_val(double x) {
+    double xc = std::max(-4.0, std::min(4.0, x));
+    double u = std::sqrt(2.0 / M_PI) * (xc + 0.044715 * xc * xc * xc);
+    return 0.5 * xc * (1.0 + std::tanh(u));
+}
+static inline double gelu_deriv(double x) {
+    double xc = std::max(-4.0, std::min(4.0, x));
+    double u  = std::sqrt(2.0 / M_PI) * (xc + 0.044715 * xc * xc * xc);
+    double th = std::tanh(u);
+    double du = std::sqrt(2.0 / M_PI) * (1.0 + 3.0 * 0.044715 * xc * xc);
+    return 0.5 * (1.0 + th) + 0.5 * xc * (1.0 - th * th) * du;
+}
+
 // ---------------------------------------------------------------------------
 // Helper: naive causal depthwise 1-D convolution over a (L, C) tensor.
 //   y[t][c] = b[c] + sum_{j=0..S-1, t-j >= 0} W[c][j] * x[t-j][c]
@@ -693,12 +708,78 @@ HyenaDNABlock::HyenaDNABlock(size_t d_model, size_t l_max, size_t num_heads,
         throw std::invalid_argument("HyenaDNABlock: l_max must be > 0");
 }
 
-Tensor HyenaDNABlock::forward(const Tensor&) {
-    throw std::runtime_error("HyenaDNABlock::forward: not implemented");
+Tensor HyenaDNABlock::forward(const Tensor& input) {
+    if (input.cols != d_model_)
+        throw std::invalid_argument("HyenaDNABlock::forward: input.cols != d_model_");
+    if (input.rows > l_max_)
+        throw std::invalid_argument("HyenaDNABlock::forward: L > l_max_");
+
+    last_input = input;
+
+    // res1 = x + op(LN1(x))
+    Tensor n1 = ln1.forward(input);
+    Tensor mix = op.forward(n1);
+    Tensor res1(input.rows, d_model_);
+    for (size_t i = 0; i < input.rows; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            res1[i][j] = input[i][j] + mix[i][j];
+    last_res1 = res1;
+
+    // y = res1 + ffn2(gelu(ffn1(LN2(res1))))   (channel mixer skipped at
+    // ffn_mult == 0, which is the config the sequence-mixer FD checks use to
+    // isolate the operator chain from the FFN chain).
+    if (ffn_mult_ == 0) return res1;
+
+    Tensor n2 = ln2.forward(res1);
+    Tensor pre = ffn1.forward(n2);              // (L, ffn_mult*D)
+    last_ffn_pre = pre;
+    Tensor act(pre.rows, pre.cols);
+    for (size_t i = 0; i < pre.rows; ++i)
+        for (size_t j = 0; j < pre.cols; ++j) act[i][j] = gelu_val(pre[i][j]);
+    Tensor ch = ffn2.forward(act);              // (L, D)
+    Tensor y(res1.rows, d_model_);
+    for (size_t i = 0; i < res1.rows; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            y[i][j] = res1[i][j] + ch[i][j];
+    return y;
 }
 
-Tensor HyenaDNABlock::backward(const Tensor&, double) {
-    throw std::runtime_error("HyenaDNABlock::backward: not implemented");
+Tensor HyenaDNABlock::backward(const Tensor& grad_output, double lr) {
+    if (grad_output.rows != last_input.rows || grad_output.cols != d_model_)
+        throw std::invalid_argument("HyenaDNABlock::backward: grad_output shape mismatch");
+
+    // d_res1: the block output is `res1 + ch`, a plain sum, so the gradient of
+    // the residual path is grad_output unchanged.
+    Tensor d_res1 = grad_output.clone();
+
+    if (ffn_mult_ > 0) {
+        // d_act = ffn2^T ... handled by Dense::backward, which also accumulates
+        // ffn2's parameter gradients.
+        Tensor d_act = ffn2.backward(grad_output, lr);      // (L, ffn_mult*D)
+        // GELU elementwise chain: d_pre = d_act * gelu'(pre).
+        Tensor d_pre(d_act.rows, d_act.cols);
+        for (size_t i = 0; i < d_act.rows; ++i)
+            for (size_t j = 0; j < d_act.cols; ++j)
+                d_pre[i][j] = d_act[i][j] * gelu_deriv(last_ffn_pre[i][j]);
+        Tensor d_n2 = ffn1.backward(d_pre, lr);             // (L, D)
+        // d_res1 accumulates the LN2 input-gradient; the residual itself is an
+        // identity path, so grad_output already carried that share.
+        Tensor d_ln2_x = ln2.backward(d_n2, lr);
+        for (size_t i = 0; i < d_res1.rows; ++i)
+            for (size_t j = 0; j < d_model_; ++j)
+                d_res1[i][j] += d_ln2_x[i][j];
+    }
+
+    // res1 = input + op(ln1(input)): d_mix = d_res1, and d_input gets d_res1
+    // from the identity residual.
+    Tensor d_mix = d_res1.clone();
+    Tensor d_n1 = op.backward(d_mix, lr);
+    Tensor d_ln1_x = ln1.backward(d_n1, lr);
+    Tensor d_x = d_res1.clone();
+    for (size_t i = 0; i < d_x.rows; ++i)
+        for (size_t j = 0; j < d_model_; ++j)
+            d_x[i][j] += d_ln1_x[i][j];
+    return d_x;
 }
 
 void HyenaDNABlock::update_weights(double lr) {

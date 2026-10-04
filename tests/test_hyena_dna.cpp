@@ -1030,6 +1030,141 @@ static void test_operator_fd_gradients() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Test 7: block.
+//   res1 = x + op(LN1(x))
+//   y   = res1 + ffn2(gelu(ffn1(LN2(res1))))       (skipped when ffn_mult == 0)
+// ---------------------------------------------------------------------------
+static double fd_block_input_grad(HyenaDNABlock& b, const Tensor& x, size_t i,
+                                  size_t j, double eps) {
+    Tensor xp = x.clone(), xm = x.clone();
+    xp[i][j] += eps; xm[i][j] -= eps;
+    return (loss_of(b.forward(xp)) - loss_of(b.forward(xm))) / (2.0 * eps);
+}
+
+static void test_block() {
+    std::printf("Test 7: block\n");
+
+    const size_t L = 5, D = 4;
+
+    // --- forward shape / finiteness with an FFN
+    HyenaDNABlock b(D, 6, 2, 3, 4, 2);
+    well_conditioned_operator(b.op);
+    Tensor x = random_tensor(L, D, 0.5);
+    Tensor y = b.forward(x);
+    check(y.rows == L && y.cols == D, "block forward (L,D) -> (L,D)");
+    check(all_finite(y), "block output finite");
+    check(max_abs(y) > 1e-9, "block output non-zero (max=" + sci(max_abs(y)) + ")");
+
+    // Input validation: wrong width and L > l_max both throw.
+    bool threw = false;
+    try { b.forward(random_tensor(L, D + 1, 0.5)); } catch (...) { threw = true; }
+    check(threw, "block throws on wrong input width");
+    threw = false;
+    try { b.forward(random_tensor(7, D, 0.5)); } catch (...) { threw = true; }
+    check(threw, "block throws on L > l_max");
+
+    // --- ffn_mult == 0 skips the channel mixer entirely: the output must equal
+    // the FIRST residual only. Assert against last_res1, which is exactly that
+    // intermediate, rather than recomputing the operator.
+    {
+        HyenaDNABlock z(D, 6, 2, 3, 4, 0);
+        well_conditioned_operator(z.op);
+        Tensor zx = random_tensor(L, D, 0.5);
+        Tensor zy = z.forward(zx);
+        check(zy.rows == L && zy.cols == D, "ffn_mult=0 block forward shape");
+        check(max_abs_diff(zy, z.last_res1) == 0.0,
+              "ffn_mult=0 output == first residual (x + op(LN1(x))) exactly");
+    }
+
+    // --- FD input gradient. order=3 so the operator's recurrence loop runs
+    // twice, and the operator is rescaled into a well-conditioned range
+    // (systematic-debugging 5c) — at default init the loss delta under a 1e-6
+    // perturbation sits at the double-precision noise floor.
+    {
+        HyenaDNABlock fb(D, 6, 2, 3, 4, 2);
+        well_conditioned_operator(fb.op);
+        Tensor fx = random_tensor(L, D, 0.5);
+        Tensor fy = fb.forward(fx);
+        fb.zero_grad();
+        Tensor dx = fb.backward(grad_from_out(fy), 0.0);
+        double max_dx = 0.0;
+        for (size_t i = 0; i < dx.rows; ++i)
+            for (size_t j = 0; j < dx.cols; ++j)
+                if (std::fabs(dx[i][j]) > max_dx) max_dx = std::fabs(dx[i][j]);
+        check(max_dx > 1e-9, "block input grad non-degenerate (max=" + sci(max_dx) + ")");
+
+        double max_dp = 0.0;
+        for (Tensor* g : fb.gradients())
+            if (max_abs(*g) > max_dp) max_dp = max_abs(*g);
+        check(max_dp > 1e-9, "block param grads non-degenerate (max=" + sci(max_dp) + ")");
+
+        const double eps = 1e-6;
+        double worst = 0.0;
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < D; ++j) {
+                double er = rel_err(dx[i][j], fd_block_input_grad(fb, fx, i, j, eps));
+                if (er > worst) worst = er;
+            }
+        check(worst < 1e-4, "block FD input grad rel_err < 1e-4 worst=" + sci(worst));
+    }
+
+    // --- FD on the FFN parameters specifically. With ffn_mult=0 these tensors
+    // are shape-(1,1) placeholders and their gradient is legitimately zero, so
+    // the FFN chain is only reachable at ffn_mult > 0.
+    {
+        HyenaDNABlock pb(D, 6, 1, 2, 4, 2);
+        well_conditioned_operator(pb.op);
+        Tensor px = random_tensor(L, D, 0.5);
+        Tensor py = pb.forward(px);
+        pb.zero_grad();
+        pb.backward(grad_from_out(py), 0.0);
+        // Read the ANALYTICAL gradient at the SAME cell the FD perturbs —
+        // comparing grad[0][0] against FD at [1][1] is a test bug that looks
+        // like an implementation bug (rel_err ~0.1, no clean fingerprint).
+        double w1a = pb.ffn1.grad_weights[1][1];
+        double w2a = pb.ffn2.grad_weights[1][1];
+        check(std::fabs(w1a) > 1e-9, "ffn1 grad non-zero (max=" + sci(w1a) + ")");
+        check(std::fabs(w2a) > 1e-9, "ffn2 grad non-zero (max=" + sci(w2a) + ")");
+
+        const double eps = 1e-6;
+        auto fd_param = [&](Tensor& param, size_t i, size_t j) {
+            double orig = param[i][j];
+            param[i][j] = orig + eps;
+            double lp = loss_of(pb.forward(px));
+            param[i][j] = orig - eps;
+            double lm = loss_of(pb.forward(px));
+            param[i][j] = orig;
+            return (lp - lm) / (2.0 * eps);
+        };
+        double e1 = rel_err(w1a, fd_param(pb.ffn1.weights, 1, 1));
+        double e2 = rel_err(w2a, fd_param(pb.ffn2.weights, 1, 1));
+        check(e1 < 1e-4, "ffn1.weights[1][1] FD rel_err = " + sci(e1));
+        check(e2 < 1e-4, "ffn2.weights[1][1] FD rel_err = " + sci(e2));
+    }
+
+    // --- parameters()/gradients() contract: every param has a shape-matched grad.
+    {
+        HyenaDNABlock qb(D, 6, 1, 2, 4, 2);
+        Tensor qx = random_tensor(L, D, 0.5);
+        Tensor qy = qb.forward(qx);
+        qb.backward(grad_from_out(qy), 0.0);
+        std::vector<Tensor*> ps = qb.parameters();
+        std::vector<Tensor*> gs = qb.gradients();
+        check(ps.size() == gs.size(), "block parameters()/gradients() same length");
+        bool shapes_ok = true;
+        for (size_t k = 0; k < ps.size(); ++k)
+            if (ps[k]->rows != gs[k]->rows || ps[k]->cols != gs[k]->cols)
+                shapes_ok = false;
+        check(shapes_ok, "block param/grad shapes match elementwise");
+
+        qb.zero_grad();
+        bool cleared = true;
+        for (Tensor* g : qb.gradients()) if (max_abs(*g) != 0.0) cleared = false;
+        check(cleared, "block zero_grad clears every buffer");
+    }
+}
+
 int main() {
     std::printf("=== HyenaDNA Tests ===\n");
     test_constructor_validation();
@@ -1038,6 +1173,7 @@ int main() {
     test_filter_fd_gradients();
     test_operator_forward();
     test_operator_fd_gradients();
+    test_block();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", tests_passed, tests_failed);
     return tests_failed == 0 ? 0 : 1;
