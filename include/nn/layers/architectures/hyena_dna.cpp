@@ -86,6 +86,26 @@ HyenaDNAFilter::HyenaDNAFilter(size_t d_model, size_t l_max, size_t filter_order
     // Final projection has NO bias (reference: nn.Linear(order, d_model, bias=False)).
     mlp_out_W = Tensor::random(d_model, filter_order, 0.3);
 
+    // ExponentialModulation (reference l. 134-155):
+    //   max_decay = log(target)/fast_pct,  min_decay = log(target)/slow_pct
+    //   deltas    = linspace(min_decay, max_decay, d_model)
+    // linspace semantics: the step is (max-min)/(n-1), so for d_model == 1
+    // the result is the START value (min_decay), not the end. Verified
+    // against numpy.linspace(mind, maxd, 1) == [mind].
+    // Note the reference registers deltas with lr=0 (frozen); we make it a
+    // normal learnable tensor and document the divergence in the header.
+    {
+        double log_target = std::log(kModulationTarget);
+        double max_decay = log_target / kFastDecayPct;
+        double min_decay = log_target / kSlowDecayPct;
+        for (size_t c = 0; c < d_model; ++c) {
+            deltas[0][c] = (d_model == 1)
+                               ? min_decay
+                               : min_decay + (double)c * (max_decay - min_decay) /
+                                                  (double)(d_model - 1);
+        }
+    }
+
     grad_mlp_in_W = Tensor::zeros(filter_order, emb_dim);
     grad_mlp_in_b = Tensor::zeros(1, filter_order);
     grad_sin_freq = Tensor::zeros(1, filter_order);
@@ -130,7 +150,63 @@ Tensor HyenaDNAFilter::positional_embedding(size_t L) const {
 }
 
 Tensor HyenaDNAFilter::filter(size_t L) {
-    throw std::runtime_error("HyenaDNAFilter::filter: not implemented");
+    if (L > l_max_)
+        throw std::invalid_argument("HyenaDNAFilter: L > l_max");
+
+    // z = positional embedding, (L, emb_dim)
+    Tensor z = positional_embedding(L);
+    last_z = z;
+
+    // --- layer 0: y0 = sin(freq * (W1 z + b1)),  y0 is (L, P)
+    // Cache the Sin PRE-activation so the backward can apply
+    // d/dx sin(f*x) = f*cos(f*x) with f the cached per-channel frequency.
+    Tensor h1 = z * mlp_in_W.transpose();      // (L, emb_dim) @ (emb_dim, P)
+    for (size_t p = 0; p < filter_order_; ++p)
+        for (size_t l = 0; l < L; ++l) h1[l][p] += mlp_in_b[0][p];
+    Tensor pre0 = h1.clone();
+    for (size_t p = 0; p < filter_order_; ++p) {
+        double f = sin_freq[0][p];
+        for (size_t l = 0; l < L; ++l) h1[l][p] = std::sin(f * h1[l][p]);
+    }
+    last_pre.clear();
+    last_post.clear();
+    last_pre.push_back(pre0);
+    last_post.push_back(h1);
+
+    // --- inner layers i = 0..num_inner-1: y = sin(freq * (W y + b))
+    Tensor cur = h1;
+    for (size_t i = 0; i < num_inner_; ++i) {
+        Tensor nxt = cur * mlp_W[i].transpose();     // (L, P)
+        for (size_t p = 0; p < filter_order_; ++p)
+            for (size_t l = 0; l < L; ++l) nxt[l][p] += mlp_b[i][0][p];
+        Tensor pre = nxt.clone();
+        for (size_t p = 0; p < filter_order_; ++p) {
+            double f = sin_freq[0][p];
+            for (size_t l = 0; l < L; ++l) nxt[l][p] = std::sin(f * nxt[l][p]);
+        }
+        last_pre.push_back(pre);
+        last_post.push_back(nxt);
+        cur = nxt;
+    }
+
+    // --- final projection, NO bias (reference: nn.Linear(P, D_f, bias=False))
+    Tensor h0 = cur * mlp_out_W.transpose();        // (L, D_f)
+    last_h0 = h0;
+
+    // --- ExponentialModulation: h = (exp(-t*|deltas|) + shift) * h0
+    // t is the normalized time channel of z, i.e. z[l][0].
+    Tensor decay(L, d_model_);
+    Tensor h(L, d_model_);
+    for (size_t l = 0; l < L; ++l) {
+        double t = z[l][0];
+        for (size_t c = 0; c < d_model_; ++c) {
+            double d = std::exp(-t * std::fabs(deltas[0][c])) + kModulationShift;
+            decay[l][c] = d;
+            h[l][c] = d * h0[l][c];
+        }
+    }
+    last_decay = decay;
+    return h;
 }
 
 void HyenaDNAFilter::backward(const Tensor&) {
