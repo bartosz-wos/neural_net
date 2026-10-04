@@ -65,3 +65,4 @@ tests/test_gin_adj_debug.cpp
 tests/test_gin_debug*.cpp
 .hermes/
 .ccache/
+.run_tests_failed

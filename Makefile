@@ -820,232 +820,241 @@ $(BUILD_DIR)/test_mars $(BUILD_DIR)/test_lars $(BUILD_DIR)/test_novograd $(BUILD
 $(BUILD_DIR)/test_schedule_free_sgd $(BUILD_DIR)/test_signum $(BUILD_DIR)/test_adam_mini $(BUILD_DIR)/test_dadaptation $(BUILD_DIR)/test_gradient_centralization $(BUILD_DIR)/test_adamp $(BUILD_DIR)/test_lamb $(BUILD_DIR)/test_cautious $(BUILD_DIR)/test_grokfast $(BUILD_DIR)/test_soap $(BUILD_DIR)/test_shampoo $(BUILD_DIR)/test_prodigy $(BUILD_DIR)/test_stableadamw $(BUILD_DIR)/test_adopt $(BUILD_DIR)/test_swa $(BUILD_DIR)/test_galore $(BUILD_DIR)/test_apollo $(BUILD_DIR)/test_ltc $(BUILD_DIR)/test_neural_ode $(BUILD_DIR)/test_hgrn $(BUILD_DIR)/test_rwkv7 $(BUILD_DIR)/test_rwkv5 $(BUILD_DIR)/test_rwkv6 $(BUILD_DIR)/test_linoss $(BUILD_DIR)/test_agent_attention $(BUILD_DIR)/test_hyper_connection $(BUILD_DIR)/test_diff_transformer $(BUILD_DIR)/test_hymba $(BUILD_DIR)/test_log_linear_attention $(BUILD_DIR)/test_sliding_window $(BUILD_DIR)/test_nsa $(BUILD_DIR)/test_shla $(BUILD_DIR)/test_block_sparse_flash $(BUILD_DIR)/test_rwkv7_parallel $(BUILD_DIR)/test_moe_mamba $(BUILD_DIR)/test_titans_mac $(BUILD_DIR)/test_titans_mag $(BUILD_DIR)/test_titans_mal $(BUILD_DIR)/test_fox $(BUILD_DIR)/test_mosa $(BUILD_DIR)/test_soft_moe $(BUILD_DIR)/test_ttt_linear $(BUILD_DIR)/test_ttt_mlp $(BUILD_DIR)/test_mamba_bidirectional $(BUILD_DIR)/test_based $(BUILD_DIR)/test_ft_transformer $(BUILD_DIR)/test_gau $(BUILD_DIR)/test_lambda_layer $(BUILD_DIR)/test_mamba_conv $(BUILD_DIR)/test_stick_breaking $(BUILD_DIR)/test_ngpt $(BUILD_DIR)/test_multi_token_prediction $(BUILD_DIR)/test_tokenformer $(BUILD_DIR)/test_deformable_attention $(BUILD_DIR)/test_multi_scale_deformable_attention $(BUILD_DIR)/test_power_attention $(BUILD_DIR)/test_gated_slot_attention $(BUILD_DIR)/test_hilo_attention $(BUILD_DIR)/test_s5 $(BUILD_DIR)/test_act $(BUILD_DIR)/test_switch_transformer $(BUILD_DIR)/test_vision_mamba $(BUILD_DIR)/test_axial_attention $(BUILD_DIR)/test_three_d_axial_attention $(BUILD_DIR)/test_sparse_mixer $(BUILD_DIR)/test_focal_modulation $(BUILD_DIR)/test_qk_norm $(BUILD_DIR)/test_cheby_kan $(BUILD_DIR)/test_timestep_norm $(BUILD_DIR)/test_timestep_norm_grad $(BUILD_DIR)/test_complex_ema $(BUILD_DIR)/test_complex_ema_grad $(BUILD_DIR)/test_swiglu $(BUILD_DIR)/test_megalodon $(BUILD_DIR)/test_megalodon_grad
 
 run_tests: tests
-	@echo "=== Running FlashAttention-2 Tests ===" && ./$(BUILD_DIR)/test_flash_attention_v2
-	@echo "=== Running S4 Tests ===" && ./$(BUILD_DIR)/test_s4
-	@echo "=== Running Neural Spline Flow Tests ===" && ./$(BUILD_DIR)/test_neural_spline_flow
-	@echo "=== Running RealNVP Tests ===" && ./$(BUILD_DIR)/test_realnvp
-	@echo "=== Running DDPM Tests ===" && ./$(BUILD_DIR)/test_ddpm
-	@echo "=== Running AdaBelief Tests ===" && ./$(BUILD_DIR)/test_adabelief
-	@echo "=== Running Gradient Checks ===" && ./$(BUILD_DIR)/test_gradient_check
-	@echo "=== Running FlashAttention Tests ===" && ./$(BUILD_DIR)/test_flash_attention
-	@echo "=== Running RMSNorm Tests ===" && ./$(BUILD_DIR)/test_rmsnorm
-	@echo "=== Running SpectralNorm Tests ===" && ./$(BUILD_DIR)/test_spectral_norm
-	@echo "=== Running DynamicTanh Tests ===" && ./$(BUILD_DIR)/test_dynamic_tanh
-	@echo "=== Running LayerScale Tests ===" && ./$(BUILD_DIR)/test_layer_scale
-	@echo "=== Running Average Pooling Tests ===" && ./$(BUILD_DIR)/test_avgpool2d
-	@echo "=== Running DeepGCN Tests ===" && ./$(BUILD_DIR)/test_deep_gcn
-	@echo "=== Running DMon Tests ===" && ./$(BUILD_DIR)/test_dmon
-	@echo "=== Running EdgeConv Tests ===" && ./$(BUILD_DIR)/test_edgeconv
-	@echo "=== Running GAT Gradient Tests ===" && ./$(BUILD_DIR)/test_gat_gradient
-	@echo "=== Running GAT Verification Tests ===" && ./$(BUILD_DIR)/test_gat_verify
-	@echo "=== Running GIN Tests ===" && ./$(BUILD_DIR)/test_gin
-	@echo "=== Running gMLP Tests ===" && ./$(BUILD_DIR)/test_gmlp
-	@echo "=== Running MLP-Mixer Tests ===" && ./$(BUILD_DIR)/test_mlp_mixer
-	@echo "=== Running Hyena Tests ===" && ./$(BUILD_DIR)/test_hyena
-	@echo "=== Running Conformer Tests ===" && ./$(BUILD_DIR)/test_conformer
-	@echo "=== Running LightGCN Tests ===" && ./$(BUILD_DIR)/test_lightgcn
-	@echo "=== Running LSH Attention Tests ===" && ./$(BUILD_DIR)/test_lsh_attention
-	@echo "=== Running Nyström Attention Tests ===" && ./$(BUILD_DIR)/test_nystrom_attention
-	@echo "=== Running PATCHY-SAN Tests ===" && ./$(BUILD_DIR)/test_patchy_san
-	@echo "=== Running PNA Tests ===" && ./$(BUILD_DIR)/test_pna
-	@echo "=== Running Linformer Tests ===" && ./$(BUILD_DIR)/test_linformer
-	@echo "=== Running MambaConv (Mamba-1 with depthwise conv) Tests ===" && ./$(BUILD_DIR)/test_mamba_conv
-	@echo "=== Running Mamba Tests ===" && ./$(BUILD_DIR)/test_mamba
-	@echo "=== Running xLSTM Tests ===" && ./$(BUILD_DIR)/test_xlstm
-	@echo "=== Running MinGRU Tests ===" && ./$(BUILD_DIR)/test_min_gru
-	@echo "=== Running MinLSTM Tests ===" && ./$(BUILD_DIR)/test_min_lstm
-	@echo "=== Running Mogrifier LSTM Tests ===" && ./$(BUILD_DIR)/test_mogrifier_lstm
-	@echo "=== Running Mamba-2 Tests ===" && ./$(BUILD_DIR)/test_mamba2
-	@echo "=== Running RWKV Tests ===" && ./$(BUILD_DIR)/test_rwkv
-	@echo "=== Running RetNet Tests ===" && ./$(BUILD_DIR)/test_retnet
-	@echo "=== Running mLSTM Tests ===" && ./$(BUILD_DIR)/test_mlstm
-	@echo "=== Running H3 Tests ===" && ./$(BUILD_DIR)/test_h3
-	@echo "=== Running DeltaNet Tests ===" && ./$(BUILD_DIR)/test_deltanet
-	@echo "=== Running GatedDeltaNet Tests ===" && ./$(BUILD_DIR)/test_gated_deltanet
-	@echo "=== Running Mamba-3 Tests ===" && ./$(BUILD_DIR)/test_mamba3
-	@echo "=== Running Jamba Hybrid Tests ===" && ./$(BUILD_DIR)/test_jamba
-	@echo "=== Running Griffin Hybrid Tests ===" && ./$(BUILD_DIR)/test_griffin
-	@echo "=== Running xLSTM Block Tests ===" && ./$(BUILD_DIR)/test_xlstm_block
-	@echo "=== Running DeepSeekMoE Tests ===" && ./$(BUILD_DIR)/test_deepseek_moe
-	@echo "=== Running HyperMixing Tests ===" && ./$(BUILD_DIR)/test_hyper_mixing
-	@echo "=== Running MEGA Tests ===" && ./$(BUILD_DIR)/test_mega
-	@echo "=== Running MambaByte Tests ===" && ./$(BUILD_DIR)/test_mambabyte
-	@echo "=== Running GLA Tests ===" && ./$(BUILD_DIR)/test_gla
-	@echo "=== Running Flow Matching Tests ===" && ./$(BUILD_DIR)/test_flow_matching
-	@echo "=== Running DiT Tests ===" && ./$(BUILD_DIR)/test_dit
-	@echo "=== Running TimesNet Tests ===" && ./$(BUILD_DIR)/test_timesnet
-	@echo "=== Running Hawk Tests ===" && ./$(BUILD_DIR)/test_hawk
-	@echo "=== Running Performer Tests ===" && ./$(BUILD_DIR)/test_performer
-	@echo "=== Running cosFormer Tests ===" && ./$(BUILD_DIR)/test_cosformer
-	@echo "=== Running GQA Tests ===" && ./$(BUILD_DIR)/test_gqa
-	@echo "=== Running Expire-Span Tests ===" && ./$(BUILD_DIR)/test_expire_span
-	@echo "=== Running AFT Tests ===" && ./$(BUILD_DIR)/test_aft
-	@echo "=== Running AFT-Local Tests ===" && ./$(BUILD_DIR)/test_aft_local
-	@echo "=== Running AFT-Conv Tests ===" && ./$(BUILD_DIR)/test_aft_conv
-	@echo "=== Running Conv Attention Tests ===" && ./$(BUILD_DIR)/test_conv_attention
-	@echo "=== Running ConvBERT Tests ===" && ./$(BUILD_DIR)/test_conv_bert
-	@echo "=== Running PixelCNN Tests ===" && ./$(BUILD_DIR)/test_pixelcnn
-	@echo "=== Running EGNN Tests ===" && ./$(BUILD_DIR)/test_egnn
-	@echo "=== Running Sparse MoE Tests ===" && ./$(BUILD_DIR)/test_sparse_moe
-	@echo "=== Running MoeRouter Tests ===" && ./$(BUILD_DIR)/test_moe_router
-	@echo "=== Running KNN Classifier Tests ===" && ./$(BUILD_DIR)/test_knn_classifier
-	@echo "=== Running Tree-LSTM Tests ===" && ./$(BUILD_DIR)/test_tree_lstm
-	@echo "=== Running Modern Hopfield Tests ===" && ./$(BUILD_DIR)/test_hopfield
-	@echo "=== Running RoPEWithV Tests ===" && ./$(BUILD_DIR)/test_rope_v
-	@echo "=== Running YaRN RoPE Extension Tests ===" && ./$(BUILD_DIR)/test_yarn_rope
-	@echo "=== Running Slot Attention Tests ===" && ./$(BUILD_DIR)/test_slot_attention
-	@echo "=== Running FNet Tests ===" && ./$(BUILD_DIR)/test_fnet
-	@echo "=== Running Magnitude Pruning Tests ===" && ./$(BUILD_DIR)/test_magnitude_pruning
-	@echo "=== Running Stochastic Depth Tests ===" && ./$(BUILD_DIR)/test_stochastic_depth
-	@echo "=== Running LoRA Tests ===" && ./$(BUILD_DIR)/test_lora
-	@echo "=== Running BitNet b1.58 Tests ===" && ./$(BUILD_DIR)/test_bitnet
-	@echo "=== Running DCN-v2 Tests ===" && ./$(BUILD_DIR)/test_dcn_v2
-	@echo "=== Running Monarch Mixer Tests ===" && ./$(BUILD_DIR)/test_monarch_mixer
-	@echo "=== Running Set Transformer Tests ===" && ./$(BUILD_DIR)/test_set_transformer
-	@echo "=== Running FF Layer Tests ===" && ./$(BUILD_DIR)/test_ff_layer
-	@echo "=== Running Span Extractor Tests ===" && ./$(BUILD_DIR)/test_span_extractor
-	@echo "=== Running MLA Tests ===" && ./$(BUILD_DIR)/test_mla
-	@echo "=== Running Mixture-of-Depths Tests ===" && ./$(BUILD_DIR)/test_mixture_of_depths
-	@echo "=== Running GraphSAGE Tests ===" && ./$(BUILD_DIR)/test_graphsage
-	@echo "=== Running CapsuleLayer Tests ===" && ./$(BUILD_DIR)/test_capsule
-	@echo "=== Running KAN Tests ===" && ./$(BUILD_DIR)/test_kan
-	@echo "=== Running FourierKAN Tests ===" && ./$(BUILD_DIR)/test_fourier_kan
-	@echo "=== Running Gumbel-Softmax Tests ===" && ./$(BUILD_DIR)/test_gumbel_softmax
-	@echo "=== Running Lion Tests ===" && ./$(BUILD_DIR)/test_lion
-	@echo "=== Running Sophia Tests ===" && ./$(BUILD_DIR)/test_sophia
-	@echo "=== Running SAM Tests ===" && ./$(BUILD_DIR)/test_sam
-	@echo "=== Running BigBird Tests ===" && ./$(BUILD_DIR)/test_bigbird
-	@echo "=== Running TabNet Tests ===" && ./$(BUILD_DIR)/test_tabnet
-	@echo "=== Running Lookahead Tests ===" && ./$(BUILD_DIR)/test_lookahead
-	@echo "=== Running DiffGrad Tests ===" && ./$(BUILD_DIR)/test_diffgrad
-	@echo "=== Running ALiBi Tests ===" && ./$(BUILD_DIR)/test_alibi
-	@echo "=== Running Spatial Transformer Tests ===" && ./$(BUILD_DIR)/test_spatial_transformer
-	@echo "=== Running Transformer Decoder Tests ===" && ./$(BUILD_DIR)/test_transformer_decoder
-	@echo "=== Running HyperNetwork Tests ===" && ./$(BUILD_DIR)/test_hypernetwork
-	@echo "=== Running Distribution Losses Tests ===" && ./$(BUILD_DIR)/test_distribution_losses
-	@echo "=== Running Self-Supervised Losses Tests ===" && ./$(BUILD_DIR)/test_self_supervised_losses
-	@echo "=== Running MMD Loss Tests ===" && ./$(BUILD_DIR)/test_mmd_loss
-	@echo "=== Running Contrastive Losses Tests ===" && ./$(BUILD_DIR)/test_contrastive_losses
-	@echo "=== Running SigLIP Loss Tests ===" && ./$(BUILD_DIR)/test_siglip_loss
-	@echo "=== Running Metrics Tests ===" && ./$(BUILD_DIR)/test_metrics
-	@echo "=== Running Model EMA Tests ===" && ./$(BUILD_DIR)/test_model_ema
-	@echo "=== Running Early Stopping Tests ===" && ./$(BUILD_DIR)/test_early_stopping
-	@echo "=== Running Training History Tests ===" && ./$(BUILD_DIR)/test_training_history
-	@echo "=== Running Model Checkpoint Tests ===" && ./$(BUILD_DIR)/test_model_checkpoint
-	@echo "=== Running DataLoader Tests ===" && ./$(BUILD_DIR)/test_dataloader
-	@echo "=== Running Cross-Validation Tests ===" && ./$(BUILD_DIR)/test_cross_validation
-	@echo "=== Running HistogramBoosting Tests ===" && ./$(BUILD_DIR)/test_lightgbm_style
-	@echo "=== Running Label Smoothing Tests ===" && ./$(BUILD_DIR)/test_label_smoothing
-	@echo "=== Running Clip Grad Norm Tests ===" && ./$(BUILD_DIR)/test_clip_grad_norm
-	@echo "=== Running Mixup/CutMix Tests ===" && ./$(BUILD_DIR)/test_mixup_cutmix
-	@echo "=== Running ElasticNet Tests ===" && ./$(BUILD_DIR)/test_elastic_net
-	@echo "=== Running Activations Tests ===" && ./$(BUILD_DIR)/test_activations
-	@echo "=== Running Legacy Adaptive Optimizers Tests ===" && ./$(BUILD_DIR)/test_legacy_adaptive
-	@echo "=== Running InstanceNorm Tests ===" && ./$(BUILD_DIR)/test_instance_norm
-	@echo "=== Running AdEMAMix Tests ===" && ./$(BUILD_DIR)/test_ademamix
-	@echo "=== Running SGD-Nesterov Tests ===" && ./$(BUILD_DIR)/test_sgd_nesterov
-	@echo "=== Running LR Schedulers Tests ===" && ./$(BUILD_DIR)/test_lr_schedulers
-	@echo "=== Running Muon Tests ===" && ./$(BUILD_DIR)/test_muon
-	@echo "=== Running GMM Tests ===" && ./$(BUILD_DIR)/test_gmm
-	@echo "=== Running AdaLN-Zero Tests ===" && ./$(BUILD_DIR)/test_adaln_zero
-	@echo "=== Running Adafactor Tests ===" && ./$(BUILD_DIR)/test_adafactor
-	@echo "=== Running Segmentation Losses Tests ===" && ./$(BUILD_DIR)/test_segmentation_losses
-	@echo "=== Running Yogi Tests ===" && ./$(BUILD_DIR)/test_yogi
-	@echo "=== Running RAdam Tests ===" && ./$(BUILD_DIR)/test_radam
-	@echo "=== Running Adan Tests ===" && ./$(BUILD_DIR)/test_adan
-	@echo "=== Running MARS Tests ===" && ./$(BUILD_DIR)/test_mars
-	@echo "=== Running LARS Tests ===" && ./$(BUILD_DIR)/test_lars
-	@echo "=== Running NovoGrad Tests ===" && ./$(BUILD_DIR)/test_novograd
-	@echo "=== Running CAME Tests ===" && ./$(BUILD_DIR)/test_came
-	@echo "=== Running Schedule-Free AdamW Tests ===" && ./$(BUILD_DIR)/test_schedule_free_adamw
-	@echo "=== Running Schedule-Free SGD Tests ===" && ./$(BUILD_DIR)/test_schedule_free_sgd
-	@echo "=== Running Signum Tests ===" && ./$(BUILD_DIR)/test_signum
-	@echo "=== Running Adam-mini Tests ===" && ./$(BUILD_DIR)/test_adam_mini
-	@echo "=== Running DAdaptation Tests ===" && ./$(BUILD_DIR)/test_dadaptation
-	@echo "=== Running Gradient Centralization Tests ===" && ./$(BUILD_DIR)/test_gradient_centralization
-	@echo "=== Running AdamP Tests ===" && ./$(BUILD_DIR)/test_adamp
-	@echo "=== Running LAMB Tests ===" && ./$(BUILD_DIR)/test_lamb
-	@echo "=== Running Cautious Tests ===" && ./$(BUILD_DIR)/test_cautious
-	@echo "=== Running GrokFast Tests ===" && ./$(BUILD_DIR)/test_grokfast
-	@echo "=== Running SOAP Tests ===" && ./$(BUILD_DIR)/test_soap
-	@echo "=== Running Shampoo Tests ===" && ./$(BUILD_DIR)/test_shampoo
-	@echo "=== Running Prodigy Tests ===" && ./$(BUILD_DIR)/test_prodigy
-	@echo "=== Running StableAdamW Tests ===" && ./$(BUILD_DIR)/test_stableadamw
-	@echo "=== Running ADOPT Tests ===" && ./$(BUILD_DIR)/test_adopt
-	@echo "=== Running SWA Tests ===" && ./$(BUILD_DIR)/test_swa
-	@echo "=== Running GaLore Tests ===" && ./$(BUILD_DIR)/test_galore
-	@echo "=== Running APOLLO Tests ===" && ./$(BUILD_DIR)/test_apollo
-	@echo "=== Running LTC Tests ===" && ./$(BUILD_DIR)/test_ltc
-	@echo "=== Running Neural ODE Tests ===" && ./$(BUILD_DIR)/test_neural_ode
-	@echo "=== Running HGRN Tests ===" && ./$(BUILD_DIR)/test_hgrn
-	@echo "=== Running RWKV-7 Tests ===" && ./$(BUILD_DIR)/test_rwkv7
-	@echo "=== Running RWKV-5 (Eagle) Tests ===" && ./$(BUILD_DIR)/test_rwkv5
-	@echo "=== Running RWKV-6 (Finch) Tests ===" && ./$(BUILD_DIR)/test_rwkv6
-	@echo "=== Running LinOSS Tests ===" && ./$(BUILD_DIR)/test_linoss
-	@echo "=== Running Agent Attention Tests ===" && ./$(BUILD_DIR)/test_agent_attention
-	@echo "=== Running Hyper-Connection Tests ===" && ./$(BUILD_DIR)/test_hyper_connection
-	@echo "=== Running Differential Transformer Tests ===" && ./$(BUILD_DIR)/test_diff_transformer
-	@echo "=== Running Hymba Tests ===" && ./$(BUILD_DIR)/test_hymba
-	@echo "=== Running Log-Linear Attention Tests ===" && ./$(BUILD_DIR)/test_log_linear_attention
-	@echo "=== Running Sliding Window Attention Tests ===" && ./$(BUILD_DIR)/test_sliding_window
-	@echo "=== Running NSA Tests ===" && ./$(BUILD_DIR)/test_nsa
-	@echo "=== Running SHLA Tests ===" && ./$(BUILD_DIR)/test_shla
-	@echo "=== Running Block-Sparse Flash Attention Tests ===" && ./$(BUILD_DIR)/test_block_sparse_flash
-	@echo "=== Running RWKV-7 Parallel Attention Tests ===" && ./$(BUILD_DIR)/test_rwkv7_parallel
-	@echo "=== Running MoE-Mamba Tests ===" && ./$(BUILD_DIR)/test_moe_mamba
-	@echo "=== Running Titans MAC Tests ===" && ./$(BUILD_DIR)/test_titans_mac
-	@echo "=== Running Titans MAG Tests ===" && ./$(BUILD_DIR)/test_titans_mag
-	@echo "=== Running Titans MAL Tests ===" && ./$(BUILD_DIR)/test_titans_mal
-	@echo "=== Running Forgetting Transformer (FoX) Tests ===" && ./$(BUILD_DIR)/test_fox
-	@echo "=== Running MoSA (Mixture of Sparse Attention) Tests ===" && ./$(BUILD_DIR)/test_mosa
-	@echo "=== Running Soft MoE Tests ===" && ./$(BUILD_DIR)/test_soft_moe
-	@echo "=== Running TTT-Linear Tests ===" && ./$(BUILD_DIR)/test_ttt_linear
-	@echo "=== Running TTT-MLP Tests ===" && ./$(BUILD_DIR)/test_ttt_mlp
-	@echo "=== Running Bidirectional Mamba (BiMamba) Tests ===" && ./$(BUILD_DIR)/test_mamba_bidirectional
-	@echo "=== Running Based Linear Attention Tests ===" && ./$(BUILD_DIR)/test_based
-	@echo "=== Running FT-Transformer Tests ===" && ./$(BUILD_DIR)/test_ft_transformer
-	@echo "=== Running GAU Tests ===" && ./$(BUILD_DIR)/test_gau
-	@echo "=== Running Lambda Layer Tests ===" && ./$(BUILD_DIR)/test_lambda_layer
-	@echo "=== Running Stick-Breaking Attention Tests ===" && ./$(BUILD_DIR)/test_stick_breaking
-	@echo "=== Running nGPT (Hypersphere Transformer) Tests ===" && ./$(BUILD_DIR)/test_ngpt
-	@echo "=== Running Multi-Token Prediction Tests ===" && ./$(BUILD_DIR)/test_multi_token_prediction
-	@echo "=== Running Tokenformer / Pattention Tests ===" && ./$(BUILD_DIR)/test_tokenformer
-	@echo "=== Running Deformable 1D Attention Tests ===" && ./$(BUILD_DIR)/test_deformable_attention
-	@echo "=== Running Multi-Scale Deformable 1D Attention Tests ===" && ./$(BUILD_DIR)/test_multi_scale_deformable_attention
-	@echo "=== Running Power Attention Tests ===" && ./$(BUILD_DIR)/test_power_attention
-	@echo "=== Running Gated Slot Attention Tests ===" && ./$(BUILD_DIR)/test_gated_slot_attention
-	@echo "=== Running HiLo Attention Tests ===" && ./$(BUILD_DIR)/test_hilo_attention
-	@echo "=== Running S5 Tests ===" && ./$(BUILD_DIR)/test_s5
-	@echo "=== Running ACT (Adaptive Computation Time) Tests ===" && ./$(BUILD_DIR)/test_act
-	@echo "=== Running Switch Transformer Tests ===" && ./$(BUILD_DIR)/test_switch_transformer
-	@echo "=== Running Vision Mamba Tests ===" && ./$(BUILD_DIR)/test_vision_mamba
-	@echo "=== Running Axial Attention Tests ===" && ./$(BUILD_DIR)/test_axial_attention
-	@echo "=== Running 3D Axial Attention Tests ===" && ./$(BUILD_DIR)/test_three_d_axial_attention
-	@echo "=== Running Sparse Mixer Tests ===" && ./$(BUILD_DIR)/test_sparse_mixer
-	@echo "=== Running Focal Modulation Tests ===" && ./$(BUILD_DIR)/test_focal_modulation
-	@echo "=== Running Mixture of Softmaxes Tests ===" && ./$(BUILD_DIR)/test_mixture_of_softmaxes
-	@echo "=== Running FastFormer Tests ===" && ./$(BUILD_DIR)/test_fastformer
-	@echo "=== Running GATv2 Tests ===" && ./$(BUILD_DIR)/test_gatv2
-	@echo "=== Running SAGPool Tests ===" && ./$(BUILD_DIR)/test_sagpool
-	@echo "=== Running Token Merging Tests ===" && ./$(BUILD_DIR)/test_tome
-
-	@echo "=== Running Clustered Attention Tests ===" && ./$(BUILD_DIR)/test_clustered_attention
-
-	@echo "=== Running Window Attention Tests ===" && ./$(BUILD_DIR)/test_window_attention
-	@echo "=== Running Linear Attention Tests ===" && ./$(BUILD_DIR)/test_linear_attention
-	@echo "=== Running QKNorm Tests ===" && ./$(BUILD_DIR)/test_qk_norm
-	@echo "=== Running ChebyKAN Tests ===" && ./$(BUILD_DIR)/test_cheby_kan
-	@echo "=== Running TimestepNorm Tests ===" && ./$(BUILD_DIR)/test_timestep_norm
-	@echo "=== Running TimestepNorm Grad Tests ===" && ./$(BUILD_DIR)/test_timestep_norm_grad
-	@echo "=== Running ComplexEMA Tests ===" && ./$(BUILD_DIR)/test_complex_ema
-	@echo "=== Running ComplexEMA Grad Tests ===" && ./$(BUILD_DIR)/test_complex_ema_grad
-	@echo "=== Running SwiGLU Tests ===" && ./$(BUILD_DIR)/test_swiglu
-	@echo "=== Running Megalodon Tests ===" && ./$(BUILD_DIR)/test_megalodon
-	@echo "=== Running Megalodon Grad Tests ===" && ./$(BUILD_DIR)/test_megalodon_grad
-	@echo "=== Running StripedHyena Tests ===" && ./$(BUILD_DIR)/test_striped_hyena
-	@echo "=== Running HyenaDNA Tests ===" && ./$(BUILD_DIR)/test_hyena_dna
-	@echo "=== Running MHA Backward Regression ===" && ./$(BUILD_DIR)/test_mha_backward
-
+	@rm -f .run_tests_failed
+	@echo "=== Running test_flash_attention_v2 ==="; if ./$(BUILD_DIR)/test_flash_attention_v2; then :; else echo "test_flash_attention_v2" >> .run_tests_failed; fi
+	@echo "=== Running test_s4 ==="; if ./$(BUILD_DIR)/test_s4; then :; else echo "test_s4" >> .run_tests_failed; fi
+	@echo "=== Running test_neural_spline_flow ==="; if ./$(BUILD_DIR)/test_neural_spline_flow; then :; else echo "test_neural_spline_flow" >> .run_tests_failed; fi
+	@echo "=== Running test_realnvp ==="; if ./$(BUILD_DIR)/test_realnvp; then :; else echo "test_realnvp" >> .run_tests_failed; fi
+	@echo "=== Running test_ddpm ==="; if ./$(BUILD_DIR)/test_ddpm; then :; else echo "test_ddpm" >> .run_tests_failed; fi
+	@echo "=== Running test_adabelief ==="; if ./$(BUILD_DIR)/test_adabelief; then :; else echo "test_adabelief" >> .run_tests_failed; fi
+	@echo "=== Running test_gradient_check ==="; if ./$(BUILD_DIR)/test_gradient_check; then :; else echo "test_gradient_check" >> .run_tests_failed; fi
+	@echo "=== Running test_flash_attention ==="; if ./$(BUILD_DIR)/test_flash_attention; then :; else echo "test_flash_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_rmsnorm ==="; if ./$(BUILD_DIR)/test_rmsnorm; then :; else echo "test_rmsnorm" >> .run_tests_failed; fi
+	@echo "=== Running test_spectral_norm ==="; if ./$(BUILD_DIR)/test_spectral_norm; then :; else echo "test_spectral_norm" >> .run_tests_failed; fi
+	@echo "=== Running test_dynamic_tanh ==="; if ./$(BUILD_DIR)/test_dynamic_tanh; then :; else echo "test_dynamic_tanh" >> .run_tests_failed; fi
+	@echo "=== Running test_layer_scale ==="; if ./$(BUILD_DIR)/test_layer_scale; then :; else echo "test_layer_scale" >> .run_tests_failed; fi
+	@echo "=== Running test_avgpool2d ==="; if ./$(BUILD_DIR)/test_avgpool2d; then :; else echo "test_avgpool2d" >> .run_tests_failed; fi
+	@echo "=== Running test_deep_gcn ==="; if ./$(BUILD_DIR)/test_deep_gcn; then :; else echo "test_deep_gcn" >> .run_tests_failed; fi
+	@echo "=== Running test_dmon ==="; if ./$(BUILD_DIR)/test_dmon; then :; else echo "test_dmon" >> .run_tests_failed; fi
+	@echo "=== Running test_edgeconv ==="; if ./$(BUILD_DIR)/test_edgeconv; then :; else echo "test_edgeconv" >> .run_tests_failed; fi
+	@echo "=== Running test_gat_gradient ==="; if ./$(BUILD_DIR)/test_gat_gradient; then :; else echo "test_gat_gradient" >> .run_tests_failed; fi
+	@echo "=== Running test_gat_verify ==="; if ./$(BUILD_DIR)/test_gat_verify; then :; else echo "test_gat_verify" >> .run_tests_failed; fi
+	@echo "=== Running test_gin ==="; if ./$(BUILD_DIR)/test_gin; then :; else echo "test_gin" >> .run_tests_failed; fi
+	@echo "=== Running test_gmlp ==="; if ./$(BUILD_DIR)/test_gmlp; then :; else echo "test_gmlp" >> .run_tests_failed; fi
+	@echo "=== Running test_mlp_mixer ==="; if ./$(BUILD_DIR)/test_mlp_mixer; then :; else echo "test_mlp_mixer" >> .run_tests_failed; fi
+	@echo "=== Running test_hyena ==="; if ./$(BUILD_DIR)/test_hyena; then :; else echo "test_hyena" >> .run_tests_failed; fi
+	@echo "=== Running test_conformer ==="; if ./$(BUILD_DIR)/test_conformer; then :; else echo "test_conformer" >> .run_tests_failed; fi
+	@echo "=== Running test_lightgcn ==="; if ./$(BUILD_DIR)/test_lightgcn; then :; else echo "test_lightgcn" >> .run_tests_failed; fi
+	@echo "=== Running test_lsh_attention ==="; if ./$(BUILD_DIR)/test_lsh_attention; then :; else echo "test_lsh_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_nystrom_attention ==="; if ./$(BUILD_DIR)/test_nystrom_attention; then :; else echo "test_nystrom_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_patchy_san ==="; if ./$(BUILD_DIR)/test_patchy_san; then :; else echo "test_patchy_san" >> .run_tests_failed; fi
+	@echo "=== Running test_pna ==="; if ./$(BUILD_DIR)/test_pna; then :; else echo "test_pna" >> .run_tests_failed; fi
+	@echo "=== Running test_linformer ==="; if ./$(BUILD_DIR)/test_linformer; then :; else echo "test_linformer" >> .run_tests_failed; fi
+	@echo "=== Running test_mamba_conv ==="; if ./$(BUILD_DIR)/test_mamba_conv; then :; else echo "test_mamba_conv" >> .run_tests_failed; fi
+	@echo "=== Running test_mamba ==="; if ./$(BUILD_DIR)/test_mamba; then :; else echo "test_mamba" >> .run_tests_failed; fi
+	@echo "=== Running test_xlstm ==="; if ./$(BUILD_DIR)/test_xlstm; then :; else echo "test_xlstm" >> .run_tests_failed; fi
+	@echo "=== Running test_min_gru ==="; if ./$(BUILD_DIR)/test_min_gru; then :; else echo "test_min_gru" >> .run_tests_failed; fi
+	@echo "=== Running test_min_lstm ==="; if ./$(BUILD_DIR)/test_min_lstm; then :; else echo "test_min_lstm" >> .run_tests_failed; fi
+	@echo "=== Running test_mogrifier_lstm ==="; if ./$(BUILD_DIR)/test_mogrifier_lstm; then :; else echo "test_mogrifier_lstm" >> .run_tests_failed; fi
+	@echo "=== Running test_mamba2 ==="; if ./$(BUILD_DIR)/test_mamba2; then :; else echo "test_mamba2" >> .run_tests_failed; fi
+	@echo "=== Running test_rwkv ==="; if ./$(BUILD_DIR)/test_rwkv; then :; else echo "test_rwkv" >> .run_tests_failed; fi
+	@echo "=== Running test_retnet ==="; if ./$(BUILD_DIR)/test_retnet; then :; else echo "test_retnet" >> .run_tests_failed; fi
+	@echo "=== Running test_mlstm ==="; if ./$(BUILD_DIR)/test_mlstm; then :; else echo "test_mlstm" >> .run_tests_failed; fi
+	@echo "=== Running test_h3 ==="; if ./$(BUILD_DIR)/test_h3; then :; else echo "test_h3" >> .run_tests_failed; fi
+	@echo "=== Running test_deltanet ==="; if ./$(BUILD_DIR)/test_deltanet; then :; else echo "test_deltanet" >> .run_tests_failed; fi
+	@echo "=== Running test_gated_deltanet ==="; if ./$(BUILD_DIR)/test_gated_deltanet; then :; else echo "test_gated_deltanet" >> .run_tests_failed; fi
+	@echo "=== Running test_mamba3 ==="; if ./$(BUILD_DIR)/test_mamba3; then :; else echo "test_mamba3" >> .run_tests_failed; fi
+	@echo "=== Running test_jamba ==="; if ./$(BUILD_DIR)/test_jamba; then :; else echo "test_jamba" >> .run_tests_failed; fi
+	@echo "=== Running test_griffin ==="; if ./$(BUILD_DIR)/test_griffin; then :; else echo "test_griffin" >> .run_tests_failed; fi
+	@echo "=== Running test_xlstm_block ==="; if ./$(BUILD_DIR)/test_xlstm_block; then :; else echo "test_xlstm_block" >> .run_tests_failed; fi
+	@echo "=== Running test_deepseek_moe ==="; if ./$(BUILD_DIR)/test_deepseek_moe; then :; else echo "test_deepseek_moe" >> .run_tests_failed; fi
+	@echo "=== Running test_hyper_mixing ==="; if ./$(BUILD_DIR)/test_hyper_mixing; then :; else echo "test_hyper_mixing" >> .run_tests_failed; fi
+	@echo "=== Running test_mega ==="; if ./$(BUILD_DIR)/test_mega; then :; else echo "test_mega" >> .run_tests_failed; fi
+	@echo "=== Running test_mambabyte ==="; if ./$(BUILD_DIR)/test_mambabyte; then :; else echo "test_mambabyte" >> .run_tests_failed; fi
+	@echo "=== Running test_gla ==="; if ./$(BUILD_DIR)/test_gla; then :; else echo "test_gla" >> .run_tests_failed; fi
+	@echo "=== Running test_flow_matching ==="; if ./$(BUILD_DIR)/test_flow_matching; then :; else echo "test_flow_matching" >> .run_tests_failed; fi
+	@echo "=== Running test_dit ==="; if ./$(BUILD_DIR)/test_dit; then :; else echo "test_dit" >> .run_tests_failed; fi
+	@echo "=== Running test_timesnet ==="; if ./$(BUILD_DIR)/test_timesnet; then :; else echo "test_timesnet" >> .run_tests_failed; fi
+	@echo "=== Running test_hawk ==="; if ./$(BUILD_DIR)/test_hawk; then :; else echo "test_hawk" >> .run_tests_failed; fi
+	@echo "=== Running test_performer ==="; if ./$(BUILD_DIR)/test_performer; then :; else echo "test_performer" >> .run_tests_failed; fi
+	@echo "=== Running test_cosformer ==="; if ./$(BUILD_DIR)/test_cosformer; then :; else echo "test_cosformer" >> .run_tests_failed; fi
+	@echo "=== Running test_gqa ==="; if ./$(BUILD_DIR)/test_gqa; then :; else echo "test_gqa" >> .run_tests_failed; fi
+	@echo "=== Running test_expire_span ==="; if ./$(BUILD_DIR)/test_expire_span; then :; else echo "test_expire_span" >> .run_tests_failed; fi
+	@echo "=== Running test_aft ==="; if ./$(BUILD_DIR)/test_aft; then :; else echo "test_aft" >> .run_tests_failed; fi
+	@echo "=== Running test_aft_local ==="; if ./$(BUILD_DIR)/test_aft_local; then :; else echo "test_aft_local" >> .run_tests_failed; fi
+	@echo "=== Running test_aft_conv ==="; if ./$(BUILD_DIR)/test_aft_conv; then :; else echo "test_aft_conv" >> .run_tests_failed; fi
+	@echo "=== Running test_conv_attention ==="; if ./$(BUILD_DIR)/test_conv_attention; then :; else echo "test_conv_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_conv_bert ==="; if ./$(BUILD_DIR)/test_conv_bert; then :; else echo "test_conv_bert" >> .run_tests_failed; fi
+	@echo "=== Running test_pixelcnn ==="; if ./$(BUILD_DIR)/test_pixelcnn; then :; else echo "test_pixelcnn" >> .run_tests_failed; fi
+	@echo "=== Running test_egnn ==="; if ./$(BUILD_DIR)/test_egnn; then :; else echo "test_egnn" >> .run_tests_failed; fi
+	@echo "=== Running test_sparse_moe ==="; if ./$(BUILD_DIR)/test_sparse_moe; then :; else echo "test_sparse_moe" >> .run_tests_failed; fi
+	@echo "=== Running test_moe_router ==="; if ./$(BUILD_DIR)/test_moe_router; then :; else echo "test_moe_router" >> .run_tests_failed; fi
+	@echo "=== Running test_knn_classifier ==="; if ./$(BUILD_DIR)/test_knn_classifier; then :; else echo "test_knn_classifier" >> .run_tests_failed; fi
+	@echo "=== Running test_tree_lstm ==="; if ./$(BUILD_DIR)/test_tree_lstm; then :; else echo "test_tree_lstm" >> .run_tests_failed; fi
+	@echo "=== Running test_hopfield ==="; if ./$(BUILD_DIR)/test_hopfield; then :; else echo "test_hopfield" >> .run_tests_failed; fi
+	@echo "=== Running test_rope_v ==="; if ./$(BUILD_DIR)/test_rope_v; then :; else echo "test_rope_v" >> .run_tests_failed; fi
+	@echo "=== Running test_yarn_rope ==="; if ./$(BUILD_DIR)/test_yarn_rope; then :; else echo "test_yarn_rope" >> .run_tests_failed; fi
+	@echo "=== Running test_slot_attention ==="; if ./$(BUILD_DIR)/test_slot_attention; then :; else echo "test_slot_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_fnet ==="; if ./$(BUILD_DIR)/test_fnet; then :; else echo "test_fnet" >> .run_tests_failed; fi
+	@echo "=== Running test_magnitude_pruning ==="; if ./$(BUILD_DIR)/test_magnitude_pruning; then :; else echo "test_magnitude_pruning" >> .run_tests_failed; fi
+	@echo "=== Running test_stochastic_depth ==="; if ./$(BUILD_DIR)/test_stochastic_depth; then :; else echo "test_stochastic_depth" >> .run_tests_failed; fi
+	@echo "=== Running test_lora ==="; if ./$(BUILD_DIR)/test_lora; then :; else echo "test_lora" >> .run_tests_failed; fi
+	@echo "=== Running test_bitnet ==="; if ./$(BUILD_DIR)/test_bitnet; then :; else echo "test_bitnet" >> .run_tests_failed; fi
+	@echo "=== Running test_dcn_v2 ==="; if ./$(BUILD_DIR)/test_dcn_v2; then :; else echo "test_dcn_v2" >> .run_tests_failed; fi
+	@echo "=== Running test_monarch_mixer ==="; if ./$(BUILD_DIR)/test_monarch_mixer; then :; else echo "test_monarch_mixer" >> .run_tests_failed; fi
+	@echo "=== Running test_set_transformer ==="; if ./$(BUILD_DIR)/test_set_transformer; then :; else echo "test_set_transformer" >> .run_tests_failed; fi
+	@echo "=== Running test_ff_layer ==="; if ./$(BUILD_DIR)/test_ff_layer; then :; else echo "test_ff_layer" >> .run_tests_failed; fi
+	@echo "=== Running test_span_extractor ==="; if ./$(BUILD_DIR)/test_span_extractor; then :; else echo "test_span_extractor" >> .run_tests_failed; fi
+	@echo "=== Running test_mla ==="; if ./$(BUILD_DIR)/test_mla; then :; else echo "test_mla" >> .run_tests_failed; fi
+	@echo "=== Running test_mixture_of_depths ==="; if ./$(BUILD_DIR)/test_mixture_of_depths; then :; else echo "test_mixture_of_depths" >> .run_tests_failed; fi
+	@echo "=== Running test_graphsage ==="; if ./$(BUILD_DIR)/test_graphsage; then :; else echo "test_graphsage" >> .run_tests_failed; fi
+	@echo "=== Running test_capsule ==="; if ./$(BUILD_DIR)/test_capsule; then :; else echo "test_capsule" >> .run_tests_failed; fi
+	@echo "=== Running test_kan ==="; if ./$(BUILD_DIR)/test_kan; then :; else echo "test_kan" >> .run_tests_failed; fi
+	@echo "=== Running test_fourier_kan ==="; if ./$(BUILD_DIR)/test_fourier_kan; then :; else echo "test_fourier_kan" >> .run_tests_failed; fi
+	@echo "=== Running test_gumbel_softmax ==="; if ./$(BUILD_DIR)/test_gumbel_softmax; then :; else echo "test_gumbel_softmax" >> .run_tests_failed; fi
+	@echo "=== Running test_lion ==="; if ./$(BUILD_DIR)/test_lion; then :; else echo "test_lion" >> .run_tests_failed; fi
+	@echo "=== Running test_sophia ==="; if ./$(BUILD_DIR)/test_sophia; then :; else echo "test_sophia" >> .run_tests_failed; fi
+	@echo "=== Running test_sam ==="; if ./$(BUILD_DIR)/test_sam; then :; else echo "test_sam" >> .run_tests_failed; fi
+	@echo "=== Running test_bigbird ==="; if ./$(BUILD_DIR)/test_bigbird; then :; else echo "test_bigbird" >> .run_tests_failed; fi
+	@echo "=== Running test_tabnet ==="; if ./$(BUILD_DIR)/test_tabnet; then :; else echo "test_tabnet" >> .run_tests_failed; fi
+	@echo "=== Running test_lookahead ==="; if ./$(BUILD_DIR)/test_lookahead; then :; else echo "test_lookahead" >> .run_tests_failed; fi
+	@echo "=== Running test_diffgrad ==="; if ./$(BUILD_DIR)/test_diffgrad; then :; else echo "test_diffgrad" >> .run_tests_failed; fi
+	@echo "=== Running test_alibi ==="; if ./$(BUILD_DIR)/test_alibi; then :; else echo "test_alibi" >> .run_tests_failed; fi
+	@echo "=== Running test_spatial_transformer ==="; if ./$(BUILD_DIR)/test_spatial_transformer; then :; else echo "test_spatial_transformer" >> .run_tests_failed; fi
+	@echo "=== Running test_transformer_decoder ==="; if ./$(BUILD_DIR)/test_transformer_decoder; then :; else echo "test_transformer_decoder" >> .run_tests_failed; fi
+	@echo "=== Running test_hypernetwork ==="; if ./$(BUILD_DIR)/test_hypernetwork; then :; else echo "test_hypernetwork" >> .run_tests_failed; fi
+	@echo "=== Running test_distribution_losses ==="; if ./$(BUILD_DIR)/test_distribution_losses; then :; else echo "test_distribution_losses" >> .run_tests_failed; fi
+	@echo "=== Running test_self_supervised_losses ==="; if ./$(BUILD_DIR)/test_self_supervised_losses; then :; else echo "test_self_supervised_losses" >> .run_tests_failed; fi
+	@echo "=== Running test_mmd_loss ==="; if ./$(BUILD_DIR)/test_mmd_loss; then :; else echo "test_mmd_loss" >> .run_tests_failed; fi
+	@echo "=== Running test_contrastive_losses ==="; if ./$(BUILD_DIR)/test_contrastive_losses; then :; else echo "test_contrastive_losses" >> .run_tests_failed; fi
+	@echo "=== Running test_siglip_loss ==="; if ./$(BUILD_DIR)/test_siglip_loss; then :; else echo "test_siglip_loss" >> .run_tests_failed; fi
+	@echo "=== Running test_metrics ==="; if ./$(BUILD_DIR)/test_metrics; then :; else echo "test_metrics" >> .run_tests_failed; fi
+	@echo "=== Running test_model_ema ==="; if ./$(BUILD_DIR)/test_model_ema; then :; else echo "test_model_ema" >> .run_tests_failed; fi
+	@echo "=== Running test_early_stopping ==="; if ./$(BUILD_DIR)/test_early_stopping; then :; else echo "test_early_stopping" >> .run_tests_failed; fi
+	@echo "=== Running test_training_history ==="; if ./$(BUILD_DIR)/test_training_history; then :; else echo "test_training_history" >> .run_tests_failed; fi
+	@echo "=== Running test_model_checkpoint ==="; if ./$(BUILD_DIR)/test_model_checkpoint; then :; else echo "test_model_checkpoint" >> .run_tests_failed; fi
+	@echo "=== Running test_dataloader ==="; if ./$(BUILD_DIR)/test_dataloader; then :; else echo "test_dataloader" >> .run_tests_failed; fi
+	@echo "=== Running test_cross_validation ==="; if ./$(BUILD_DIR)/test_cross_validation; then :; else echo "test_cross_validation" >> .run_tests_failed; fi
+	@echo "=== Running test_lightgbm_style ==="; if ./$(BUILD_DIR)/test_lightgbm_style; then :; else echo "test_lightgbm_style" >> .run_tests_failed; fi
+	@echo "=== Running test_label_smoothing ==="; if ./$(BUILD_DIR)/test_label_smoothing; then :; else echo "test_label_smoothing" >> .run_tests_failed; fi
+	@echo "=== Running test_clip_grad_norm ==="; if ./$(BUILD_DIR)/test_clip_grad_norm; then :; else echo "test_clip_grad_norm" >> .run_tests_failed; fi
+	@echo "=== Running test_mixup_cutmix ==="; if ./$(BUILD_DIR)/test_mixup_cutmix; then :; else echo "test_mixup_cutmix" >> .run_tests_failed; fi
+	@echo "=== Running test_elastic_net ==="; if ./$(BUILD_DIR)/test_elastic_net; then :; else echo "test_elastic_net" >> .run_tests_failed; fi
+	@echo "=== Running test_activations ==="; if ./$(BUILD_DIR)/test_activations; then :; else echo "test_activations" >> .run_tests_failed; fi
+	@echo "=== Running test_legacy_adaptive ==="; if ./$(BUILD_DIR)/test_legacy_adaptive; then :; else echo "test_legacy_adaptive" >> .run_tests_failed; fi
+	@echo "=== Running test_instance_norm ==="; if ./$(BUILD_DIR)/test_instance_norm; then :; else echo "test_instance_norm" >> .run_tests_failed; fi
+	@echo "=== Running test_ademamix ==="; if ./$(BUILD_DIR)/test_ademamix; then :; else echo "test_ademamix" >> .run_tests_failed; fi
+	@echo "=== Running test_sgd_nesterov ==="; if ./$(BUILD_DIR)/test_sgd_nesterov; then :; else echo "test_sgd_nesterov" >> .run_tests_failed; fi
+	@echo "=== Running test_lr_schedulers ==="; if ./$(BUILD_DIR)/test_lr_schedulers; then :; else echo "test_lr_schedulers" >> .run_tests_failed; fi
+	@echo "=== Running test_muon ==="; if ./$(BUILD_DIR)/test_muon; then :; else echo "test_muon" >> .run_tests_failed; fi
+	@echo "=== Running test_gmm ==="; if ./$(BUILD_DIR)/test_gmm; then :; else echo "test_gmm" >> .run_tests_failed; fi
+	@echo "=== Running test_adaln_zero ==="; if ./$(BUILD_DIR)/test_adaln_zero; then :; else echo "test_adaln_zero" >> .run_tests_failed; fi
+	@echo "=== Running test_adafactor ==="; if ./$(BUILD_DIR)/test_adafactor; then :; else echo "test_adafactor" >> .run_tests_failed; fi
+	@echo "=== Running test_segmentation_losses ==="; if ./$(BUILD_DIR)/test_segmentation_losses; then :; else echo "test_segmentation_losses" >> .run_tests_failed; fi
+	@echo "=== Running test_yogi ==="; if ./$(BUILD_DIR)/test_yogi; then :; else echo "test_yogi" >> .run_tests_failed; fi
+	@echo "=== Running test_radam ==="; if ./$(BUILD_DIR)/test_radam; then :; else echo "test_radam" >> .run_tests_failed; fi
+	@echo "=== Running test_adan ==="; if ./$(BUILD_DIR)/test_adan; then :; else echo "test_adan" >> .run_tests_failed; fi
+	@echo "=== Running test_mars ==="; if ./$(BUILD_DIR)/test_mars; then :; else echo "test_mars" >> .run_tests_failed; fi
+	@echo "=== Running test_lars ==="; if ./$(BUILD_DIR)/test_lars; then :; else echo "test_lars" >> .run_tests_failed; fi
+	@echo "=== Running test_novograd ==="; if ./$(BUILD_DIR)/test_novograd; then :; else echo "test_novograd" >> .run_tests_failed; fi
+	@echo "=== Running test_came ==="; if ./$(BUILD_DIR)/test_came; then :; else echo "test_came" >> .run_tests_failed; fi
+	@echo "=== Running test_schedule_free_adamw ==="; if ./$(BUILD_DIR)/test_schedule_free_adamw; then :; else echo "test_schedule_free_adamw" >> .run_tests_failed; fi
+	@echo "=== Running test_schedule_free_sgd ==="; if ./$(BUILD_DIR)/test_schedule_free_sgd; then :; else echo "test_schedule_free_sgd" >> .run_tests_failed; fi
+	@echo "=== Running test_signum ==="; if ./$(BUILD_DIR)/test_signum; then :; else echo "test_signum" >> .run_tests_failed; fi
+	@echo "=== Running test_adam_mini ==="; if ./$(BUILD_DIR)/test_adam_mini; then :; else echo "test_adam_mini" >> .run_tests_failed; fi
+	@echo "=== Running test_dadaptation ==="; if ./$(BUILD_DIR)/test_dadaptation; then :; else echo "test_dadaptation" >> .run_tests_failed; fi
+	@echo "=== Running test_gradient_centralization ==="; if ./$(BUILD_DIR)/test_gradient_centralization; then :; else echo "test_gradient_centralization" >> .run_tests_failed; fi
+	@echo "=== Running test_adamp ==="; if ./$(BUILD_DIR)/test_adamp; then :; else echo "test_adamp" >> .run_tests_failed; fi
+	@echo "=== Running test_lamb ==="; if ./$(BUILD_DIR)/test_lamb; then :; else echo "test_lamb" >> .run_tests_failed; fi
+	@echo "=== Running test_cautious ==="; if ./$(BUILD_DIR)/test_cautious; then :; else echo "test_cautious" >> .run_tests_failed; fi
+	@echo "=== Running test_grokfast ==="; if ./$(BUILD_DIR)/test_grokfast; then :; else echo "test_grokfast" >> .run_tests_failed; fi
+	@echo "=== Running test_soap ==="; if ./$(BUILD_DIR)/test_soap; then :; else echo "test_soap" >> .run_tests_failed; fi
+	@echo "=== Running test_shampoo ==="; if ./$(BUILD_DIR)/test_shampoo; then :; else echo "test_shampoo" >> .run_tests_failed; fi
+	@echo "=== Running test_prodigy ==="; if ./$(BUILD_DIR)/test_prodigy; then :; else echo "test_prodigy" >> .run_tests_failed; fi
+	@echo "=== Running test_stableadamw ==="; if ./$(BUILD_DIR)/test_stableadamw; then :; else echo "test_stableadamw" >> .run_tests_failed; fi
+	@echo "=== Running test_adopt ==="; if ./$(BUILD_DIR)/test_adopt; then :; else echo "test_adopt" >> .run_tests_failed; fi
+	@echo "=== Running test_swa ==="; if ./$(BUILD_DIR)/test_swa; then :; else echo "test_swa" >> .run_tests_failed; fi
+	@echo "=== Running test_galore ==="; if ./$(BUILD_DIR)/test_galore; then :; else echo "test_galore" >> .run_tests_failed; fi
+	@echo "=== Running test_apollo ==="; if ./$(BUILD_DIR)/test_apollo; then :; else echo "test_apollo" >> .run_tests_failed; fi
+	@echo "=== Running test_ltc ==="; if ./$(BUILD_DIR)/test_ltc; then :; else echo "test_ltc" >> .run_tests_failed; fi
+	@echo "=== Running test_neural_ode ==="; if ./$(BUILD_DIR)/test_neural_ode; then :; else echo "test_neural_ode" >> .run_tests_failed; fi
+	@echo "=== Running test_hgrn ==="; if ./$(BUILD_DIR)/test_hgrn; then :; else echo "test_hgrn" >> .run_tests_failed; fi
+	@echo "=== Running test_rwkv7 ==="; if ./$(BUILD_DIR)/test_rwkv7; then :; else echo "test_rwkv7" >> .run_tests_failed; fi
+	@echo "=== Running test_rwkv5 ==="; if ./$(BUILD_DIR)/test_rwkv5; then :; else echo "test_rwkv5" >> .run_tests_failed; fi
+	@echo "=== Running test_rwkv6 ==="; if ./$(BUILD_DIR)/test_rwkv6; then :; else echo "test_rwkv6" >> .run_tests_failed; fi
+	@echo "=== Running test_linoss ==="; if ./$(BUILD_DIR)/test_linoss; then :; else echo "test_linoss" >> .run_tests_failed; fi
+	@echo "=== Running test_agent_attention ==="; if ./$(BUILD_DIR)/test_agent_attention; then :; else echo "test_agent_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_hyper_connection ==="; if ./$(BUILD_DIR)/test_hyper_connection; then :; else echo "test_hyper_connection" >> .run_tests_failed; fi
+	@echo "=== Running test_diff_transformer ==="; if ./$(BUILD_DIR)/test_diff_transformer; then :; else echo "test_diff_transformer" >> .run_tests_failed; fi
+	@echo "=== Running test_hymba ==="; if ./$(BUILD_DIR)/test_hymba; then :; else echo "test_hymba" >> .run_tests_failed; fi
+	@echo "=== Running test_log_linear_attention ==="; if ./$(BUILD_DIR)/test_log_linear_attention; then :; else echo "test_log_linear_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_sliding_window ==="; if ./$(BUILD_DIR)/test_sliding_window; then :; else echo "test_sliding_window" >> .run_tests_failed; fi
+	@echo "=== Running test_nsa ==="; if ./$(BUILD_DIR)/test_nsa; then :; else echo "test_nsa" >> .run_tests_failed; fi
+	@echo "=== Running test_shla ==="; if ./$(BUILD_DIR)/test_shla; then :; else echo "test_shla" >> .run_tests_failed; fi
+	@echo "=== Running test_block_sparse_flash ==="; if ./$(BUILD_DIR)/test_block_sparse_flash; then :; else echo "test_block_sparse_flash" >> .run_tests_failed; fi
+	@echo "=== Running test_rwkv7_parallel ==="; if ./$(BUILD_DIR)/test_rwkv7_parallel; then :; else echo "test_rwkv7_parallel" >> .run_tests_failed; fi
+	@echo "=== Running test_moe_mamba ==="; if ./$(BUILD_DIR)/test_moe_mamba; then :; else echo "test_moe_mamba" >> .run_tests_failed; fi
+	@echo "=== Running test_titans_mac ==="; if ./$(BUILD_DIR)/test_titans_mac; then :; else echo "test_titans_mac" >> .run_tests_failed; fi
+	@echo "=== Running test_titans_mag ==="; if ./$(BUILD_DIR)/test_titans_mag; then :; else echo "test_titans_mag" >> .run_tests_failed; fi
+	@echo "=== Running test_titans_mal ==="; if ./$(BUILD_DIR)/test_titans_mal; then :; else echo "test_titans_mal" >> .run_tests_failed; fi
+	@echo "=== Running test_fox ==="; if ./$(BUILD_DIR)/test_fox; then :; else echo "test_fox" >> .run_tests_failed; fi
+	@echo "=== Running test_mosa ==="; if ./$(BUILD_DIR)/test_mosa; then :; else echo "test_mosa" >> .run_tests_failed; fi
+	@echo "=== Running test_soft_moe ==="; if ./$(BUILD_DIR)/test_soft_moe; then :; else echo "test_soft_moe" >> .run_tests_failed; fi
+	@echo "=== Running test_ttt_linear ==="; if ./$(BUILD_DIR)/test_ttt_linear; then :; else echo "test_ttt_linear" >> .run_tests_failed; fi
+	@echo "=== Running test_ttt_mlp ==="; if ./$(BUILD_DIR)/test_ttt_mlp; then :; else echo "test_ttt_mlp" >> .run_tests_failed; fi
+	@echo "=== Running test_mamba_bidirectional ==="; if ./$(BUILD_DIR)/test_mamba_bidirectional; then :; else echo "test_mamba_bidirectional" >> .run_tests_failed; fi
+	@echo "=== Running test_based ==="; if ./$(BUILD_DIR)/test_based; then :; else echo "test_based" >> .run_tests_failed; fi
+	@echo "=== Running test_ft_transformer ==="; if ./$(BUILD_DIR)/test_ft_transformer; then :; else echo "test_ft_transformer" >> .run_tests_failed; fi
+	@echo "=== Running test_gau ==="; if ./$(BUILD_DIR)/test_gau; then :; else echo "test_gau" >> .run_tests_failed; fi
+	@echo "=== Running test_lambda_layer ==="; if ./$(BUILD_DIR)/test_lambda_layer; then :; else echo "test_lambda_layer" >> .run_tests_failed; fi
+	@echo "=== Running test_stick_breaking ==="; if ./$(BUILD_DIR)/test_stick_breaking; then :; else echo "test_stick_breaking" >> .run_tests_failed; fi
+	@echo "=== Running test_ngpt ==="; if ./$(BUILD_DIR)/test_ngpt; then :; else echo "test_ngpt" >> .run_tests_failed; fi
+	@echo "=== Running test_multi_token_prediction ==="; if ./$(BUILD_DIR)/test_multi_token_prediction; then :; else echo "test_multi_token_prediction" >> .run_tests_failed; fi
+	@echo "=== Running test_tokenformer ==="; if ./$(BUILD_DIR)/test_tokenformer; then :; else echo "test_tokenformer" >> .run_tests_failed; fi
+	@echo "=== Running test_deformable_attention ==="; if ./$(BUILD_DIR)/test_deformable_attention; then :; else echo "test_deformable_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_multi_scale_deformable_attention ==="; if ./$(BUILD_DIR)/test_multi_scale_deformable_attention; then :; else echo "test_multi_scale_deformable_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_power_attention ==="; if ./$(BUILD_DIR)/test_power_attention; then :; else echo "test_power_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_gated_slot_attention ==="; if ./$(BUILD_DIR)/test_gated_slot_attention; then :; else echo "test_gated_slot_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_hilo_attention ==="; if ./$(BUILD_DIR)/test_hilo_attention; then :; else echo "test_hilo_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_s5 ==="; if ./$(BUILD_DIR)/test_s5; then :; else echo "test_s5" >> .run_tests_failed; fi
+	@echo "=== Running test_act ==="; if ./$(BUILD_DIR)/test_act; then :; else echo "test_act" >> .run_tests_failed; fi
+	@echo "=== Running test_switch_transformer ==="; if ./$(BUILD_DIR)/test_switch_transformer; then :; else echo "test_switch_transformer" >> .run_tests_failed; fi
+	@echo "=== Running test_vision_mamba ==="; if ./$(BUILD_DIR)/test_vision_mamba; then :; else echo "test_vision_mamba" >> .run_tests_failed; fi
+	@echo "=== Running test_axial_attention ==="; if ./$(BUILD_DIR)/test_axial_attention; then :; else echo "test_axial_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_three_d_axial_attention ==="; if ./$(BUILD_DIR)/test_three_d_axial_attention; then :; else echo "test_three_d_axial_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_sparse_mixer ==="; if ./$(BUILD_DIR)/test_sparse_mixer; then :; else echo "test_sparse_mixer" >> .run_tests_failed; fi
+	@echo "=== Running test_focal_modulation ==="; if ./$(BUILD_DIR)/test_focal_modulation; then :; else echo "test_focal_modulation" >> .run_tests_failed; fi
+	@echo "=== Running test_mixture_of_softmaxes ==="; if ./$(BUILD_DIR)/test_mixture_of_softmaxes; then :; else echo "test_mixture_of_softmaxes" >> .run_tests_failed; fi
+	@echo "=== Running test_fastformer ==="; if ./$(BUILD_DIR)/test_fastformer; then :; else echo "test_fastformer" >> .run_tests_failed; fi
+	@echo "=== Running test_gatv2 ==="; if ./$(BUILD_DIR)/test_gatv2; then :; else echo "test_gatv2" >> .run_tests_failed; fi
+	@echo "=== Running test_sagpool ==="; if ./$(BUILD_DIR)/test_sagpool; then :; else echo "test_sagpool" >> .run_tests_failed; fi
+	@echo "=== Running test_tome ==="; if ./$(BUILD_DIR)/test_tome; then :; else echo "test_tome" >> .run_tests_failed; fi
+	@echo "=== Running test_clustered_attention ==="; if ./$(BUILD_DIR)/test_clustered_attention; then :; else echo "test_clustered_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_window_attention ==="; if ./$(BUILD_DIR)/test_window_attention; then :; else echo "test_window_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_linear_attention ==="; if ./$(BUILD_DIR)/test_linear_attention; then :; else echo "test_linear_attention" >> .run_tests_failed; fi
+	@echo "=== Running test_qk_norm ==="; if ./$(BUILD_DIR)/test_qk_norm; then :; else echo "test_qk_norm" >> .run_tests_failed; fi
+	@echo "=== Running test_cheby_kan ==="; if ./$(BUILD_DIR)/test_cheby_kan; then :; else echo "test_cheby_kan" >> .run_tests_failed; fi
+	@echo "=== Running test_timestep_norm ==="; if ./$(BUILD_DIR)/test_timestep_norm; then :; else echo "test_timestep_norm" >> .run_tests_failed; fi
+	@echo "=== Running test_timestep_norm_grad ==="; if ./$(BUILD_DIR)/test_timestep_norm_grad; then :; else echo "test_timestep_norm_grad" >> .run_tests_failed; fi
+	@echo "=== Running test_complex_ema ==="; if ./$(BUILD_DIR)/test_complex_ema; then :; else echo "test_complex_ema" >> .run_tests_failed; fi
+	@echo "=== Running test_complex_ema_grad ==="; if ./$(BUILD_DIR)/test_complex_ema_grad; then :; else echo "test_complex_ema_grad" >> .run_tests_failed; fi
+	@echo "=== Running test_swiglu ==="; if ./$(BUILD_DIR)/test_swiglu; then :; else echo "test_swiglu" >> .run_tests_failed; fi
+	@echo "=== Running test_megalodon ==="; if ./$(BUILD_DIR)/test_megalodon; then :; else echo "test_megalodon" >> .run_tests_failed; fi
+	@echo "=== Running test_megalodon_grad ==="; if ./$(BUILD_DIR)/test_megalodon_grad; then :; else echo "test_megalodon_grad" >> .run_tests_failed; fi
+	@echo "=== Running test_striped_hyena ==="; if ./$(BUILD_DIR)/test_striped_hyena; then :; else echo "test_striped_hyena" >> .run_tests_failed; fi
+	@echo "=== Running test_hyena_dna ==="; if ./$(BUILD_DIR)/test_hyena_dna; then :; else echo "test_hyena_dna" >> .run_tests_failed; fi
+	@echo "=== Running test_mha_backward ==="; if ./$(BUILD_DIR)/test_mha_backward; then :; else echo "test_mha_backward" >> .run_tests_failed; fi
+	@if [ -s .run_tests_failed ]; then \
+		echo ""; echo "================ FAILING SUITES ================"; \
+		sed "s|^|  |" .run_tests_failed; \
+		echo "=================================================="; \
+		echo ""; rm -f .run_tests_failed; \
+		echo "run_tests: FAILED (listed above). Every suite ran."; \
+		exit 1; \
+	else \
+		echo ""; echo "run_tests: all 223 suites PASSED"; \
+		exit 0; \
+	fi
 clean:
 	rm -rf $(BUILD_DIR)
 
