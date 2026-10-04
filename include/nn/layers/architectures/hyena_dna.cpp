@@ -127,9 +127,11 @@ Tensor HyenaDNAFilter::positional_embedding(size_t L) const {
     size_t bands = (emb_dim_ - 1) / 2;
     const double TWO_PI = 2.0 * 3.14159265358979323846;
     for (size_t l = 0; l < L; ++l) {
-        // t normalized so t_{L-1} = 1 — the reference comment calls this
-        // "the time embedding fed to the filters is normalized so that t_f = 1".
-        z[l][0] = (L == 1) ? 1.0 : (double)l / (double)(L - 1);
+        // t = linspace(0, 1, L). For L == 1 that is [0.0], NOT [1.0] — this
+        // matches torch.linspace(0, 1, 1) == [0.0], and it matters: setting
+        // t=1 at L=1 would apply the FULL exp(-|deltas|) decay to the single
+        // timestep and shrink the filter by ~20x versus the reference.
+        z[l][0] = (L == 1) ? 0.0 : (double)l / (double)(L - 1);
         if (bands == 0) continue;
         // t_rescaled = linspace(0, L-1, L); w = 2*pi*t_rescaled/L
         double w = TWO_PI * (double)l / (double)L;
@@ -391,8 +393,96 @@ HyenaDNAOperator::HyenaDNAOperator(size_t d_model, size_t l_max, size_t num_head
     short_W = Tensor::random((order + 1) * d_model, short_filter_order, 0.2);
 }
 
-Tensor HyenaDNAOperator::forward(const Tensor&) {
-    throw std::runtime_error("HyenaDNAOperator::forward: not implemented");
+Tensor HyenaDNAOperator::forward(const Tensor& input) {
+    if (input.cols != d_model_)
+        throw std::invalid_argument("HyenaDNAOperator: input width must equal d_model");
+    if (input.rows > l_max_)
+        throw std::invalid_argument("HyenaDNAOperator: L > l_max");
+    if (input.rows == 0)
+        throw std::invalid_argument("HyenaDNAOperator: empty input");
+
+    size_t L = input.rows;
+    size_t H = num_heads_, HD = head_dim_, O = order_;
+    last_input = input;
+
+    // --- in_proj, applied per token. Dense is (batch, in) -> (batch, out) and a
+    // (L, D) tensor is exactly a batch of L tokens, so it applies directly.
+    Tensor u = in_proj.forward(input);            // (L, (O+1)*D)
+    last_in_proj = u;
+
+    // --- causal depthwise short convolution over the concatenated projections
+    Tensor uc = causal_depthwise_conv1d(u, short_W, short_b);
+    last_uc = uc;
+
+    // --- shared filter bank: (L, head_dim*(O-1))
+    Tensor k = filter.filter(L);
+    last_filter_h = k;
+
+    // Per-head scratch, all (L, D) so the backward can read them back directly.
+    // The (L, (O+1)*D) projection tensor is indexed
+    //   [l][h*(O+1)*HD + o*HD + c]
+    // so head h owns gates o = 0..O-1 and the value v at o = O.
+    last_gate.assign(O, Tensor(L, d_model_));
+    last_v_before.assign(O, Tensor(L, d_model_));
+    last_v_gated.assign(O, Tensor(L, d_model_));
+
+    Tensor y(L, d_model_);
+    std::vector<double> v_sig(L), k_sig(L), conv(L);
+
+    for (size_t h = 0; h < H; ++h) {
+        // Scatter this head's gates and value out of uc into the caches.
+        for (size_t o = 0; o < O; ++o)
+            for (size_t l = 0; l < L; ++l)
+                for (size_t c = 0; c < HD; ++c)
+                    last_gate[o][l][h * HD + c] =
+                        uc[l][h * (O + 1) * HD + o * HD + c];
+
+        // v is PER-CHANNEL: v[l][c] = uc[l][h*(O+1)*HD + O*HD + c].
+        // Keeping v as (L, HD) is essential — a single scalar per timestep
+        // would collapse the head's channels and silently compute a rank-1
+        // operator instead of HD independent ones.
+        std::vector<std::vector<double>> v(HD, std::vector<double>(L, 0.0));
+        for (size_t c = 0; c < HD; ++c)
+            for (size_t l = 0; l < L; ++l)
+                v[c][l] = uc[l][h * (O + 1) * HD + O * HD + c];
+
+        // --- the recurrence, for o = O-1 down to 1 (matching the reference's
+        //     `for o, x_i in enumerate(reversed(x[1:]))`):
+        //         v = v * x[o]                          (element-wise gate D_x)
+        //         v = long_conv(v, k_o) + bias_o * v    (T_h then the skip)
+        // Filter k_o for head h is k[:, h*(O-1) + o] and the skip is
+        // bias[:, h*(O-1) + o] — the reference index layout
+        // `rearrange(k, "c l (v o) -> c o v l", v=head_dim, o=order-1)`.
+        for (size_t o = O; o-- > 1;) {
+            for (size_t c = 0; c < HD; ++c) {
+                for (size_t l = 0; l < L; ++l) {
+                    double before = v[c][l];
+                    double g = last_gate[o][l][h * HD + c];
+                    last_v_before[o][l][h * HD + c] = before;
+                    last_v_gated[o][l][h * HD + c] = before * g;
+                    v_sig[l] = before * g;
+                }
+                for (size_t l = 0; l < L; ++l) k_sig[l] = k[l][h * (O - 1) + o];
+                causal_long_conv_1d(v_sig, k_sig, L, conv);
+                double b = filter.bias[0][h * (O - 1) + o];
+                for (size_t l = 0; l < L; ++l) {
+                    v_sig[l] = conv[l] + b * v_sig[l];
+                    v[c][l] = v_sig[l];
+                }
+            }
+        }
+
+        // --- final gate by x[0], scattered into the head's output columns.
+        for (size_t l = 0; l < L; ++l) {
+            for (size_t c = 0; c < HD; ++c) {
+                last_v_before[0][l][h * HD + c] = v[c][l];
+                y[l][h * HD + c] = v[c][l] * last_gate[0][l][h * HD + c];
+            }
+        }
+    }
+
+    last_y_pre_out = y;
+    return out_proj.forward(y);
 }
 
 Tensor HyenaDNAOperator::backward(const Tensor&, double) {

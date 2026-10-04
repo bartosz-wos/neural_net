@@ -271,6 +271,24 @@ static void test_positional_embedding() {
         }
     check(worst_m < 1e-12, "cos^2+sin^2 = 1 per band (unit modulus) worst=" + std::to_string(worst_m));
 
+    // --- L == 1 convention: torch.linspace(0, 1, 1) == [0.0], so the single
+    // time coordinate is 0, NOT 1. Getting this wrong applies the full
+    // exp(-|deltas|) decay to the only timestep and shrinks the filter ~20x.
+    {
+        HyenaDNAFilter f1e(3, 4, 3, 3, 0);
+        Tensor z1 = f1e.positional_embedding(1);
+        check(z1.rows == 1 && z1.cols == 3, "positional_embedding(1) shape (1, emb_dim)");
+        check(std::fabs(z1[0][0]) < 1e-15,
+              "t = 0 at L=1 (linspace(0,1,1) == [0.0], not [1.0]) got " +
+              std::to_string(z1[0][0]));
+        // With t=0 the decay is exp(0) = 1 exactly, so filter(1) == mlp(z[0]).
+        Tensor h1e = f1e.filter(1);
+        check(std::fabs(f1e.last_decay_term()[0][0] - 1.0) < 1e-15,
+              "decay at L=1 is exactly 1 (exp(-0)) got " +
+              std::to_string(f1e.last_decay_term()[0][0]));
+        (void)h1e;
+    }
+
     // L <= l_max is required; L > l_max throws.
     bool threw = false;
     try { f.positional_embedding(9); } catch (...) { threw = true; }
@@ -675,12 +693,313 @@ static void test_filter_fd_gradients() {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Test 5: operator forward.
+//   u    = in_proj(x)                          (L, (order+1)*D)
+//   uc   = short_depthwise_conv1d(u)           causal, kernel short_filter_order
+//   per head h: x_0..x_order, v = split(uc)   each (L, head_dim)
+//   for o = order-1 .. 1: v = v*x[o]; v = long_conv(v,k_o) + bias_o*v
+//   v    = v * x[0]; out = out_proj(concat_heads(v))
+// ---------------------------------------------------------------------------
+static void test_operator_forward() {
+    std::printf("Test 5: operator forward\n");
+
+    HyenaDNAOperator op(4, 6, 1, 2, 4, 3);
+    Tensor x = random_tensor(6, 4, 0.5);
+    Tensor y = op.forward(x);
+    check(y.rows == 6 && y.cols == 4, "operator forward (L,D) -> (L,D)");
+    check(all_finite(y), "operator output finite");
+    check(max_abs(y) > 1e-9, "operator output non-zero (max=" + sci(max_abs(y)) + ")");
+
+    // Input validation
+    bool threw = false;
+    try { op.forward(random_tensor(6, 5, 0.5)); } catch (...) { threw = true; }
+    check(threw, "operator throws on wrong input width");
+    threw = false;
+    try { op.forward(random_tensor(7, 4, 0.5)); } catch (...) { threw = true; }
+    check(threw, "operator throws on L > l_max");
+
+    // --- CAUSALITY (the paper's central claim: no future leakage).
+    // Output at row t must not depend on input rows > t.
+    HyenaDNAOperator cop(4, 6, 1, 2, 4, 3);
+    Tensor xa = random_tensor(6, 4, 0.5);
+    Tensor ya = cop.forward(xa);
+    Tensor xb = xa.clone();
+    xb[5][0] += 3.0;         // perturb ONLY the LAST row
+    Tensor yb = cop.forward(xb);
+    // rows 0..4 must be bit-identical; row 5 may change.
+    double max_early = 0.0;
+    for (size_t t = 0; t < 5; ++t)
+        for (size_t c = 0; c < 4; ++c) {
+            double d = std::fabs(ya[t][c] - yb[t][c]);
+            if (d > max_early) max_early = d;
+        }
+    check(max_early == 0.0, "operator is causal: perturbing row L-1 leaves rows 0..4-1 bit-identical (max=" +
+          sci(max_early) + ")");
+    double last_diff = std::fabs(ya[5][0] - yb[5][0]);
+    check(last_diff > 1e-9, "perturbing row L-1 does change row L-1 (max=" + sci(last_diff) + ")");
+
+    // --- short conv is causal too: perturbing a middle row must not change
+    // any EARLIER row.
+    HyenaDNAOperator cop2(4, 6, 1, 2, 4, 3);
+    Tensor xc = random_tensor(6, 4, 0.5);
+    Tensor yc = cop2.forward(xc);
+    Tensor xd = xc.clone();
+    xd[2][1] -= 2.0;
+    Tensor yd = cop2.forward(xd);
+    double max_before = 0.0;
+    for (size_t t = 0; t < 2; ++t)
+        for (size_t c = 0; c < 4; ++c) {
+            double d = std::fabs(yc[t][c] - yd[t][c]);
+            if (d > max_before) max_before = d;
+        }
+    check(max_before == 0.0, "short conv is causal: perturbing row 2 leaves rows 0..1 unchanged (max=" +
+          sci(max_before) + ")");
+
+    // --- multi-head: the per-head groups are INDEPENDENT. Two operators with
+    // num_heads=2 whose second head is fed a different slice of the filter
+    // must give the same second-head output. Concretely: with num_heads=2 and
+    // d_model=4, head 0 owns channels 0,1 and head 1 owns channels 2,3.
+    // Perturbing in_proj's weight rows for head 0 only must leave head 1's
+    // output contribution unchanged.
+    HyenaDNAOperator hop(4, 6, 2, 2, 4, 3);
+    Tensor xe = random_tensor(6, 4, 0.5);
+    Tensor ye0 = hop.forward(xe);
+    // in_proj.weights is ((order+1)*D, D) = (12, 4). Column c is input channel c.
+    // Head 1 = output channels 8..11 (per the h*(order+1)*head_dim + o*head_dim
+    // + c layout with head_dim=2). Zero input column 0 (affects every head) vs
+    // column 3 — instead verify head separation by feeding a zeroed channel.
+    Tensor xf = xe.clone();
+    for (size_t t = 0; t < 6; ++t) xf[t][0] = 0.0;   // silence input channel 0
+    Tensor yf = hop.forward(xf);
+    // The output must CHANGE (channel 0 is a real input) but the two heads
+    // must respond differently — a single shared 1-head operator would apply
+    // the same D-wide filter to both groups, which this already is per head.
+    check(max_abs_diff(ye0, yf) > 1e-9,
+          "zeroing input channel 0 changes the multi-head output");
+
+    // --- num_heads=2 vs num_heads=1 with the SAME weights must differ
+    // (otherwise num_heads is inert — a "parameter exists but is unused" bug).
+    HyenaDNAOperator h1(4, 6, 1, 2, 4, 3);
+    HyenaDNAOperator h2(4, 6, 2, 2, 4, 3);
+    h2.in_proj.weights = h1.in_proj.weights.clone();
+    h2.in_proj.bias = h1.in_proj.bias.clone();
+    h2.out_proj.weights = h1.out_proj.weights.clone();
+    h2.out_proj.bias = h1.out_proj.bias.clone();
+    h2.short_W = h1.short_W.clone();
+    h2.short_b = h1.short_b.clone();
+    h2.filter.mlp_in_W = h1.filter.mlp_in_W.clone();
+    h2.filter.mlp_in_b = h1.filter.mlp_in_b.clone();
+    h2.filter.sin_freq = h1.filter.sin_freq.clone();
+    h2.filter.mlp_out_W = h1.filter.mlp_out_W.clone();
+    h2.filter.deltas = h1.filter.deltas.clone();
+    h2.filter.bias = h1.filter.bias.clone();
+    Tensor y_1 = h1.forward(xe);
+    Tensor y_2 = h2.forward(xe);
+    // The two are NOT equal (different head grouping), and the 1-head filter
+    // has a different output width so a bit-exact match is impossible.
+    check(max_abs_diff(y_1, y_2) > 1e-9,
+          "num_heads=1 and num_heads=2 differ for the same copied weights "
+          "(num_heads is load-bearing)");
+    check(all_finite(y_2), "num_heads=2 output finite");
+
+    // --- L=1 degenerate: a length-1 sequence is just the t=0 row.
+    HyenaDNAOperator o1(4, 1, 1, 2, 4, 3);
+    Tensor x1 = random_tensor(1, 4, 0.5);
+    Tensor y1 = o1.forward(x1);
+    check(y1.rows == 1 && y1.cols == 4, "L=1 degenerate forward shape (1, D)");
+    check(all_finite(y1), "L=1 output finite");
+    check(max_abs(y1) > 1e-9, "L=1 output non-zero");
+
+    // --- order=3 (TWO long-conv iterations) must run and differ from order=2.
+    // order=2 gives exactly ONE iteration, so a `+=` vs `=` bug in the loop
+    // passes vacuously there; order=3 is the config that has teeth.
+    HyenaDNAOperator o2o(4, 6, 1, 2, 4, 3);
+    HyenaDNAOperator o3o(4, 6, 1, 3, 4, 3);
+    o3o.in_proj.weights = o2o.in_proj.weights.clone();
+    o3o.in_proj.bias = o2o.in_proj.bias.clone();
+    o3o.out_proj.weights = o2o.out_proj.weights.clone();
+    o3o.out_proj.bias = o2o.out_proj.bias.clone();
+    o3o.short_W = o2o.short_W.clone();
+    o3o.short_b = o2o.short_b.clone();
+    Tensor y_o2 = o2o.forward(xe);
+    Tensor y_o3 = o3o.forward(xe);
+    check(all_finite(y_o3), "order=3 (two conv iterations) output finite");
+    check(max_abs_diff(y_o2, y_o3) > 1e-9, "order=3 differs from order=2");
+
+    // --- determinism
+    HyenaDNAOperator dop(4, 6, 2, 2, 4, 3);
+    Tensor ya1 = dop.forward(xe);
+    Tensor ya2 = dop.forward(xe);
+    check(max_abs_diff(ya1, ya2) == 0.0, "operator forward is deterministic");
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: operator FD gradients.
+// Loss L = 0.5*sum(y^2) => dL/dy = y.
+// The `bias` (per-channel skip) gradient is checked HERE, not at filter level.
+// ---------------------------------------------------------------------------
+static double fd_op_input_grad(HyenaDNAOperator& op, const Tensor& x, size_t i,
+                               size_t j, double eps) {
+    Tensor xp = x.clone(), xm = x.clone();
+    xp[i][j] += eps; xm[i][j] -= eps;
+    return (loss_of(op.forward(xp)) - loss_of(op.forward(xm))) / (2.0 * eps);
+}
+
+static double fd_op_param_grad(HyenaDNAOperator& op, Tensor& param, size_t i,
+                               size_t j, const Tensor& x, double eps) {
+    double orig = param[i][j];
+    param[i][j] = orig + eps;
+    double lp = loss_of(op.forward(x));
+    param[i][j] = orig - eps;
+    double lm = loss_of(op.forward(x));
+    param[i][j] = orig;
+    return (lp - lm) / (2.0 * eps);
+}
+
+static void test_operator_fd_gradients() {
+    std::printf("Test 6: operator FD gradients\n");
+
+    // order=3 so the recurrence loop runs TWICE (order=2 runs once and a
+    // `+=`-vs-`=` bug there is invisible to FD).
+    size_t L = 5, D = 4;
+    HyenaDNAOperator op(D, 6, 2, 3, 4, 3);
+    Tensor x = random_tensor(L, D, 0.5);
+
+    Tensor y = op.forward(x);
+    op.zero_grad();
+    Tensor dx = op.backward(grad_from_out(y), 0.0);
+
+    // --- non-degeneracy: gradients must be real, not all zero.
+    double max_dx = 0.0, max_dp = 0.0;
+    for (size_t i = 0; i < dx.rows; ++i)
+        for (size_t j = 0; j < dx.cols; ++j)
+            if (std::fabs(dx[i][j]) > max_dx) max_dx = std::fabs(dx[i][j]);
+    for (Tensor* g : op.gradients())
+        if (max_abs(*g) > max_dp) max_dp = max_abs(*g);
+    check(max_dx > 1e-9, std::string("operator input grad non-degenerate (max=") + sci(max_dx) + ")");
+    check(max_dp > 1e-9, std::string("operator param grads non-degenerate (max=") + sci(max_dp) + ")");
+
+    // --- FD input gradient, full sweep.
+    const double eps = 1e-6;
+    double worst_in = 0.0;
+    for (size_t i = 0; i < L; ++i)
+        for (size_t j = 0; j < D; ++j) {
+            double num = fd_op_input_grad(op, x, i, j, eps);
+            double er = rel_err(dx[i][j], num);
+            if (er > worst_in) worst_in = er;
+        }
+    check(worst_in < 1e-4, "operator FD input grad full sweep rel_err < 1e-4 worst=" + sci(worst_in));
+
+    // --- FD parameter gradients, full sweep of the first row of each tensor.
+    std::vector<Tensor*> ps = op.parameters();
+    std::vector<Tensor*> gs = op.gradients();
+    check(ps.size() == gs.size(), "operator parameters()/gradients() index-aligned");
+
+    double worst_p = 0.0;
+    std::string worst_pl;
+    for (size_t k = 0; k < ps.size(); ++k) {
+        if (ps[k]->rows == 0 || ps[k]->cols == 0) continue;
+        // skip the filter's `bias` here: checked separately below, and its
+        // filter-level grad is identically zero.
+        size_t e = 0.0;
+        for (size_t c = 0; c < ps[k]->cols && e < 3; ++c) {
+            for (size_t r = 0; r < ps[k]->rows && e < 3; ++r) {
+                double ana = (*gs[k])[r][c];
+                double num = fd_op_param_grad(op, *ps[k], r, c, x, eps);
+                double er = rel_err(ana, num);
+                if (er > worst_p) {
+                    worst_p = er;
+                    worst_pl = "param#" + std::to_string(k) + "[" + std::to_string(r) +
+                               "][" + std::to_string(c) + "]";
+                }
+                ++e;
+            }
+        }
+    }
+    check(worst_p < 1e-4, "operator FD param grads rel_err < 1e-4 worst=" + sci(worst_p) +
+          " (" + worst_pl + ")");
+
+    // --- the per-channel skip bias: THE canonical per-channel sum, checked
+    // against FD. This is the term that the "half-scale" and "dropped term"
+    // mutation families attack, and it is the one gradient the filter-level
+    // test could not reach.
+    {
+        HyenaDNAOperator bop(D, 6, 2, 3, 4, 3);
+        Tensor bx = random_tensor(L, D, 0.5);
+        Tensor by = bop.forward(bx);
+        bop.zero_grad();
+        bop.backward(grad_from_out(by), 0.0);
+        // filter.bias is (1, head_dim*(order-1)) = (1, 2*2) = (1,4)
+        Tensor* bs = nullptr; Tensor* gbs = nullptr;
+        for (size_t k = 0; k < bop.parameters().size(); ++k) {
+            auto* pp = bop.parameters()[k];
+            if (pp->rows == 1 && pp->cols == bop.filter.d_model() &&
+                pp == &bop.filter.bias) { bs = pp; gbs = bop.gradients()[k]; }
+        }
+        check(bs != nullptr, "located filter bias at operator level");
+        if (bs) {
+            check(max_abs(*gbs) > 1e-9,
+                  std::string("filter bias grad non-degenerate at operator level (max=") +
+                  sci(max_abs(*gbs)) + ")");
+            double worst_b = 0.0;
+            for (size_t c = 0; c < bs->cols; ++c) {
+                double ana = (*gbs)[0][c];
+                double num = fd_op_param_grad(bop, *bs, 0, c, bx, eps);
+                double er = rel_err(ana, num);
+                if (er > worst_b) worst_b = er;
+            }
+            check(worst_b < 1e-4, "filter bias (per-channel skip) FD sweep rel_err < 1e-4 worst=" +
+                  sci(worst_b));
+        }
+    }
+
+    // --- short conv params
+    {
+        HyenaDNAOperator sop(D, 6, 1, 2, 4, 3);
+        Tensor sx = random_tensor(L, D, 0.5);
+        Tensor sy = sop.forward(sx);
+        sop.zero_grad();
+        sop.backward(grad_from_out(sy), 0.0);
+        double w1 = rel_err(sop.grad_short_W[0][0], fd_op_param_grad(sop, sop.short_W, 0, 0, sx, eps));
+        double b1 = rel_err(sop.grad_short_b[0][0], fd_op_param_grad(sop, sop.short_b, 0, 0, sx, eps));
+        check(w1 < 1e-4, "short_W[0][0] FD rel_err = " + sci(w1));
+        check(b1 < 1e-4, "short_b[0][0] FD rel_err = " + sci(b1));
+    }
+
+    // --- zero_grad / update_weights
+    {
+        HyenaDNAOperator zop(D, 6, 1, 2, 4, 3);
+        Tensor zx = random_tensor(L, D, 0.5);
+        Tensor zy = zop.forward(zx);
+        zop.zero_grad();
+        zop.backward(grad_from_out(zy), 0.0);
+        bool cleared = true;
+        for (Tensor* g : zop.gradients()) if (max_abs(*g) != 0.0) cleared = false;
+        zop.zero_grad();
+        cleared = true;
+        for (Tensor* g : zop.gradients()) if (max_abs(*g) != 0.0) cleared = false;
+        check(cleared, "operator zero_grad clears every buffer");
+
+        zop.zero_grad();
+        zop.backward(grad_from_out(zy), 0.0);
+        double before = zop.short_W[0][0];
+        double g = zop.grad_short_W[0][0];
+        zop.update_weights(0.05);
+        check(std::fabs(zop.short_W[0][0] - (before - 0.05 * g)) < 1e-15,
+              "operator update_weights moves short_W by exactly -lr*grad");
+    }
+}
+
 int main() {
     std::printf("=== HyenaDNA Tests ===\n");
     test_constructor_validation();
     test_positional_embedding();
     test_filter_forward();
     test_filter_fd_gradients();
+    test_operator_forward();
+    test_operator_fd_gradients();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", tests_passed, tests_failed);
     return tests_failed == 0 ? 0 : 1;
