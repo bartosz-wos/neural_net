@@ -82,6 +82,15 @@ static double rel_err(double ana, double num) {
     return std::fabs(ana - num) / denom;
 }
 
+// Scientific-notation formatting. std::to_string prints 6 DECIMAL places, so a
+// rel_err of 1e-11 renders as "0.000000" — which is exactly the vacuous-looking
+// output that makes a real test look like it proved nothing.
+static std::string sci(double v) {
+    char b[64];
+    std::snprintf(b, sizeof(b), "%.3e", v);
+    return std::string(b);
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: constructor validation
 // ---------------------------------------------------------------------------
@@ -396,11 +405,282 @@ static void test_filter_forward() {
     check(max_abs_diff(h1, h2) == 0.0, "filter is deterministic across calls");
 }
 
+// ---------------------------------------------------------------------------
+// Test 4: filter FD parameter gradients.
+// Loss L = 0.5 * sum(h^2) => dL/dh = h, so the analytical grad_h is h itself.
+// Random non-uniform init is mandatory: a uniform init makes
+// sum_k W[k,j] == sum_k W[j,k] by construction, so a row/column transpose in
+// the matmul backward would pass vacuously.
+// `bias` is a DIRECT output-parameter of the operator (not of filter()), so
+// its gradient is checked at the operator level in Test 6, not here.
+// ---------------------------------------------------------------------------
+
+// Centered finite difference of L = 0.5*sum(filter(L)^2) w.r.t. one element of
+// a filter parameter tensor.
+static double fd_filter_param_grad(HyenaDNAFilter& f, Tensor& param, size_t i,
+                                   size_t j, size_t L, double eps) {
+    double orig = param[i][j];
+    param[i][j] = orig + eps;
+    double lp = loss_of(f.filter(L));
+    param[i][j] = orig - eps;
+    double lm = loss_of(f.filter(L));
+    param[i][j] = orig;
+    return (lp - lm) / (2.0 * eps);
+}
+
+static void test_filter_fd_gradients() {
+    std::printf("Test 4: filter FD parameter gradients\n");
+
+    // d_model=3, P=4, num_inner=2 => exercises the inner-layer path and the
+    // Sin-frequency chain.
+    HyenaDNAFilter f(3, 6, 4, 3, 2);
+    size_t L = 6;
+
+    Tensor h = f.filter(L);
+    f.zero_grad();
+    f.backward(h);                      // grad_h = h for L = 0.5*sum(h^2)
+
+    struct Case { const char* label; size_t rows, cols; };
+    // Locate each parameter by shape (the filter exposes named members too,
+    // but going through parameters()/gradients() exercises that index-alignment).
+    std::vector<Tensor*> ps = f.parameters();
+    std::vector<Tensor*> gs = f.gradients();
+    check(ps.size() == gs.size(), "parameters()/gradients() same length");
+
+    // FD-check a representative element of every parameter tensor. We check
+    // element [0][0] of each, plus one off-diagonal element of the two
+    // matrices where a transpose bug would show.
+    // NOTE: `bias` is deliberately excluded from the "real gradient" sweep.
+    // It is a per-channel skip that the OPERATOR applies after the long conv
+    // (y = T v + D v), so it does not appear in filter()'s output at all and
+    // its filter-level gradient is legitimately exactly zero. It is FD-checked
+    // at the operator level in Test 6. Asserting rel_err(0,0) here would be a
+    // vacuous pass, so it gets its own explicit check below.
+    const double eps = 1e-6;
+    double worst = 0.0;
+    std::string worst_label;
+    for (size_t k = 0; k < ps.size(); ++k) {
+        // skip the (1, d_model) `bias` tensor
+        if (ps[k]->rows == 1 && ps[k]->cols == f.d_model()) continue;
+        std::string label = "param#" + std::to_string(k) + " (" +
+                            std::to_string(ps[k]->rows) + "x" +
+                            std::to_string(ps[k]->cols) + ")[0][0]";
+        double ana = (*gs[k])[0][0];
+        double num = fd_filter_param_grad(f, *ps[k], 0, 0, L, eps);
+        double e = rel_err(ana, num);
+        if (e > worst) { worst = e; worst_label = label; }
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "%.3e", worst);
+    check(worst < 1e-4, "filter FD all param tensors [0][0] rel_err < 1e-4 worst=" +
+          std::string(buf) + " (" + worst_label + ")");
+
+    // Sanity: the fixture is NOT degenerate. A rel_err of 0 because BOTH sides
+    // are zero is a vacuous pass; assert the gradients are actually non-zero.
+    double max_g = 0.0;
+    for (size_t k = 0; k < gs.size(); ++k) {
+        if (ps[k]->rows == 1 && ps[k]->cols == f.d_model()) continue;
+        double gm = max_abs(*gs[k]);
+        if (gm > max_g) max_g = gm;
+    }
+    std::snprintf(buf, sizeof(buf), "%.3e", max_g);
+    check(max_g > 1e-9, std::string("filter gradients are non-degenerate (max=") +
+          buf + ")");
+
+    // Off-diagonal probe on mlp_in_W and mlp_out_W: a transposed matmul
+    // backward computes the right value at [0][0] and a wrong one elsewhere.
+    {
+        Tensor* W = nullptr; Tensor* gW = nullptr;
+        for (size_t k = 0; k < ps.size(); ++k) {
+            if (ps[k]->rows == f.filter_order() && ps[k]->cols == f.emb_dim()) {
+                W = ps[k]; gW = gs[k];
+            }
+        }
+        check(W != nullptr, "located mlp_in_W (P, emb_dim)");
+        if (W) {
+            size_t i = 1, j = 1;
+            double ana = (*gW)[i][j];
+            double num = fd_filter_param_grad(f, *W, i, j, L, eps);
+            check(rel_err(ana, num) < 1e-4,
+                  "mlp_in_W[1][1] FD rel_err = " + sci(rel_err(ana, num)));
+        }
+    }
+    {
+        Tensor* W = nullptr; Tensor* gW = nullptr;
+        for (size_t k = 0; k < ps.size(); ++k) {
+            if (ps[k]->rows == f.d_model() && ps[k]->cols == f.filter_order()) {
+                W = ps[k]; gW = gs[k];
+            }
+        }
+        check(W != nullptr, "located mlp_out_W (d_model, P)");
+        if (W) {
+            size_t i = 2, j = 3;
+            double ana = (*gW)[i][j];
+            double num = fd_filter_param_grad(f, *W, i, j, L, eps);
+            check(rel_err(ana, num) < 1e-4,
+                  "mlp_out_W[2][3] FD rel_err = " + sci(rel_err(ana, num)));
+        }
+    }
+    {
+        // `deltas` and `bias` BOTH have shape (1, d_model), so a first-match
+        // loop over that shape lands on `bias` (whose gradient is identically
+        // zero) and the check passes vacuously. `deltas` is the FIRST of the
+        // two in parameters() order, so take the first match and assert it is
+        // not the zero-gradient one; the bias check below pins the other.
+        Tensor* dl = nullptr; Tensor* gdl = nullptr;
+        for (size_t k = 0; k < ps.size(); ++k) {
+            if (ps[k]->rows == 1 && ps[k]->cols == f.d_model()) {
+                if (dl == nullptr) { dl = ps[k]; gdl = gs[k]; }   // first match only
+            }
+        }
+        check(dl != nullptr, "located deltas (1, d_model)");
+        if (dl) {
+            // non-degeneracy guard
+            check(max_abs(*gdl) > 1e-9,
+                  std::string("deltas grad is non-degenerate (max=") +
+                  sci(max_abs(*gdl)) + ")");
+            double worst_dg = 0.0;
+            for (size_t j = 0; j < f.d_model(); ++j) {
+                double ana = (*gdl)[0][j];
+                double num = fd_filter_param_grad(f, *dl, 0, j, L, eps);
+                double er = rel_err(ana, num);
+                if (er > worst_dg) worst_dg = er;
+            }
+            check(worst_dg < 1e-4,
+                  "deltas[0][*] FD sweep rel_err < 1e-4 worst=" + sci(worst_dg));
+        }
+    }
+
+    // `bias` is a post-long-conv skip owned by the operator, so at the filter
+    // level its gradient is exactly zero by construction. Asserting that
+    // explicitly documents WHY it is excluded from the FD sweep above — and if
+    // someone later wires the skip into filter(), this test fails and points
+    // at the sweep that needs updating.
+    {
+        // `bias` is the SECOND (1, d_model) tensor in parameters() order, so
+        // take the LAST match (the first match is `deltas`, checked above).
+        Tensor* gb = nullptr;
+        for (size_t k = 0; k < ps.size(); ++k)
+            if (ps[k]->rows == 1 && ps[k]->cols == f.d_model()) gb = gs[k];
+        check(gb != nullptr, "located filter bias (1, d_model)");
+        if (gb) check(max_abs(*gb) == 0.0,
+                      "filter bias grad is exactly 0 at filter level (post-conv skip)");
+    }
+
+    // zero_grad actually clears every buffer.
+    f.zero_grad();
+    bool all_clear = true;
+    for (Tensor* g : f.gradients())
+        if (max_abs(*g) != 0.0) all_clear = false;
+    check(all_clear, "zero_grad clears every filter grad buffer");
+
+    // update_weights moves a parameter by exactly -lr*grad.
+    f.zero_grad();
+    f.backward(h);
+    Tensor* freq = nullptr; Tensor* gfreq = nullptr;
+    for (size_t k = 0; k < ps.size(); ++k)
+        if (ps[k]->rows == 1 && ps[k]->cols == f.filter_order()) { freq = ps[k]; gfreq = gs[k]; }
+    check(freq != nullptr, "located sin_freq (1, P)");
+    if (freq) {
+        double before = (*freq)[0][2];
+        double g = (*gfreq)[0][2];
+        f.update_weights(0.01);
+        double after = (*freq)[0][2];
+        check(std::fabs(after - (before - 0.01 * g)) < 1e-15,
+              "update_weights moves sin_freq by exactly -lr*grad");
+    }
+
+    // --- NON-UNIT sin_freq fixture (mutation-critical).
+    // d/dx sin(f*x) = f*cos(f*x). At the init f == 1 that reduces to cos(x), so
+    // DROPPING the `f` factor from the backward is algebraically invisible and
+    // the whole suite still passes. To give this check teeth, re-run the FD
+    // sweep with sin_freq perturbed away from 1.0. The relevant gradients here
+    // are the upstream mlp weights (they flow through the Sin layer), so if the
+    // impl dropped `f` the rel_err would jump to |1 - 1/f| ~ 0.5 for f = 2.0.
+    {
+        HyenaDNAFilter fq(3, 6, 4, 3, 1);
+        for (size_t j = 0; j < fq.filter_order(); ++j)
+            fq.sin_freq[0][j] = 0.5 + 0.37 * (double)j;   // 0.50, 0.87, 1.24, 1.61
+        Tensor hq = fq.filter(6);
+        fq.zero_grad();
+        fq.backward(hq);
+        std::vector<Tensor*> qp = fq.parameters();
+        std::vector<Tensor*> qg = fq.gradients();
+        // mlp_in_W is (P, emb_dim) = (4, 3) — unique shape.
+        Tensor* W = nullptr; Tensor* gW = nullptr;
+        for (size_t k = 0; k < qp.size(); ++k)
+            if (qp[k]->rows == fq.filter_order() && qp[k]->cols == fq.emb_dim()) {
+                W = qp[k]; gW = qg[k];
+            }
+        check(W != nullptr, "located mlp_in_W for the non-unit-freq sweep");
+        if (W) {
+            double worst_q = 0.0;
+            for (size_t p = 0; p < fq.filter_order(); ++p)
+                for (size_t e = 0; e < fq.emb_dim(); ++e) {
+                    double ana = (*gW)[p][e];
+                    double num = fd_filter_param_grad(fq, *W, p, e, 6, eps);
+                    double er = rel_err(ana, num);
+                    if (er > worst_q) worst_q = er;
+                }
+            check(worst_q < 1e-4,
+                  "non-unit sin_freq: full mlp_in_W sweep rel_err < 1e-4 worst=" +
+                  sci(worst_q));
+            // Direct probe on sin_freq itself.
+            Tensor* fr = nullptr; Tensor* gfr = nullptr;
+            for (size_t k = 0; k < qp.size(); ++k)
+                if (qp[k]->rows == 1 && qp[k]->cols == fq.filter_order()) { fr = qp[k]; gfr = qg[k]; }
+            if (fr) {
+                double worst_f = 0.0;
+                for (size_t j = 0; j < fq.filter_order(); ++j) {
+                    double ana = (*gfr)[0][j];
+                    double num = fd_filter_param_grad(fq, *fr, 0, j, 6, eps);
+                    double er = rel_err(ana, num);
+                    if (er > worst_f) worst_f = er;
+                }
+                check(worst_f < 1e-4,
+                      "non-unit sin_freq: all sin_freq grads rel_err < 1e-4 worst=" +
+                      sci(worst_f));
+            }
+        }
+    }
+
+    // Gradient accumulation: two backward calls double the gradient.
+    // Target a UNIQUELY-shaped tensor: with d_model=3, P=4, BOTH `deltas` and
+    // `bias` have shape (1,3), so a first-match/last-match loop over that shape
+    // silently lands on `bias` — whose gradient is identically zero — and the
+    // assertion passes vacuously. mlp_out_W is (d_model, P) = (3,4), unique.
+    HyenaDNAFilter fa(3, 6, 4, 3, 1);
+    Tensor ha = fa.filter(6);
+    fa.zero_grad();
+    fa.backward(ha);
+    Tensor* ga = nullptr;
+    for (size_t k = 0; k < fa.gradients().size(); ++k)
+        if (fa.gradients()[k]->rows == fa.d_model() &&
+            fa.gradients()[k]->cols == fa.filter_order())
+            ga = fa.gradients()[k];
+    check(ga != nullptr, "located mlp_out_W grad for the accumulation check");
+    if (ga) {
+        double once = (*ga)[0][0];
+        fa.backward(ha);
+        double twice = (*ga)[0][0];
+        char gb2[128];
+        std::snprintf(gb2, sizeof(gb2), "%.6e vs 2*%.6e", twice, once);
+        // non-degeneracy guard: a 0-vs-0 "double" would pass vacuously
+        check(std::fabs(once) > 1e-9,
+              std::string("accumulation fixture non-degenerate (once=") +
+              sci(once) + ")");
+        check(std::fabs(twice - 2.0 * once) < 1e-12,
+              std::string("filter gradient accumulates over two backward calls (") +
+              gb2 + ")");
+    }
+}
+
 int main() {
     std::printf("=== HyenaDNA Tests ===\n");
     test_constructor_validation();
     test_positional_embedding();
     test_filter_forward();
+    test_filter_fd_gradients();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", tests_passed, tests_failed);
     return tests_failed == 0 ? 0 : 1;

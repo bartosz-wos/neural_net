@@ -209,8 +209,91 @@ Tensor HyenaDNAFilter::filter(size_t L) {
     return h;
 }
 
-void HyenaDNAFilter::backward(const Tensor&) {
-    throw std::runtime_error("HyenaDNAFilter::backward: not implemented");
+void HyenaDNAFilter::backward(const Tensor& grad_h) {
+    size_t L = grad_h.rows;
+    if (grad_h.cols != d_model_)
+        throw std::invalid_argument("HyenaDNAFilter: grad_h width mismatch");
+    if (last_pre.empty())
+        throw std::runtime_error("HyenaDNAFilter::backward: forward() must run first");
+    size_t nlayers = num_inner_ + 1;   // 1 input Linear + num_inner inner Linears
+
+    // ---- ExponentialModulation backward.
+    // h[l][c] = decay[l][c] * h0[l][c],  decay = exp(-t_l * |deltas_c|) + shift
+    // dL/dh0[l][c] = grad_h[l][c] * decay[l][c]
+    // dL/ddeltas_c = sum_l grad_h[l][c] * h0[l][c] * d decay / d deltas_c
+    //   d decay / d deltas_c = -t_l * sign(deltas_c) * exp(-t_l*|deltas_c|)
+    Tensor gh0(L, d_model_);
+    for (size_t c = 0; c < d_model_; ++c) {
+        double sgn = (deltas[0][c] >= 0.0) ? 1.0 : -1.0;
+        double acc = 0.0;
+        for (size_t l = 0; l < L; ++l) {
+            double t = last_z[l][0];
+            gh0[l][c] = grad_h[l][c] * last_decay[l][c];
+            // d/ddeltas [exp(-t*|d|)] = -t*sgn(d)*exp(-t*|d|)
+            acc += grad_h[l][c] * last_h0[l][c] * (-t * sgn *
+                                                  std::exp(-t * std::fabs(deltas[0][c])));
+        }
+        grad_deltas[0][c] += acc;
+    }
+
+    // ---- final projection backward: h0 = cur * mlp_out_W^T
+    //   h0[l][c]   = sum_p cur[l][p] * mlp_out_W[c][p]
+    //   dcur[l][p] += sum_c gh0[l][c] * mlp_out_W[c][p]
+    //   dW[c][p]   += sum_l gh0[l][c] * cur[l][p]
+    Tensor gcur = gh0 * mlp_out_W;          // (L, d_model) @ (d_model, P)
+    for (size_t c = 0; c < d_model_; ++c)
+        for (size_t p = 0; p < filter_order_; ++p) {
+            double acc = 0.0;
+            for (size_t l = 0; l < L; ++l) acc += gh0[l][c] * last_post[nlayers - 1][l][p];
+            grad_mlp_out_W[c][p] += acc;
+        }
+
+    // ---- walk the Sin layers back to front.
+    // Layer i (0-based, 0 = input Linear): pre = prev * W^T + b; post = sin(f*pre)
+    //   d pre      = g_post * f * cos(f * pre)         (f = sin_freq[p], cached)
+    //   d W[p][k] += sum_l d_pre[l][p] * prev[l][k]
+    //   d b[p]    += sum_l d_pre[l][p]
+    for (size_t li = nlayers; li-- > 0;) {
+        const Tensor& pre = last_pre[li];
+        const Tensor& post = last_post[li];
+        Tensor dpre(L, filter_order_);
+        for (size_t p = 0; p < filter_order_; ++p) {
+            double f = sin_freq[0][p];
+            for (size_t l = 0; l < L; ++l)
+                dpre[l][p] = gcur[l][p] * f * std::cos(f * pre[l][p]);
+        }
+        // d sin_freq[p] = sum_l g_post[l][p] * pre[l][p] * cos(f*pre[l][p])
+        for (size_t p = 0; p < filter_order_; ++p) {
+            double f = sin_freq[0][p];
+            double acc = 0.0;
+            for (size_t l = 0; l < L; ++l)
+                acc += gcur[l][p] * pre[l][p] * std::cos(f * pre[l][p]);
+            grad_sin_freq[0][p] += acc;
+        }
+
+        const Tensor& prev = (li == 0) ? last_z : last_post[li - 1];
+        size_t prev_cols = (li == 0) ? emb_dim_ : filter_order_;
+        Tensor* W = (li == 0) ? &mlp_in_W : &mlp_W[li - 1];
+        Tensor* gW = (li == 0) ? &grad_mlp_in_W : &grad_mlp_W[li - 1];
+        Tensor* gb = (li == 0) ? &grad_mlp_in_b : &grad_mlp_b[li - 1];
+        for (size_t p = 0; p < filter_order_; ++p) {
+            for (size_t k = 0; k < prev_cols; ++k) {
+                double acc = 0.0;
+                for (size_t l = 0; l < L; ++l) acc += dpre[l][p] * prev[l][k];
+                (*gW)[p][k] += acc;
+            }
+            double accb = 0.0;
+            for (size_t l = 0; l < L; ++l) accb += dpre[l][p];
+            (*gb)[0][p] += accb;
+        }
+        (void)post;
+        if (li > 0) {
+            // d prev = dpre * W   (L,P) @ (P,P)
+            Tensor gprev = dpre * (*W);      // (L, P)
+            gcur = gprev;
+        }
+        // For li == 0 the gradient w.r.t. z is not needed (z is not learnable).
+    }
 }
 
 void HyenaDNAFilter::zero_grad() {
