@@ -1290,6 +1290,213 @@ static void test_model() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Test 9: SequenceLengthWarmup (arXiv:2306.15794 §3.2).
+// Stage i runs for epoch_scale * 2^i epochs at sequence length start_len * 2^i.
+//   total_epochs = epoch_scale * (2^num_stages - 1)
+//   max_seq_len  = start_len * 2^(num_stages-1)
+// ---------------------------------------------------------------------------
+static void test_sequence_length_warmup() {
+    std::printf("Test 9: sequence-length warmup\n");
+
+    // --- constructor validation
+    bool threw = false;
+    try { SequenceLengthWarmup w(0, 4, 1); } catch (...) { threw = true; }
+    check(threw, "warmup throws on start_len=0");
+    threw = false;
+    try { SequenceLengthWarmup w(64, 0, 1); } catch (...) { threw = true; }
+    check(threw, "warmup throws on num_stages=0");
+    threw = false;
+    try { SequenceLengthWarmup w(64, 4, 0); } catch (...) { threw = true; }
+    check(threw, "warmup throws on epoch_scale=0");
+
+    // --- paper defaults: L_1 = 64
+    {
+        SequenceLengthWarmup w;
+        check(w.start_len() == 64, "default start_len is the paper's L_1 = 64");
+        check(w.num_stages() > 0, "default num_stages > 0");
+        check(w.epoch_scale() > 0, "default epoch_scale > 0");
+    }
+
+    // --- doubling schedule, epoch_scale=1, 4 stages: stage lengths 1,2,4,8
+    // so epochs 0 | 1,2 | 3,4,5,6 | 7..14
+    {
+        SequenceLengthWarmup w(64, 4, 1);
+        check(w.stage_for_epoch(0) == 0, "epoch 0 is stage 0");
+        check(w.stage_for_epoch(1) == 1, "epoch 1 is stage 1");
+        check(w.stage_for_epoch(2) == 1, "epoch 2 is still stage 1");
+        check(w.stage_for_epoch(3) == 2, "epoch 3 is stage 2");
+        check(w.stage_for_epoch(6) == 2, "epoch 6 is still stage 2");
+        check(w.stage_for_epoch(7) == 3, "epoch 7 is stage 3");
+        check(w.stage_for_epoch(14) == 3, "epoch 14 is still stage 3");
+        // stage 0 and 1 boundaries are the ones an off-by-one would break
+        check(w.seq_len_for_epoch(0) == 64, "stage 0 seq len = 64");
+        check(w.seq_len_for_epoch(1) == 128, "stage 1 seq len = 128 (doubled)");
+        check(w.seq_len_for_epoch(3) == 256, "stage 2 seq len = 256");
+        check(w.seq_len_for_epoch(7) == 512, "stage 3 seq len = 512");
+        check(w.total_epochs() == 15, "total_epochs = 1*(2^4-1) = 15");
+        check(w.max_seq_len() == 512, "max_seq_len = 64*2^3 = 512");
+        // Past the end the schedule SATURATES at the final stage rather than
+        // shifting past the end of the word.
+        check(w.stage_for_epoch(15) == 3, "epoch past the end saturates at the last stage");
+        check(w.seq_len_for_epoch(15) == 512, "saturated seq len == max_seq_len");
+        check(w.seq_len_for_epoch(1000) == 512, "far-past epoch still saturates");
+    }
+
+    // --- epoch_scale=2: every stage length doubles, total = 2*(2^4-1) = 30
+    {
+        SequenceLengthWarmup w(64, 4, 2);
+        check(w.stage_for_epoch(0) == 0, "epoch_scale=2: epoch 0 is stage 0");
+        check(w.stage_for_epoch(1) == 0, "epoch_scale=2: epoch 1 still stage 0");
+        check(w.stage_for_epoch(2) == 1, "epoch_scale=2: epoch 2 is stage 1");
+        check(w.stage_for_epoch(29) == 3, "epoch_scale=2: final epoch is the last stage");
+        check(w.total_epochs() == 30, "epoch_scale=2 total_epochs = 30");
+        check(w.max_seq_len() == 512, "epoch_scale does not affect max_seq_len");
+    }
+
+    // --- single-stage edge case: everything is stage 0
+    {
+        SequenceLengthWarmup w(100, 1, 1);
+        check(w.stage_for_epoch(0) == 0, "num_stages=1: epoch 0 is stage 0");
+        check(w.stage_for_epoch(99) == 0, "num_stages=1: saturates at stage 0");
+        check(w.seq_len_for_epoch(0) == 100, "num_stages=1 seq len is start_len");
+        check(w.total_epochs() == 1, "num_stages=1 total_epochs = 1");
+        check(w.max_seq_len() == 100, "num_stages=1 max_seq_len = start_len");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: SoftPrompting (arXiv:2306.15794 §3.3, Eq. 3.2).
+//   x <- concat[theta, embed(x_p)]   (at_front)  or  concat[embed(x_p), theta]
+// ---------------------------------------------------------------------------
+static void test_soft_prompting() {
+    std::printf("Test 10: soft prompting\n");
+
+    const size_t N = 3, D = 4, T = 5;
+
+    // --- constructor validation
+    bool threw = false;
+    try { SoftPrompting p(0, D); } catch (...) { threw = true; }
+    check(threw, "soft prompting throws on prompt_len=0");
+    threw = false;
+    try { SoftPrompting p(N, 0); } catch (...) { threw = true; }
+    check(threw, "soft prompting throws on d_model=0");
+
+    // --- shape and concat order, both directions. The prompt entries are
+    // hand-set so the expected layout is a specific known value, not another
+    // implementation of the same loop.
+    {
+        SoftPrompting pf(N, D, true);
+        check(pf.prompt_len() == N && pf.d_model() == D, "soft prompting accessors");
+        check(pf.at_front() == true, "at_front accessor");
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c) pf.prompt()[n][c] = 100.0 + n;
+
+        Tensor emb = Tensor::random(T, D, 0.5);
+        Tensor out = pf.forward(emb);
+        check(out.rows == T + N && out.cols == D, "soft prompting (T,D) -> (T+N, D)");
+        bool front_ok = true;
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c)
+                if (out[n][c] != 100.0 + n) front_ok = false;
+        check(front_ok, "at_front=true puts the prompt in rows 0..N-1");
+        bool emb_ok = true;
+        for (size_t t = 0; t < T; ++t)
+            for (size_t c = 0; c < D; ++c)
+                if (out[t + N][c] != emb[t][c]) emb_ok = false;
+        check(emb_ok, "at_front=true shifts the embedding to rows N..N+T-1");
+    }
+    {
+        SoftPrompting pb(N, D, false);
+        check(pb.at_front() == false, "at_back accessor");
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c) pb.prompt()[n][c] = 200.0 + n;
+        Tensor emb = Tensor::random(T, D, 0.5);
+        Tensor out = pb.forward(emb);
+        bool back_ok = true;
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c)
+                if (out[T + n][c] != 200.0 + n) back_ok = false;
+        check(back_ok, "at_front=false puts the prompt in rows T..T+N-1");
+        bool emb_ok = true;
+        for (size_t t = 0; t < T; ++t)
+            for (size_t c = 0; c < D; ++c)
+                if (out[t][c] != emb[t][c]) emb_ok = false;
+        check(emb_ok, "at_front=false leaves the embedding in rows 0..T-1");
+    }
+
+    // --- d_model mismatch throws
+    {
+        SoftPrompting pm(N, D);
+        threw = false;
+        try { pm.forward(Tensor::random(T, D + 1, 0.5)); } catch (...) { threw = true; }
+        check(threw, "soft prompting throws on embedded width mismatch");
+    }
+
+    // --- FD on the prompt gradient. Loss = 0.5*sum(out^2) => grad = out, and
+    // dL/dtheta[n,c] = out[prompt row n, c] — a pure copy through the concat.
+    // Hand-derived here rather than FD'd, because the copy is the definition.
+    {
+        SoftPrompting sp(N, D, true);
+        Tensor emb = Tensor::random(T, D, 0.5);
+        Tensor out = sp.forward(emb);
+        sp.zero_grad();
+        Tensor g = sp.backward(out.clone(), 0.0);
+        double worst = 0.0;
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c) {
+                double e = rel_err(sp.grad_prompt_[n][c], out[n][c]);
+                if (e > worst) worst = e;
+            }
+        check(worst < 1e-12, "prompt grad == the gradient at the prompt rows (hand-derived), worst=" +
+              sci(worst));
+        check(max_abs(sp.grad_prompt_) > 1e-9, "prompt grad non-degenerate");
+
+        // The embedded part gets ZERO gradient — the paper's prompt-tuning
+        // freezes everything upstream of the prompt.
+        check(max_abs(g) == 0.0, "backward returns zeros for the embedded part");
+    }
+    {
+        SoftPrompting sp(N, D, false);
+        Tensor emb = Tensor::random(T, D, 0.5);
+        Tensor out = sp.forward(emb);
+        sp.zero_grad();
+        sp.backward(out.clone(), 0.0);
+        double worst = 0.0;
+        for (size_t n = 0; n < N; ++n)
+            for (size_t c = 0; c < D; ++c) {
+                double e = rel_err(sp.grad_prompt_[n][c], out[T + n][c]);
+                if (e > worst) worst = e;
+            }
+        check(worst < 1e-12, "at_front=false prompt grad reads the TRAILING rows, worst=" +
+              sci(worst));
+    }
+
+    // --- zero_grad / update_weights / parameters contract
+    {
+        SoftPrompting sp(N, D);
+        Tensor emb = Tensor::random(T, D, 0.5);
+        Tensor out = sp.forward(emb);
+        sp.zero_grad();
+        sp.backward(out.clone(), 0.0);
+        sp.zero_grad();
+        check(max_abs(sp.grad_prompt_) == 0.0, "soft prompting zero_grad clears the prompt grad");
+
+        sp.backward(out.clone(), 0.0);
+        double before = sp.prompt_[1][2];
+        double g = sp.grad_prompt_[1][2];
+        check(std::fabs(g) > 1e-9, "prompt grad is non-zero before the step");
+        sp.update_weights(0.1);
+        check(std::fabs(sp.prompt_[1][2] - (before - 0.1 * g)) < 1e-15,
+              "soft prompting update_weights moves theta by exactly -lr*grad");
+
+        std::vector<Tensor*> ps = sp.parameters();
+        std::vector<Tensor*> gs = sp.gradients();
+        check(ps.size() == 1 && gs.size() == 1, "soft prompting exposes exactly one param/grad");
+        check(ps[0]->rows == N && ps[0]->cols == D, "soft prompting param shape is (N, D)");
+    }
+}
+
 int main() {
     std::printf("=== HyenaDNA Tests ===\n");
     test_constructor_validation();
@@ -1300,6 +1507,8 @@ int main() {
     test_operator_fd_gradients();
     test_block();
     test_model();
+    test_sequence_length_warmup();
+    test_soft_prompting();
 
     std::printf("\n=== Summary: %d passed, %d failed ===\n", tests_passed, tests_failed);
     return tests_failed == 0 ? 0 : 1;
