@@ -184,6 +184,7 @@
 #include "layers/attention/nsa.h"
 #include "layers/attention/shla.h"
 #include "layers/attention/stick_breaking.h"
+#include "layers/attention/moba.h"
 #include "layers/attention/fox.h"
 #include "layers/attention/tokenformer.h"
 #include "layers/attention/expire_span.h"
