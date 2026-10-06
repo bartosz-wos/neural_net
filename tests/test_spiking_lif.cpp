@@ -463,6 +463,47 @@ static void test_surrogate_nonzero_at_plateau() {
     CHECK(std::abs(dg - expect) < 1e-12, "surrogate d/dgamma closed form");
 }
 
+// The surrogate must be USED, not merely defined.
+//   Regression: Test 11 checks SurrogateSpike::surrogate_derivative directly,
+//   and the adjoint reference above is computed from the same closed form —
+//   so replacing the helper body with `return 1.0` left the whole suite GREEN
+//   (mutation M3: 0 failures). The layer must demonstrably depend on the
+//   surrogate's SHAPE. Here: with gamma small the surrogate is nearly flat at
+//   1, with gamma large it is sharply peaked at the threshold. If backward
+//   used a constant, both would give the same gradient.
+// ---------------------------------------------------------------------------
+static void test_layer_uses_surrogate_shape() {
+    auto grad_b_with = [](double gam) {
+        LIFNeuron L(1, 1, 0.6, 0.4, 1.0, gam);
+        L.W_ = Tensor(1, 1); L.W_[0][0] = 0.7;
+        L.b_ = Tensor(1, 1); L.b_[0][0] = 0.2;
+        Tensor x(2, 1); x[0][0] = 0.9; x[1][0] = -0.4;
+        Tensor g(2, 1); g[0][0] = 0.8; g[1][0] = -0.5;
+        L.zero_grad();
+        L.forward(x);
+        L.backward(g, 0.0);
+        return L.grad_b_[0][0];
+    };
+
+    // U = [0.83, 0.75]; |U - 1| = [0.17, 0.25].
+    //   gamma=1  -> F = 1/1.17 = 0.855, 1/1.25 = 0.800  (nearly flat)
+    //   gamma=50 -> F = 1/9.5   = 0.105, 1/13.5 = 0.074  (sharply peaked)
+    // A constant-derivative backward would return the SAME grad_b in both cases.
+    double soft = grad_b_with(1.0);
+    double sharp = grad_b_with(50.0);
+
+    CHECK(std::abs(soft - sharp) > 1e-6,
+          "layer gradient depends on gamma (surrogate shape is actually used)");
+    // Sharper surrogate -> smaller |dU| -> smaller grad_b magnitude here.
+    CHECK(std::abs(sharp) < std::abs(soft),
+          "sharper surrogate (larger gamma) yields a smaller gradient");
+
+    // And it must be strictly positive: dropping the surrogate entirely to
+    // 1.0 would give a strictly LARGER value than the gamma=50 case.
+    CHECK(std::abs(soft) > 0.0 && std::abs(sharp) > 0.0,
+          "surrogate-substituted gradient is non-zero");
+}
+
 // ---------------------------------------------------------------------------
 // Test 12: Recurrence — forward shape + V gradient is reachable
 //   (FD is not usable here either; see the note above the adjoint tests.)
@@ -553,6 +594,7 @@ int main() {
     test_encoder_is_live();
     test_spiking_net_training();
     test_surrogate_nonzero_at_plateau();
+    test_layer_uses_surrogate_shape();
     test_recurrence();
     test_single_timestep();
     test_subthreshold_no_spike();
