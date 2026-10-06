@@ -238,6 +238,7 @@
 #include "layers/architectures/hyena.h"
 #include "layers/architectures/striped_hyena.h"
 #include "layers/architectures/hyena_dna.h"
+#include "layers/architectures/multi_head_hyena.h"
 #include "layers/architectures/convnext.h"
 #include "layers/architectures/jamba.h"
 #include "layers/architectures/moe_mamba.h"
