@@ -312,4 +312,7 @@
 #include "layers/architectures/gin.h"
 #include "layers/architectures/s4.h"
 
+// Interpretability — input attribution (Integrated Gradients)
+#include "interpretability/attribution.h"
+
 #endif
