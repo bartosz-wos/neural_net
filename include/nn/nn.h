@@ -318,4 +318,7 @@
 // Interpretability — Shapley values / KernelSHAP (arXiv:1705.07874)
 #include "interpretability/shapley.h"
 
+// Interpretability — LIME local linear surrogates (arXiv:1606.03878)
+#include "interpretability/lime.h"
+
 #endif
