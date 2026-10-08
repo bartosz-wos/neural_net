@@ -55,6 +55,14 @@ tests/test_*manual*.cpp
 tests/test_*compare*.cpp
 tests/test_*detailed*.cpp
 tests/test_*just_*.cpp
+# Ad-hoc investigation probes: single-file `main()` scratch programs written
+# to measure or localise one hypothesis during a debugging session. They are
+# always deleted before the commit — a leftover probe means the session ended
+# mid-investigation.
+tests/test_*probe*.cpp
+tests/test_*scratch*.cpp
+tests/test_*tmp*.cpp
+tests/test_*repro*.cpp
 tests/test_*w1*.cpp
 tests/test_*simple*.cpp
 tests/test_*single_*.cpp
