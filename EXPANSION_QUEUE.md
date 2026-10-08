@@ -5,6 +5,8 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+<!-- popped 2026-10-08: Shapley values + KernelSHAP + permutation (arXiv:1705.07874) -->
+
 <!-- popped 2026-10-07: Integrated Gradients + input attribution (arXiv:1703.01365) -->
 
 <!-- popped 2026-10-06: Spiking LIF + surrogate gradients (Neftci et al. arXiv:1901.09948) -->
@@ -14,6 +16,34 @@ After completing an item, move it to the "Done" section.
        grep -ril '<ClassName>\|<PaperName>' include/
      (a filename grep for "forgetting" missed the already-shipped FoX,
       which lives in attention/fox.{h,cpp}) -->
+
+<!-- 2026-10-08: interpretability is no longer the thinnest category (IG +
+     Shapley have shipped, and `attribution.h` already exposes the
+     dL/d(input) plumbing every method below needs), but the category is
+     still one method-family deep. Verified ABSENT by content grep on
+     2026-10-08 (each returned 0 files under include/; "saliency" matched
+     only a comment in attribution.h). Ordered so that the LAST entry is
+     the next to pop = the CHEAPEST one:
+
+     - **LIME** (Ribeiro, Singh, Guestrin arXiv:1606.03878) — local linear
+       surrogate via weighted ridge on perturbed samples. No gradients at
+       all, which makes it a genuinely different (and very testable) code
+       path: the reference IS the weighted least-squares solve, so it is
+       verifiable in closed form. -> NEXT TO POP.
+     - **Partial dependence / ICE** (Greenwell arXiv:1409.7002) — pure
+       inference-time curve, no gradients; trivially correct, mostly useful
+       as a test oracle for the gradient-based methods.
+     - **DeepLIFT** (Shrikumar et al. arXiv:1703.01385) — Rescale rule, same
+       multiplier-subclass structure as IG. Shares `input_gradient`, so it
+       composes with the already-shipped `riemann_params`.
+     - **Grad-CAM** (Selvaraju et al. 2020, arXiv:1610.02391) — the most
+       cited CAM variant and the natural companion to the shipped IG. Needs
+       dL/d(activation) of an INTERMEDIATE layer, which nothing caches today:
+       it needs an optional no-op `cache_input_grad_` on the base Layer or a
+       hook vector on Model. That is the one genuinely repo-wide change left,
+       so it is listed LAST among these because it is the most invasive.
+
+     Do NOT re-pop "Shapley"/"KernelSHAP" — shipped 2026-10-08. -->
 
 <!-- popped 2026-09-27: Clustered Attention (Vyas, Katharopoulos, Fleuret) -->
 
@@ -90,6 +120,11 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Shapley values + KernelSHAP + permutation explainer** (Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions", NeurIPS 2017, arXiv:1705.07874) — completes the interpretability category alongside the just-shipped Integrated Gradients. Implemented in `include/nn/interpretability/shapley.{h,cpp}` as stateless functions: `model_output` (the scalar game v(S), model-agnostic by construction), `kernel_weights` (SHAP least-squares kernel `1/(M·C(M−1,d))`, read from `_coalition.py:373-374` not from memory), `exact_shapley` (exhaustive `2^M` enumeration, `M ≤ 12` — the **oracle** every other estimator is tested against), `kernel_shap` (sampled weighted least squares with an efficiency-centered design matrix and a ridge fallback, since this repo has no lstsq), and `path_dependent_shap` (permutation estimator, forward+antithetic-backward walks, unweighted marginals). **78/78 pass, mutation-verified, umbrella header compiles standalone.** **Why it is the natural follow-on to IG:** SHAP satisfies the **efficiency** axiom `Σφ = v(N) − v(∅)` EXACTLY by construction, where IG only satisfies it to within the Riemann quadrature error — that is why every estimator routes through `finalize_shapley`, which applies the reference's last-feature residual (`phi[last] = (fx − fnull) − sum(w)`, `_kernel.py:786`). **Two bugs found and fixed, both from a prior session's half-finished work, each isolated and mutation-verified:**
+  1. **The efficiency-centered design matrix.** Regressing the plain target `v(z) − f(baseline)` on the plain design `Z` pins an implicit intercept at 0, which is the wrong problem. The reference centers BOTH on the residual feature (`_kernel.py:738-741`). Proof independent of sampling: on the linear game it returned (3.25, 5.0, 7.75) against an oracle of (0.75, 2.5, 5.25) **even with exhaustive coalitions and exact weights**; the centered form returns the oracle exactly.
+  2. **`path_dependent_shap`'s antithetic loop bound (found and fixed 2026-10-08).** The backward walk was `for (size_t k = m; k-- > 1;)`, which visits `k = M−1…1` and **skips `k = 0`**. That is not a rounding detail: the skipped step is exactly where feature `order[0]` joins the suffix `{order[1..M−1]}` — the pairing the reference's first backward iteration performs (`_permutation.py:213-216`; those masks are XOR/delta masks per `shap/utils/_masked_model.py:91`, `delta_mask = mask ^ last_mask`, verified in source rather than assumed). It credited `order[0]` once and every other position twice while still dividing by `2·n_permutations`, giving a **systematic bias of exactly `1 − 1/(2m)`**. Fixed to `k-- > 0`.
+  **The diagnostic worth carrying forward: BIAS vs VARIANCE is decided by the ORDER of the error, not its size.** A failing budget-comparison test (`mean error at 4× budget < mean error`) is satisfied by pure variance and therefore localises nothing. The decisive measurement was a linear game `f(x) = x`, where every marginal is exactly `x_i` for every coalition and the estimator is EXACT for any budget: measured bias was −1.50e−01 at N=100 and −1.50e−01 at N=100000 — a **1000× budget increase moving the bias in the third decimal**, i.e. zero convergence. The bias factor also **predicted** the observed values before the fix: `1 − 1/(2m) = 5/6` at m=3 gives 0.9·5/6 = 0.75 (measured 0.7501) and −0.4·5/6 = −0.3333 (measured −0.3333). This is now pinned by `test_path_dependent_unbiased_on_linear_game`, a bias detector that pure variance cannot pass. **Also corrected in the plan doc:** the plan specified an "Owen weight" `(M−1−|prefix|)/(M−1)` per marginal, which is provably wrong (three candidate weight families all fail the linear-game oracle); the plan now carries the correction and its proof so it cannot mislead a future session.
 
 - **Integrated Gradients + input attribution** (Sundararajan, Taly, Yan, "Axiomatic Attribution for Deep Networks", ICML 2017, arXiv:1703.01365) — **the interpretability category, which was entirely absent** (~250 layers, 38 optimizers, zero attribution/explainability code; `grep -ril 'GradCAM|IntegratedGrad|saliency|Shapley|feature_importance' include/` returned nothing). Implemented in `include/nn/interpretability/attribution.{h,cpp}` as `input_gradient(model, x, target)` (seeds a one-hot on the target logit, one forward+backward, returns d(logit)/dx), `riemann_params(method, n, ...)` (captum-exact step/alpha builders for all four `riemann_left|right|middle|trapezoid` variants), and `integrated_gradients(model, input, baseline, target, n_steps, method)` returning an `IGAttribution{attributions, completeness_delta, n_steps, method}`. **58/58 pass, deterministic across 3 reruns, warning-clean, umbrella header compiles standalone.** **Zero infrastructure changes were needed** — the decisive architectural fact is that `Layer::backward()` *returns* dL/d(input) (`core/layer.cpp:62-84`) and `Model::backward()` threads it to the model input (`core/model.cpp:30-36`), so dF/dx was already reachable by a caller. **Why IG and not Grad-CAM first:** Grad-CAM needs dL/d(input) of an *intermediate* layer and nothing caches that here — it would need an optional no-op `cache_input_grad_` virtual on the base `Layer` or a Model hook vector, a repo-wide refactor across ~250 layers. IG is also the stronger method (completeness is provable, and it is architecture-agnostic, matching this repo's 2-D `Tensor`). **Two bugs found and fixed:** (1) `Tensor` has no `operator*=(double)`, only `operator*(double)` — compile error; (2) **the trapezoidal quadrature weights summed to `(n-1)/n`, not 1.** The plan asserted all four rules sum to 1, derived from captum's source without checking; captum pairs `1/(n-1)`-spaced nodes with a `1/n` base step, so its trapezoid rule under-integrates. Verified numerically (n=7 → captum 0.857143) and fixed to the matching `1/(n-1)` base step; documented as a deliberate deviation in the source. Also `n_steps=0` threw from `riemann_params` instead of returning the well-defined all-zero attribution. **A trap worth recording: `Dense::backward` ACCUMULATES** (`+=`) into `grad_weights` (`layer.cpp:79`), so m backward passes would leave m stacked copies of the parameter gradient and corrupt the next training step — `input_gradient` therefore zeroes gradients before *and* after each pass, pinned by test 5. **Mutation testing (4 caught): drop the `(x−x′)` factor → 8 failures; middle→left alphas → 4; remove the final `zero_grad` → 3; ignore `target` (always seed col 0) → 2.** Two further mutations are **provably not test gaps** and are recorded as such: moving `(x−x′)` inside the summation loop is algebraically IDENTICAL (it is constant w.r.t. the step index — verified numerically to 3.6e-15, so the plan's claim that this mutation would be caught was wrong), and dropping the `1/W` renormalization is a genuine no-op because all four rules sum to exactly 1.0 — a property now pinned by an explicit assertion rather than assumed. **Grad-CAM is NOT discarded:** its full spec (alpha over H·W only, ReLU *before* upsampling, half-pixel-centred bilinear, normalize `(x−min)/(max−min+1e-7)`, seed the raw logit never softmax, the α=w CAM-identity test, and the correction that Ablation-CAM is WACV 2020 and is **not** on arXiv — `arXiv:1910.07079` is an unrelated solar-energy paper) is recorded in the plan's "Deferred: Grad-CAM" section so it ships later behind a hook API instead of being re-researched.
 
