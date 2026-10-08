@@ -315,4 +315,7 @@
 // Interpretability — input attribution (Integrated Gradients)
 #include "interpretability/attribution.h"
 
+// Interpretability — Shapley values / KernelSHAP (arXiv:1705.07874)
+#include "interpretability/shapley.h"
+
 #endif
