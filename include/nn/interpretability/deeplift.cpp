@@ -31,11 +31,24 @@ DeepLiftResult deep_lift(Model& model,
 
     // Per-layer (input, output) activations for both passes.
     //
-    // The REFERENCE pass runs FIRST (plan D6). Dense::backward reads its cached
-    // last_input, so if the reference ran last, every cached last_input would
-    // hold the reference activations during the backward walk. The returned
-    // grad_input happens not to use last_input, but relying on that internal
-    // detail is exactly the fragility this ordering avoids.
+    // The REFERENCE pass runs FIRST (plan D6). Rationale, verified by mutation
+    // testing rather than assumed: the ORDER IS INERT for the returned
+    // attribution. Swapping the two passes (mutation M6) leaves every
+    // attribution bit-identical, because this walk reads the cached act_in /
+    // ref_in vectors rather than any layer's internal state — the nonlinear
+    // path passes the activations in explicitly to rescale_backward, and
+    // Dense::backward's RETURNED grad_input is `grad_output * weights`, which
+    // never touches its cached last_input.
+    //
+    // What DOES change is the mid-pass grad_weights, which Dense::backward
+    // does read from last_input (layer.cpp:65) when accumulating. Measured on
+    // a 3-layer Dense/Tanh/Dense net: order A gives [0.514, -0.171; 0.238,
+    // -0.079], order B gives [0.069, 0.308; 0.032, 0.143]. Those are zeroed
+    // before this function returns, so nothing leaks — but if this walk ever
+    // gained an early return between the passes, or a caller read gradients
+    // without the zero_grad() below, the ordering would become load-bearing.
+    // Keeping the reference first costs nothing and keeps the invariant true
+    // by construction rather than by accident.
     std::vector<Tensor> ref_in, ref_out, act_in, act_out;
     ref_in.reserve(L);
     ref_out.reserve(L);
