@@ -321,4 +321,7 @@
 // Interpretability — LIME local linear surrogates (arXiv:1606.03878)
 #include "interpretability/lime.h"
 
+// Interpretability — Partial Dependence / ICE (Greenwell, R Journal 2017)
+#include "interpretability/partial_dependence.h"
+
 #endif

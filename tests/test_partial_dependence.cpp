@@ -109,18 +109,6 @@ static Tensor col(const std::vector<double>& v) {
     return t;
 }
 
-// numpy's 'linear' quantile, restated INDEPENDENTLY of the implementation:
-// sorted v, h = q*(n-1), i = floor(h), frac = h - i, result = v[i]*(1-frac)+v[i+1]*frac.
-static double quantile_linear(const std::vector<double>& unsorted, double q) {
-    std::vector<double> v = unsorted;
-    std::sort(v.begin(), v.end());
-    const double h = q * static_cast<double>(v.size() - 1);
-    const size_t i = static_cast<size_t>(std::floor(h));
-    const double frac = h - static_cast<double>(i);
-    if (i + 1 >= v.size()) return v.back();
-    return v[i] * (1.0 - frac) + v[i + 1] * frac;
-}
-
 static double col_mean(const Tensor& t, size_t j) {
     double s = 0.0;
     for (size_t i = 0; i < t.rows; ++i) s += t[i][j];
