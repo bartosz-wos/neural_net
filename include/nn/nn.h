@@ -324,4 +324,7 @@
 // Interpretability — Partial Dependence / ICE (Greenwell, R Journal 2017)
 #include "interpretability/partial_dependence.h"
 
+// Interpretability — DeepLIFT Rescale rule (arXiv:1704.02685)
+#include "interpretability/deeplift.h"
+
 #endif
