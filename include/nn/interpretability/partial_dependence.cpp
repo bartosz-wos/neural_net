@@ -227,11 +227,17 @@ PartialDependenceResult partial_dependence(Model& model,
     // this way is the same reason lime_explain evaluates its neighborhood in a
     // single pass: the model is row-independent, so the batch is just a
     // concatenation.
-    Tensor batch = X.clone();
-    batch.rows = n_points * n;
+    //
+    // The batch is ALLOCATED at its true size (n_points*n rows). Note the repo's
+    // Tensor has no resize: `Tensor::clone()` sizes `data` to rows*cols, so
+    // growing `rows` afterwards would leave the buffer short and every write
+    // past `n*cols` a heap overflow.
+    Tensor batch = Tensor::zeros(n_points * n, X.cols);
     for (size_t k = 0; k < n_points; ++k) {
         for (size_t i = 0; i < n; ++i) {
-            batch[k * n + i][feature] = grid[k];
+            for (size_t j = 0; j < X.cols; ++j) {
+                batch(k * n + i, j) = (j == feature) ? grid[k] : X[i][j];
+            }
         }
     }
 

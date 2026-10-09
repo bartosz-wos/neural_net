@@ -365,6 +365,269 @@ static void test_center_ice_is_per_row() {
           "center_ice shifts each row by its own first element");
 }
 
+// --- 11: the linear-model PD oracle (the headline test) --------------------
+
+// X: 6 instances x 2 features, with a deliberately UNEVEN column 1 so that
+// averaging is load-bearing (a uniform column would make PD == ICE[0]).
+static Tensor two_feature_data() {
+    const double x0[] = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0};
+    const double x1[] = {10.0, 4.0, 8.0, 1.0, 6.0, 3.0};
+    Tensor X(6, 2);
+    for (size_t i = 0; i < 6; ++i) { X[i][0] = x0[i]; X[i][1] = x1[i]; }
+    return X;
+}
+
+static void test_pd_linear_oracle() {
+    // f(x) = 3*x_0 - 2*x_1, no bias. Closed form:
+    //   PD(z)     = c_0*z + c_1*mean(X[:,1])
+    //   ICE[i](z) = c_0*z + c_1*X[i][1]
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 5;
+    cfg.subsample = 0;
+
+    PartialDependenceResult r = partial_dependence(m, X, 0, cfg, 0);
+    check(r.n_points == 5, "grid has 5 points");
+    check(r.n_instances == 6, "X had 6 instances");
+    check(r.n_curves == 6, "subsample=0 keeps every ICE curve");
+    check(r.individual.size() == 6, "...one curve per instance");
+
+    const double m1 = col_mean(X, 1);
+    for (size_t k = 0; k < r.grid.size(); ++k) {
+        check_close(r.average[k], 3.0 * r.grid[k] - 2.0 * m1, 1e-9,
+                    "PD oracle at grid point " + std::to_string(k));
+    }
+    for (size_t i = 0; i < r.individual.size(); ++i) {
+        for (size_t k = 0; k < r.grid.size(); ++k) {
+            check_close(r.individual[i][k], 3.0 * r.grid[k] - 2.0 * X[i][1], 1e-9,
+                        "ICE oracle at instance " + std::to_string(i) +
+                        ", grid point " + std::to_string(k));
+        }
+    }
+
+    // Every ICE curve is the SAME line shifted by c_1*(X[i][1] - mean). Asserted
+    // explicitly: an implementation that returned PD for every curve would pass
+    // the PD leg above and fail here.
+    check(std::abs(r.individual[0][0] - r.average[0]) > 1e-6,
+          "ICE[0] differs from PD (X is non-uniform in column 1)");
+    check(std::abs(r.individual[0][0] - r.individual[1][0]) > 1e-6,
+          "different instances get different ICE curves");
+}
+
+// --- 12: the slope is the exact partial dependence -------------------------
+
+static void test_pd_slope_is_exact_partial_dependence() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 7;
+    cfg.subsample = 0;
+    PartialDependenceResult r = partial_dependence(m, X, 0, cfg, 0);
+
+    // For a linear model the PD curve's slope is EXACTLY c_0 regardless of the
+    // dataset: d/dz E_z[f] = c_0. This is the signature that distinguishes true
+    // partial dependence from "the effect of feature 0 at one instance".
+    for (size_t k = 0; k + 1 < r.grid.size(); ++k) {
+        const double slope = (r.average[k + 1] - r.average[k]) /
+                             (r.grid[k + 1] - r.grid[k]);
+        check_close(slope, 3.0, 1e-9,
+                    "PD slope at segment " + std::to_string(k) + " == c_0 == 3.0");
+    }
+}
+
+// --- 13: constant model -> PD is the bias everywhere -----------------------
+
+static void test_pd_constant_model() {
+    // All-zero weights, bias = 7. The curve must be flat at 7: proves the grid
+    // is actually substituted and averaged, rather than a single instance being
+    // evaluated (which would still be 7 here, but the ICE-vs-PD assertions in
+    // test 11 are what rule that out).
+    Model m = make_linear_model(2, 1, {{0.0}, {0.0}});
+    // Dense::parameters() returns {&weights, &bias} (core/layer.cpp:98-100), so
+    // the bias is index 1. Setting index 0 here would fill the WEIGHTS with 7.0
+    // and silently turn this into a linear-in-x0 model — which still produces a
+    // non-flat curve, so the test would still "look like" it was testing
+    // something.
+    m.layers[0]->parameters()[1]->fill(7.0);  // bias (1, out)
+
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 4;
+    cfg.subsample = 0;
+    PartialDependenceResult r = partial_dependence(m, X, 0, cfg, 0);
+    for (size_t k = 0; k < r.grid.size(); ++k) {
+        check_close(r.average[k], 7.0, 1e-12,
+                    "constant model -> PD == bias at point " + std::to_string(k));
+    }
+}
+
+// --- 14: centering on the model-facing path --------------------------------
+
+static void test_pd_centered() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 4;
+    cfg.subsample = 0;
+    cfg.centered = true;
+    PartialDependenceResult r = partial_dependence(m, X, 0, cfg, 0);
+    check(r.centered, "result records that centering was requested");
+    check_close(r.average[0], 0.0, 1e-15, "centered PD starts at exactly 0");
+    for (size_t i = 0; i < r.individual.size(); ++i) {
+        check_close(r.individual[i][0], 0.0, 1e-15,
+                    "centered ICE curve " + std::to_string(i) + " starts at 0");
+    }
+    // Centered PD must still be the exact line of slope c_0.
+    const double slope = (r.average[1] - r.average[0]) / (r.grid[1] - r.grid[0]);
+    check_close(slope, 3.0, 1e-9, "centering does not change the slope");
+}
+
+// --- 15: subsample caps curves, not the average ----------------------------
+
+static void test_pd_subsample_does_not_change_average() {
+    // The AVERAGING is load-bearing even for a LINEAR model here: the ICE curve
+    // of instance i is  c_0·z + c_1·X[i][1], so the mean over a SUBSET of
+    // instances is a different number than the mean over all of them. An
+    // implementation that computed the average from the retained curves would
+    // therefore fail this comparison rather than coincidentally matching it.
+    Model m = make_linear_model(2, 1, {{1.0}, {-1.0}});
+    Tensor X = two_feature_data();
+
+    PartialDependenceConfig full;
+    full.percentile_lo = 0.0;
+    full.percentile_hi = 1.0;
+    full.grid_resolution = 3;
+    full.subsample = 0;  // keep all
+    PartialDependenceResult a = partial_dependence(m, X, 0, full, 0);
+
+    PartialDependenceConfig sub = full;
+    sub.subsample = 2;  // keep 2 curves
+    PartialDependenceResult b = partial_dependence(m, X, 0, sub, 0);
+
+    check(a.n_curves == 6, "full run keeps 6 curves");
+    check(b.n_curves == 2, "subsampled run keeps 2 curves");
+    check(b.individual.size() == 2, "...individual has 2 rows");
+    // THE POINT: the average is computed over ALL of X regardless of subsample.
+    for (size_t k = 0; k < a.average.size(); ++k) {
+        check_close(b.average[k], a.average[k], 1e-12,
+                    "subsample does NOT shrink the PD average at point " +
+                    std::to_string(k));
+    }
+}
+
+// --- 16: determinism -------------------------------------------------------
+
+static void test_pd_determinism() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 4;
+    cfg.subsample = 3;
+
+    PartialDependenceResult a = partial_dependence(m, X, 0, cfg, 0);
+    PartialDependenceResult b = partial_dependence(m, X, 0, cfg, 0);
+    bool identical = a.individual.size() == b.individual.size();
+    for (size_t i = 0; identical && i < a.individual.size(); ++i) {
+        for (size_t k = 0; k < a.grid.size(); ++k) {
+            if (a.individual[i][k] != b.individual[i][k]) { identical = false; }
+        }
+    }
+    check(identical, "same seed -> bit-identical ICE subsets");
+
+    PartialDependenceConfig other = cfg;
+    other.seed = 999;
+    PartialDependenceResult c = partial_dependence(m, X, 0, other, 0);
+    // The AVERAGE must be seed-independent (it uses all of X either way), even
+    // though the retained subset differs.
+    bool avg_same = true;
+    for (size_t k = 0; k < a.average.size(); ++k) {
+        if (a.average[k] != c.average[k]) { avg_same = false; }
+    }
+    check(avg_same, "different seed -> same PD average (average ignores subsample)");
+}
+
+// --- 17: metadata ----------------------------------------------------------
+
+static void test_pd_metadata() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 4;
+    cfg.subsample = 0;
+    PartialDependenceResult r = partial_dependence(m, X, 1, cfg, 0);
+    check(r.feature == 1, "result records the requested feature");
+    check(r.target == 0, "result records the target");
+    check(r.grid.size() == r.n_points, "grid size == n_points");
+    check(r.average.size() == r.n_points, "average has one value per grid point");
+    check(r.individual.size() == r.n_curves, "individual count == n_curves");
+    for (size_t i = 0; i < r.individual.size(); ++i) {
+        check(r.individual[i].size() == r.n_points,
+              "ICE curve " + std::to_string(i) + " has n_points entries");
+    }
+}
+
+// --- 18: no gradient residue ----------------------------------------------
+
+static void test_pd_leaves_no_gradient_residue() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    // Poison any pre-existing gradient so a missing zero_grad would be observable.
+    for (auto& lp : m.layers) {
+        for (Tensor* g : lp->gradients()) g->fill(1.0);
+    }
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 3;
+    (void)partial_dependence(m, X, 0, cfg, 0);
+    // The observable contract: a caller's stale accumulated gradients are
+    // discarded and no parameter gradient is left holding a value.
+    bool clean = true;
+    for (auto& lp : m.layers) {
+        for (const Tensor* g : lp->gradients()) {
+            for (double v : g->data) {
+                if (v != 0.0) { clean = false; }
+            }
+        }
+    }
+    check(clean, "partial_dependence leaves no parameter-gradient residue");
+}
+
+// --- 19: validation -------------------------------------------------------
+
+static void test_pd_validation() {
+    Model m = make_linear_model(2, 1, {{3.0}, {-2.0}});
+    Tensor X = two_feature_data();
+    PartialDependenceConfig cfg;
+    cfg.percentile_lo = 0.0;
+    cfg.percentile_hi = 1.0;
+    cfg.grid_resolution = 3;
+
+    bool t1 = false, t2 = false, t3 = false;
+    try { partial_dependence(m, X, 9, cfg, 0); } catch (...) { t1 = true; }
+    try { partial_dependence(m, X, 0, cfg, 5); } catch (const std::out_of_range&) { t2 = true; }
+    PartialDependenceConfig bad = cfg;
+    bad.grid_resolution = 1;
+    try { partial_dependence(m, X, 0, bad, 0); } catch (...) { t3 = true; }
+    check_throws(t1, "feature index out of range throws");
+    check_throws(t2, "target index out of range throws std::out_of_range");
+    check_throws(t3, "grid_resolution == 1 throws");
+}
+
 int main() {
     std::cout << "\n============================================================\n";
     std::cout << "  test_partial_dependence\n";
@@ -381,6 +644,15 @@ int main() {
     test_average_ice_validation();
     test_center_pd_subtracts_element_zero();
     test_center_ice_is_per_row();
+    test_pd_linear_oracle();
+    test_pd_slope_is_exact_partial_dependence();
+    test_pd_constant_model();
+    test_pd_centered();
+    test_pd_subsample_does_not_change_average();
+    test_pd_determinism();
+    test_pd_metadata();
+    test_pd_leaves_no_gradient_residue();
+    test_pd_validation();
 
     std::cout << "\n============================================================\n";
     std::cout << "  PASSED: " << passed << "    FAILED: " << failed << "\n";
