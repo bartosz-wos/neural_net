@@ -233,6 +233,9 @@ $(BUILD_DIR)/test_shapley: $(LIB_OBJS) $(BUILD_DIR)/test_shapley.o
 $(BUILD_DIR)/test_lime: $(LIB_OBJS) $(BUILD_DIR)/test_lime.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_partial_dependence: $(LIB_OBJS) $(BUILD_DIR)/test_partial_dependence.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_early_stopping: $(LIB_OBJS) $(BUILD_DIR)/test_early_stopping.o
 	$(CXX) $^ -o $@
 
