@@ -327,4 +327,7 @@
 // Interpretability — DeepLIFT Rescale rule (arXiv:1704.02685)
 #include "interpretability/deeplift.h"
 
+// Interpretability — Grad-CAM gradient-based localisation (arXiv:1610.02391)
+#include "interpretability/gradcam.h"
+
 #endif
