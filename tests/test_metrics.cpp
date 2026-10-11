@@ -388,10 +388,25 @@ static void test_pos_label_semantics() {
     ROCCurve c = roc_curve(y, s);
     CHECK_NEAR(max_abs_diff(c.fpr, {0.0, 0.0, 0.0, 1.0}), 0.0, 1e-12,
                "pos_label fpr == [0,0,0,1] (negatives never scored above 0.2)");
-    // Now the SAME data viewed with pos_label = 0 must invert.
+    // Now the same scores with the OPPOSITE class declared positive. The one
+    // thing verified against scikit-learn is that AUC FLIPS 1.0 -> 0.0: the
+    // samples that were positives become negatives, so a perfectly separating
+    // score becomes perfectly anti-separating. The curves themselves are NOT
+    // literal mirrors of each other (sklearn gives fpr=[0,0.5,1,1],
+    // tpr=[0,0,0,1] for pos_label=0 vs fpr=[0,0,0,1], tpr=[0,0.5,1,1] for
+    // pos_label=1), so each curve is asserted against its own measured value
+    // rather than against a relationship between the two. The AUC flip is the
+    // assertion that actually proves pos_label is honoured: an impl that
+    // ignored the argument would return 1.0 here.
     ROCCurve c0 = roc_curve(y, s, 0.0);
-    CHECK_NEAR(max_abs_diff(c0.tpr, c.tpr), 0.0, 1e-12,
-               "pos_label=0 swaps which class is 'positive' (tpr mirrors)");
+    CHECK_NEAR(roc_auc_score(y, s, 0.0), 0.0, 1e-12,
+               "pos_label=0 flips AUC to 0.0 (the separated class is now negative)");
+    CHECK_NEAR(max_abs_diff(c0.fpr, {0.0, 0.5, 1.0, 1.0}), 0.0, 1e-12,
+               "pos_label=0 fpr == [0, 0.5, 1, 1]  [sklearn-verified]");
+    CHECK_NEAR(max_abs_diff(c0.tpr, {0.0, 0.0, 0.0, 1.0}), 0.0, 1e-12,
+               "pos_label=0 tpr == [0, 0, 0, 1]  [sklearn-verified]");
+    CHECK(max_abs_diff(c0.fpr, c.fpr) > 1e-6 && max_abs_diff(c0.tpr, c.tpr) > 1e-6,
+          "pos_label=0 produces genuinely different curves from pos_label=1");
 }
 
 // T11: invalid inputs throw.
@@ -430,9 +445,10 @@ static void test_brier_score_loss() {
     cout << "-- Test 19: brier_score_loss --" << endl;
     Tensor y = make_column({0, 1, 1, 0});
     Tensor p1 = make_column({0.1, 0.9, 0.8, 0.3});
-    // scikit-learn docstring value: brier_score_loss([0,1,1,0],[0.1,0.9,0.8,0.3]) = 0.0375
+    // (N,1) is the BINARY form and is NOT halved by "auto" -- verified
+    // (0.0375 = the raw MSE). This is the sklearn doctest value.
     CHECK_NEAR(brier_score_loss(y, p1, BrierScale::Auto), 0.0375, 1e-12,
-               "brier binary (1 col) = 0.0375  [sklearn doctest]");
+               "brier binary (N,1) auto = raw MSE = 0.0375  [sklearn doctest]");
     CHECK_NEAR(brier_score_loss(y, p1, BrierScale::NoHalf), 0.075, 1e-12,
                "brier scale_by_half=false = 0.075  [sklearn doctest]");
     CHECK_NEAR(brier_score_loss(y, p1, BrierScale::Half), 0.0375, 1e-12,
@@ -442,16 +458,20 @@ static void test_brier_score_loss() {
     CHECK_NEAR(brier_score_loss(y, hard, BrierScale::NoHalf), 0.0, 1e-15,
                "brier of perfect hard predictions is exactly 0.0");
 
-    // THE AUTO-RULE TEST. A 2-COLUMN matrix is multiclass-shaped but cols < 3,
-    // so the reference halves it.
+    // THE AUTO-RULE TEST. The "auto" halving fires on a 2-COLUMN matrix -- the
+    // C < 3 column-count rule applies only from 2 columns up, because a
+    // 1-column matrix is binary and the reference expands it to (n,2) before
+    // consulting the rule. So: (N,1) not halved, (N,2) halved, (N,3) not.
     Tensor y2 = make_column({0, 1});
     Tensor p2({{0.7, 0.3}, {0.3, 0.7}});
     CHECK_NEAR(brier_score_loss(y2, p2, BrierScale::Auto), 0.09, 1e-12,
-               "2-column brier auto-halves -> 0.09  (cols < 3, NOT 'binary')");
+               "2-column brier auto-halves -> 0.09");
     CHECK_NEAR(brier_score_loss(y2, p2, BrierScale::NoHalf), 0.18, 1e-12,
                "2-column brier scale_by_half=false -> 0.18");
+    CHECK_NEAR(brier_score_loss(y2, p2, BrierScale::Half), 0.09, 1e-12,
+               "2-column brier explicit scale_by_half=true = same as auto = 0.09");
 
-    // 3 columns: no halving even though it is "binary-shaped" data.
+    // 3 columns: no halving.
     Tensor y3 = make_column({0, 1, 2});
     Tensor p3({{0.8, 0.1, 0.1}, {0.2, 0.7, 0.1}, {0.2, 0.2, 0.6}});
     CHECK_NEAR(brier_score_loss(y3, p3, BrierScale::Auto), 0.1466666666666667, 1e-12,
@@ -466,16 +486,29 @@ static void test_log_loss() {
     CHECK_NEAR(log_loss(y, p1), 0.19763488164214868, 1e-12,
                "log_loss 1-column = 0.19763488164214868");
 
-    // Clip: p == 1.0 on the true class. Without clipping this is -inf; the
-    // reference clips to [DBL_EPSILON, 1-DBL_EPSILON], giving -log(DBL_EPSILON).
-    Tensor ypos = make_column({1});
-    Tensor pone = make_column({1.0});
-    CHECK_NEAR(log_loss(ypos, pone), 36.04365338911715, 1e-9,
-               "log_loss clips p=1.0 to -log(DBL_EPSILON) = 36.04365338911715 (NOT -inf)");
-    Tensor yzero = make_column({0});
-    Tensor pzero = make_column({0.0});
-    CHECK_NEAR(log_loss(yzero, pzero), 2.2204460492503136e-16, 1e-24,
-               "log_loss clips p=0.0 to -log(1-DBL_EPSILON) = DBL_EPSILON");
+    // Clip. In the (N,1) binary form the column is P(class 1), so a row with
+        // label 1 reads the column and label 0 reads (1 - column). The clip to
+        // [DBL_EPSILON, 1 - DBL_EPSILON] is what keeps -log() finite: a label-0
+        // row whose column is 1.0 means P(class 0) = 0, which clips to
+        // DBL_EPSILON and yields the finite -log(DBL_EPSILON) = 36.04365338911715.
+        // Without the clip this is -inf. Both directions are asserted because the
+        // label selects which of the two clips applies.
+        Tensor yzero = make_column({0});
+        Tensor pone = make_column({1.0});
+        CHECK_NEAR(log_loss(yzero, pone), 36.04365338911715, 1e-9,
+                   "log_loss clips a label-0 row at p=1.0 to -log(DBL_EPSILON) = 36.04365338911715 (NOT -inf)");
+        Tensor yone = make_column({1});
+        CHECK_NEAR(log_loss(yone, pone), 2.2204460492503136e-16, 1e-24,
+                   "log_loss label-1 row at p=1.0 -> -log(1-DBL_EPSILON) = DBL_EPSILON");
+        Tensor yzero2 = make_column({0});
+        Tensor pzero = make_column({0.0});
+        CHECK_NEAR(log_loss(yzero2, pzero), 2.2204460492503136e-16, 1e-24,
+                   "log_loss label-0 row at p=0.0 -> -log(1) = 0 (clipped to 1-eps)");
+        Tensor yone2 = make_column({1});
+        CHECK_NEAR(log_loss(yone2, pzero), 36.04365338911715, 1e-9,
+                   "log_loss label-1 row at p=0.0 -> -log(DBL_EPSILON) = 36.04365338911715");
+        CHECK_NEAR(std::numeric_limits<double>::epsilon(), 2.2204460492503136e-16, 1e-30,
+                   "the clip constant is DBL_EPSILON");
 
     // xlogy: a 2-column row contributes ONLY the true class's -log(p). Summing
     // -log(p_c) over all columns gives a different (wrong) number.
