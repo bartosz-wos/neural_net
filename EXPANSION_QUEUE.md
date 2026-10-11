@@ -5,6 +5,39 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+<!-- popped 2026-10-11: Binary/calibration metrics (ROC-AUC, AP, Brier,
+     log-loss, calibration curve, ECE) -->
+
+<!-- 2026-10-11: the ideas list is DRAINED again -- every bullet below is
+     marked popped and the last three sessions shipped the canonical losses,
+     Grad-CAM and the scoring rules. A fresh list for the next session, all
+     verified ABSENT by content grep on 2026-10-11:
+
+       grep -ril 'knowledge_distill\|teacher' include/  -> only unrelated hits
+       grep -ril 'adversarial\|fgsm\|pgd'    include/  -> 0
+       grep -ril 'calibration\|temperature_scaling' -> now only metrics.cpp
+
+     - **Knowledge distillation** (Hinton, Vinyals, Dean, arXiv:1503.02531) --
+       KL divergence between teacher and student softened distributions at
+       temperature T, plus the T^2 rescaling on the gradient. Needs no new
+       model: the repo has a `Model` and now has `log_softmax` public, so it
+       is a loss, not a layer. Pairs naturally with the just-shipped losses.
+     - **Adversarial robustness** (Madry et al. arXiv:1706.06083, FGSM/PGD) --
+       single-sign and multi-step gradient ascent on the input. Unusually
+       cheap here: `Layer::backward` already RETURNS dL/d(input), so an attack
+       step is a sign of an ordinary backward pass, and adversarial training
+       is just a perturbed training loop.
+     - **Temperature scaling** (Guo et al. arXiv:1707.06552) -- the standard
+       post-hoc calibration fix, now that `metrics.cpp` ships the calibration
+       curve and ECE to measure it with. Without the metric it is
+       unmeasurable, which is why it was not worth building before today.
+     - **Ranking metrics beyond binary AUC** (NDCG, MAP, MRR) -- the
+       retrieval counterpart to today's work; needs multi-label relevance
+       judgements, a genuinely different input convention.
+     - **Calibration diagnostics beyond ECE** (adaptive ECE, class-ECE,
+       D2 score) -- follow-ons to today's `expected_calibration_error`, each
+       one a variation on the bin-weighting rule that is now already written. -->
+
 <!-- popped 2026-10-11: Canonical losses (CE / NLL / BCEWithLogits) -->
 
 <!-- popped 2026-10-10: Grad-CAM (Selvaraju et al. arXiv:1610.02391) -->
@@ -143,6 +176,22 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Binary + multiclass ranking and calibration metrics** (scikit-learn semantics, verified against sklearn 1.9.1) — **`metrics.{h,cpp}` had ~250 layers, 38 optimizers, six interpretability families and canonical losses, and could only measure a classifier by ARGMAX.** All four pre-existing functions (`accuracy_score`, `top_k_accuracy_score`, `confusion_matrix`, `classification_report`) collapse a score vector to one integer per row before measuring anything, which throws away exactly the information a ranking metric needs. Verified absent by content grep: `grep -ril 'brier\|calibration\|average_precision\|roc_auc\|ece' include/` → 0. Implemented in `include/nn/utils/metrics.{h,cpp}` as `roc_auc_score`, `average_precision_score`, `roc_curve`, `precision_recall_curve`, `auc_trapezoid`, `brier_score_loss`, `log_loss`, `calibration_curve`, `expected_calibration_error`, plus one-vs-rest overloads of the first two taking `MulticlassAveraging`, and three structs (`ROCCurve`, `PrecisionRecallCurve`, `CalibrationCurve`) and three guarded enums. **141/141 checks pass (7 tests existed before, 134 added), 10/10 mutations caught, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 237-suite aggregate run shows no new failures.** This is the exact complement of the losses shipped the day before: those are the *training* objectives, these are their *evaluation* cousins.
+
+  **The process finding is worth more than the feature, and it is the same lesson as the mutation-harness bug in the Grad-CAM entry — generalised.** I hand-wrote a pure-Python transcription of sklearn's `_binary_clf_curve` as an independent oracle, and **it disagreed with sklearn's own doctests on 6 of 13 fixtures** (AUC 0.5 vs 0.75, brier 0.344 vs 0.0375, log-loss 1.816 vs 0.216). Rather than debug the C++ against a reference that was itself wrong, I installed sklearn into a throwaway `uv venv` and diffed. **The oracle had four distinct bugs, including an off-by-one in the threshold-index construction that produced a curve one point too long.** The lesson: *an oracle transcribed by the same author who writes the implementation is not independent, and a cross-check between two things you both wrote will happily agree on a shared misreading while disagreeing with reality for no visible reason.* A running third-party implementation beats a carefully hand-written one every time, and it costs one `uv pip install`.
+
+  **Six semantics read from sklearn source, each a natural mistake, each pinned by a named test:**
+   1. **`drop_intermediate` is ON for `roc_curve` and OFF for `precision_recall_curve`** (`_ranking.py:1335-1352`, `:1178-1187`) — so the SAME sweep gives different-length curves from the two functions, and dropping the filter changes the ROC's *shape* without ever changing its *area* (the dropped points are collinear). Only a test asserting point count or threshold values can catch this; an AUC assertion cannot.
+   2. **The collinearity test is numpy's `diff(x, n=2)` — the literal SECOND DERIVATIVE** `x[i-1] - 2x[i] + x[i+1]`, not `x[i+2] - x[i]`. I wrote the latter on the first attempt; it both misfires and reads one element out of bounds. Verified against numpy directly on three fixtures before implementing.
+   3. **AP is a STEP integral, not the trapezoid area under the same curve** (`:241-257`) — and they disagree on ordinary data: **0.542857 vs 0.438095** on FIX_X. A reimplementation that integrates the curve returns a plausible, wrong number. This is the single most-pinned test in the suite, and it carries an explicit *"these two must disagree on this fixture"* assertion so the fixture can never silently become vacuous.
+   4. **`brier_score_loss`'s `scale_by_half="auto"` is a rule about column COUNT, not about binarity** (`:3849-3852`): `(N,1)` → 0.0375, `(N,2)` → 0.09, `(N,3)` → 0.1466667. It looks like "halve when binary", which is wrong in both directions. Getting it required pinning down that the `(N,1)` form is scored as the equivalent **two**-column `(1-p, p)` expansion — so its squared error sums over both columns and the halving cancels exactly. Scoring only the target column gives an answer off by precisely a factor of 2.
+   5. **`log_loss` clips to `[DBL_EPSILON, 1-DBL_EPSILON]` and the clip constant is observable** (`:3449-3450`) — a hard prediction of 0 on a true label returns the finite **36.04365338911715** = `-log(DBL_EPSILON)`, not `-inf`. Both clip directions are asserted, because in the binary `(N,1)` form the label selects which one applies (label 1 reads `p`, label 0 reads `1-p`).
+   6. **Calibration bins are LEFT-closed and EMPTY BINS ARE DROPPED** (`calibration.py:1455`, `:1458-1462`) — `np.searchsorted`'s default side puts a value exactly on an interior edge in the **lower** bin, and the output is shorter than `n_bins` so a caller can distinguish "no samples here" from "this bin's mean is 0".
+
+  **Four bugs in my own implementation, all found by tests written before it, and two of them by the reference-diff rather than by reasoning:** (1) the collinear filter's off-by-one above, which broke AUC on perfectly-separated data (1.0 → 0.90625) — the tell was a clean, reproducible error on a fixture that should be trivially correct; (2) `brier_score_loss` and `log_loss` both treated an `(N,1)` binary matrix as a 1-column multiclass and indexed the label as a column index, which **aborted** (`class index 1 out of range for 1 classes`) rather than returning a wrong number; (3) `log_loss`'s binary path read `p` for *both* labels instead of `p` / `1-p`; (4) an out-of-bounds read in the collinear filter at `i = n-1`. **Three genuine TEST bugs, each caught only because the expected value came from a running sklearn rather than from my head:** (a) I asserted the `pos_label=0` curves were a *mirror* of the `pos_label=1` curves and that AUC was invariant — neither is true (AUC flips 1.0 → 0.0, and I had fpr and tpr swapped); I rewrote it three times before pinning it to measured values, and the final test asserts only what sklearn actually does. (b) The `2-column brier explicit half` expectation was 0.045 when the correct value is 0.09 — I halved an already-halved number. (c) The `p=1.0` clip case asserted 36.04 on the label-1 row when it belongs on the label-0 row. **Each of these is the TDD skill's "the test is not automatically right" row, and in every case the impl was right and the test was wrong — which is only knowable because the oracle was a third party.**
+
+  **The mutation harness had the same bug the Grad-CAM session hit, and the defence worked.** `tests/mutate_metrics.sh` takes the baseline ONCE before any mutation and **asserts it is pristine** by grepping for six lines that exist only in the correct implementation; it verifies each `sed` applied via `diff -q` before building; and it reports compile failure as `MUT-BROKEN`, never as `MUT-CAUGHT`. **M9 ("disable the collinear filter") is the mutation that proves the harness's value here — it changes every curve's length but NOT the AUC, so an AUC-only test suite would report it as survived.** Two further harness refinements came out of the run: M2 originally scored `MUT-CAUGHT (by 0 assertions)` on the strength of a **core dump**, because the naive mutation removed the short-circuit guarding `sorted_scores[i+1]` — a crash cannot be told apart from a harness artifact, so the mutation was rewritten to `last || true` to keep the bounds guard and fail on an assertion instead (now 2 assertions), and the harness now distinguishes `abort` from `signal` catches explicitly. M3, M4, M6, M7 and M8 are each pinned by exactly one test; that is deliberate and is the reason those tests exist.
 
 - **Canonical classification losses — `CrossEntropyLoss` / `NLLLoss` / `BCEWithLogitsLoss`** — **the repo had ~250 layers, 38+ optimizers and six interpretability method families, and NO canonical way to train a classifier.** Not an oversight of a niche: `CrossEntropyLoss`, `NLLLoss`, `BCEWithLogitsLoss`, `ignore_index`, per-class `weight` and any `reduction` argument were all verified ABSENT by content grep. The gap matters concretely — `ignore_index` is the padding-mask mechanism that every sequence/NLP model already in this repo needs, and per-class weights are the direct answer to the class imbalance that the shipped `FocalLoss` was written to *work around* rather than address. Implemented in `include/nn/utils/losses.{h,cpp}` with public free functions `log_softmax` / `log_softmax_backward` (numerically stable, public because a caller writing a custom loss needs them), following the existing `FocalLoss` / `HuberLoss` `forward(logits, targets) -> Tensor(1,1)` convention. **74/74 checks pass, 9/9 mutations caught, zero warnings under the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 237-suite aggregate run shows no new failures.**
   **All semantics read from PyTorch source rather than memory** (`aten/src/ATen/native/LossNLL.cpp` and `Loss.cpp`, fetched and read at the cited lines on 2026-10-11 — the web_extract tool was search-only this session, so `curl` was used). Four details that a reasonable reimplementation gets wrong, each pinned by its own named test:
