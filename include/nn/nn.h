@@ -55,6 +55,7 @@
 #include "utils/label_smoothing.h"
 #include "utils/clip_grad_norm.h"
 #include "utils/focal_loss.h"
+#include "utils/losses.h"
 #include "utils/tabular_ensemble.h"
 #include "utils/adaboost.h"
 #include "utils/gradient_boosting.h"
