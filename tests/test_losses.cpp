@@ -278,19 +278,26 @@ static void test_ce_gradient_closed_form() {
     });
 }
 
-// D4: passing ALREADY-softmaxed values must give the -log p answer, and feeding
-// the true LOGITS must give the same value (the shift-invariance identity).
+// D4: CE takes RAW LOGITS. Feeding probabilities where logits belong gives a
+// DIFFERENT (wrong) number, because softmax([0.2,0.5,0.3]) is not [0.2,0.5,0.3]
+// — the answer is logsumexp([0.2,0.5,0.3]) - 0.2 = 1.2398, not -ln(0.2) = 1.6094.
+// Feeding the true LOGITS log([0.2,0.5,0.3]) recovers -ln(0.2) exactly.
+// That gap between the two is the assertion; it is the whole point of D4.
 static void test_ce_expects_raw_logits() {
     run("(3c) D4: CE expects raw logits", [] {
         Tensor probs(1, 3); probs[0][0] = 0.2; probs[0][1] = 0.5; probs[0][2] = 0.3;
         Tensor t(1, 1); t[0][0] = 0.0;
         CrossEntropyLoss ce(Reduction::Mean, -100);
-        Tensor as_probs = ce.forward(probs, t);
-        ASSERT_NEAR(as_probs[0][0], 1.6094379124341003, 1e-9);   // -ln 0.2
+        double as_probs = ce.forward(probs, t)[0][0];
+        ASSERT_NEAR(as_probs, 1.2398310608444603, 1e-9);
+
         Tensor logits(1, 3);
         logits[0][0] = std::log(0.2); logits[0][1] = std::log(0.5);
         logits[0][2] = std::log(0.3);
-        ASSERT_NEAR(ce.forward(logits, t)[0][0], as_probs[0][0], 1e-12);
+        double as_logits = ce.forward(logits, t)[0][0];
+        ASSERT_NEAR(as_logits, -std::log(0.2), 1e-12);
+        // The two MUST disagree, or the fixture cannot tell the modes apart.
+        ASSERT(std::abs(as_probs - as_logits) > 0.3);
     });
 }
 
@@ -354,12 +361,12 @@ static void test_bce_mean_divides_by_numel() {
     run("(4b) D7: BCE mean divides by numel not rows", [] {
         Tensor z(2, 3); z.fill(0.0);
         Tensor t(2, 3); t.fill(1.0);
-        BCEWithLogitsLoss none(Reduction::None);
-        Tensor per = none.forward(z, t);
-        double total = per[0][0] + per[0][1] + per[0][2] +
-                       per[1][0] + per[1][1] + per[1][2];
+        BCEWithLogitsLoss sum(Reduction::Sum);
+        double total = sum.forward(z, t)[0][0];
         BCEWithLogitsLoss mean(Reduction::Mean);
         ASSERT_NEAR(mean.forward(z, t)[0][0], total / 6.0, 1e-12);
+        // And it must NOT be total/2 (mean over rows), which is the trap.
+        ASSERT(std::abs(mean.forward(z, t)[0][0] - total / 2.0) > 0.3);
     });
 }
 
@@ -398,18 +405,29 @@ static void test_bce_gradient_fd() {
     });
 }
 
-// pos_weight reweights the positive term (Loss.cpp:351-355).
+// pos_weight reweights the POSITIVE term's log_sigmoid part
+// (Loss.cpp:351-355): L = (1-t)*z - ((pos_weight-1)*t + 1)*log_sigmoid(z).
+// Uses a (1,1) input so Reduction::None's per-row value is unambiguous.
 static void test_bce_pos_weight() {
     run("(4e) BCE pos_weight", [] {
+        BCEWithLogitsLoss plain(Reduction::None);
         BCEWithLogitsLoss loss(Reduction::None);
         Tensor pw(1, 1); pw[0][0] = 2.0;
         loss.set_pos_weight(pw);
-        Tensor z(1, 2); z[0][0] = 0.5; z[0][1] = -0.5;
-        Tensor t(1, 2); t[0][0] = 1.0; t[0][1] = 0.0;
-        Tensor per = loss.forward(z, t);
-        double log_sigmoid = std::log(1.0 + std::exp(-0.5));
-        ASSERT_NEAR(per[0][0], 0.5 - 2.0 * log_sigmoid, 1e-12);
-        ASSERT_NEAR(per[0][1], -0.5 - log_sigmoid, 1e-12);
+        Tensor z(1, 1); z[0][0] = 0.5;
+        Tensor tp(1, 1); tp[0][0] = 1.0;
+        Tensor tn(1, 1); tn[0][0] = 0.0;
+
+        const double ls = std::log1p(std::exp(-0.5));   // -log_sigmoid(0.5)
+        // t=1 -> logw = 2: L = (1-1)*z - 2*log_sigmoid(z) = -2*log_sigmoid(z),
+        // and log_sigmoid(0.5) is NEGATIVE, so the loss is +2*ls.
+        ASSERT_NEAR(loss.forward(z, tp)[0][0], 2.0 * ls, 1e-12);
+        // t=0 -> logw = 1: L = z - log_sigmoid(z) = 0.5 + ls, unchanged by pw.
+        ASSERT_NEAR(loss.forward(z, tn)[0][0], plain.forward(z, tn)[0][0], 1e-12);
+        ASSERT_NEAR(loss.forward(z, tn)[0][0], 0.5 + ls, 1e-12);
+        // pos_weight must actually change the positive case
+        ASSERT(std::abs(loss.forward(z, tp)[0][0] -
+                        plain.forward(z, tp)[0][0]) > 0.1);
     });
 }
 
@@ -422,25 +440,34 @@ static void test_bce_elementwise_weight() {
         wt.set_weight(w);
         Tensor z(1, 2); z[0][0] = 0.5; z[0][1] = -0.5;
         Tensor t(1, 2); t[0][0] = 1.0; t[0][1] = 0.0;
-        Tensor a = plain.forward(z, t);
+        // Reduction::None reduces over the CLASS axis, so the result is (rows,1)
+        // and column 1 does not exist. Compare against a per-element reference
+        // recomputed here instead of indexing into the reduced output.
+        const double ls_pos = -std::log1p(std::exp(-0.5));    // log_sigmoid(0.5)
+        const double ls_neg = -std::log1p(std::exp(0.5));     // log_sigmoid(-0.5)
+        const double e00 = (1.0 - 1.0) * 0.5 - ls_pos;       // t=1, z=0.5
+        const double e01 = (1.0 - 0.0) * -0.5 - ls_neg;      // t=0, z=-0.5
         Tensor b = wt.forward(z, t);
-        ASSERT_NEAR(b[0][0], a[0][0] * 2.0, 1e-12);
-        ASSERT_NEAR(b[0][1], a[0][1] * 3.0, 1e-12);
+        ASSERT_NEAR(b[0][0], 2.0 * e00 + 3.0 * e01, 1e-12);
+        ASSERT(std::abs(b[0][0] - plain.forward(z, t)[0][0]) > 1e-6);
     });
 }
 
-// BCE is the K=2 limit of cross-entropy on a 2-column logit pair.
-// z = [0, z1] with p1 = sigmoid(z1); -log p1 = softplus(-z1) = BCE's column 2.
+// BCE on a single logit z1 with target 0 is log(1 + e^z1), which is exactly
+// CE([0, z1], target 0) = logsumexp([0,z1]) - 0. The K=2 limit, in closed form.
 static void test_bce_is_k2_cross_entropy() {
     run("(4g) BCE is the K=2 limit of CE", [] {
         for (double z1 : {-2.0, 0.0, 1.5}) {
-            Tensor z(1, 2); z[0][0] = 0.0; z[0][1] = z1;
-            Tensor t(1, 1); t[0][0] = 1.0;
+            Tensor pair(1, 2); pair[0][0] = 0.0; pair[0][1] = z1;
+            Tensor tp(1, 1); tp[0][0] = 0.0;
             CrossEntropyLoss ce(Reduction::Mean, -100);
-            double ce_v = ce.forward(z, t)[0][0];
-            Tensor tb(1, 1); tb[0][0] = 0.0;
+            double ce_v = ce.forward(pair, tp)[0][0];
+            ASSERT_NEAR(ce_v, std::log1p(std::exp(z1)), 1e-12);
+
+            Tensor single(1, 1); single[0][0] = z1;
+            Tensor ts(1, 1); ts[0][0] = 0.0;
             BCEWithLogitsLoss bce(Reduction::Mean);
-            double bce_v = bce.forward(z, tb)[0][0];
+            double bce_v = bce.forward(single, ts)[0][0];
             ASSERT_NEAR(ce_v, bce_v, 1e-12);
         }
     });
