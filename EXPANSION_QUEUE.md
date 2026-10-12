@@ -5,17 +5,15 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- popped 2026-10-11: Binary/calibration metrics (ROC-AUC, AP, Brier,
-     log-loss, calibration curve, ECE) -->
+<!-- 2026-10-13: the ideas list is DRAINED again. Ranking metrics (DCG/NDCG/
+     MAP/MRR) was the last unpopped bullet and shipped today; the remaining
+     three below (knowledge distillation, adversarial robustness, temperature
+     scaling) were never popped and are still candidates.
 
-<!-- 2026-10-11: the ideas list is DRAINED again -- every bullet below is
-     marked popped and the last three sessions shipped the canonical losses,
-     Grad-CAM and the scoring rules. A fresh list for the next session, all
-     verified ABSENT by content grep on 2026-10-11:
-
-       grep -ril 'knowledge_distill\|teacher' include/  -> only unrelated hits
-       grep -ril 'adversarial\|fgsm\|pgd'    include/  -> 0
-       grep -ril 'calibration\|temperature_scaling' -> now only metrics.cpp
+     VERIFIED STILL ABSENT by content grep on 2026-10-13:
+       grep -ril 'knowledge_distill\|teacher'  include/ -> only unrelated hits
+       grep -ril 'adversarial\|fgsm\|pgd'        include/ -> 0
+       grep -ril 'temperature_scaling\|TemperatureScale' include/ -> 0
 
      - **Knowledge distillation** (Hinton, Vinyals, Dean, arXiv:1503.02531) --
        KL divergence between teacher and student softened distributions at
@@ -31,10 +29,9 @@ After completing an item, move it to the "Done" section.
        post-hoc calibration fix, now that `metrics.cpp` ships the calibration
        curve and ECE to measure it with. Without the metric it is
        unmeasurable, which is why it was not worth building before today.
-     - **Ranking metrics beyond binary AUC** (NDCG, MAP, MRR) -- the
-       retrieval counterpart to today's work; needs multi-label relevance
-       judgements, a genuinely different input convention.
-     - **Calibration diagnostics beyond ECE** (adaptive ECE, class-ECE) --
+     - **Ranking metrics beyond binary AUC** (NDCG, MAP, MRR) -- SHIPPED
+           2026-10-13; see ## Done.
+         - **Calibration diagnostics beyond ECE** (adaptive ECE, class-ECE) --
        follow-ons to the shipped `expected_calibration_error`, each one a
        variation on the bin-weighting rule that is now already written.
        <!-- NOTE 2026-10-12: POPPED. D2 was DROPPED from this item -- it is
@@ -185,6 +182,25 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Ranking metrics beyond binary AUC** (DCG, NDCG, MAP, MRR) — **the `metrics` module could score a classifier only per-example, with a 0/1 label.** The shipped ROC-AUC / `average_precision_score` take an `(N,1)` binary label column — one score per example — and nothing in the repo could rank documents *within* a query. Implemented in `include/nn/utils/metrics.{h,cpp}` as `dcg_score`, `ndcg_score`, `mean_average_precision`, `mean_reciprocal_rank` plus per-query forms (`*_per_query`), each with a `k` cut-off and `log_base`. **89/89 checks pass, 10/10 mutations caught, deterministic across 3 reruns, zero warnings at `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 239-suite aggregate run shows no new failures.**
+
+  **The finding worth more than the feature: THE OBVIOUS ORACLE WAS WRONG TWICE, and each error had a different cause.**
+
+  1. **The first oracle fed sklearn a 2-D `(1, n_docs)` array, which routes to the MULTILABEL average-precision path — a different metric.** The control that exposed it is one line: `rel=[1,1,1,0]`, `sc=[.9,.8,.7,.1]` returns **0.75 as a 2-D `(1,4)` array and 1.0 as a 1-D `(4,)` array**. Every MAP/MRR expectation was re-derived per-row on the ranking convention and now agrees with three independent computations (trec_eval via `ir_measures`, sklearn's 1-D `average_precision_score`, and a direct transcription) to the last digit. *A 2-D array is not a longer 1-D array — for sklearn it selects a different problem.*
+  2. **trec_eval's tie handling was read as a "pessimistic" rule with insertion-order independence. It is neither.** The first control was itself vacuous: it permuted the dict four ways on a fixture where the relevant document was **always at index 0**, so all four returned the same number and "independence" looked proven. Running the same fixture with the hit at index 0, 1 and 2 returns **1.0 / 0.5 / 0.3333** — trec_eval sorts tied documents by **descending docid**, so its tie behaviour is an artifact of how the run file was written, not a rule to copy. *An independence check is only as good as the fixture that varies the thing you believe is invariant; vary the relevant index, not the insertion order of a fixed key set.*
+
+  **Four semantics read from source, each a natural mistake, each pinned by a named test:**
+   1. **The discount is `log_base(rank+1)` with rank from 1** (`discount = 1/(log(arange(n)+2)/log(base))`, `_ranking.py:1698`), so the top rank discounts by exactly 1.0. The classic `1/log2(rank)` starting at 0.6309 is an off-by-one that gives a plausible wrong number.
+   2. **`k` truncates by ZEROING the discount beyond k, and it zeroes the *ideal* too** — so `ndcg@k` normalises by the ideal **truncated at k**. The wrong rule (divide by the full-length ideal) gives 0.6637 on F8 where the correct answer is 0.8520.
+   3. **A query with nothing relevant scores 0.0 and is INCLUDED in the mean** — the division is skipped, not guarded, and the row is not dropped. Dropping it would let a system buy a higher score by returning nothing, which is the degenerate behaviour a ranking metric exists to penalise.
+   4. **DCG and MAP/MRR use DIFFERENT tie rules, and that is a real inconsistency in the IR literature, not a bug here.** DCG **tie-averages** (McSherry & Najork, ECIR 2008, `_tie_averaged_dcg`); MAP/MRR are **pessimistic** (relevant sorts last within a tied group, verified against sklearn's position-independent 1-D AP). On a 4-way tie `rel={1,1,0,0}` they give 1.2808 vs 1.4307. Both are pinned, and each is asserted *against the other's value* so neither can silently become it.
+
+  **Two implementation bugs, both caught by tests written before them:**
+   1. **`dcg_row` indexed the discount by DOCUMENT id instead of by RANK**, making the metric invariant to the ranking — the ascending-score fixtures returned the descending fixtures' values exactly, and DCG looked correct on the one fixture whose relevance happened to align with document order. The tell was F1 and F3 returning each other's numbers. *A metric that returns the same value for a ranking and its reverse is not a metric.*
+   2. **`rank_indices_pessimistic`'s second compaction pass read `order[t]` after the first pass had overwritten those slots**, destroying the permutation; every fully-tied fixture returned 0.0. A uniform zero across four different tie fixtures is the fingerprint of documents being DROPPED rather than mis-ranked. The aliasing fix is itself mutation-tested (M9 removes the group snapshot and is caught by 6 assertions).
+
+  **A fifth test bug, worth recording because the oracle was the reason it survived:** the suite's cross-check against the shipped `average_precision_score` passed a `(1, n_docs)` tensor to an API that wants one score per **example**, which **threw and aborted the whole suite** before the remaining assertions ran. Correctly translated, the same fixture exposes the real distinction between the two AP definitions — **mean precision at relevant ranks 0.6389 vs the shipped step integral 0.5833** — so the check became a genuine *"these two MUST disagree"* assertion instead of a vacuous agreement one. **This is also the concrete justification for keeping `mean_average_precision` as a separate symbol from the shipped `average_precision_score`.**
 
 - **Calibration diagnostics beyond ECE** (Nixon arXiv:1904.01685 §5.2-5.3; Kull arXiv:1910.12656 Eq. 4) -- **the `## Ideas` list is now DRAINED again** (last bullet popped). Ships `adaptive_calibration_error` (ACE), `thresholded_calibration_error` (TACE), `classwise_ece` + `classwise_ece_per_class` with a Macro/Weighted averaging overload, in `include/nn/utils/metrics.{h,cpp}`; new suite `tests/test_calibration_diagnostics.cpp` (**41/41 pass, deterministic across reruns, 7/7 mutations caught, zero warnings at `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone**). **D2 was DROPPED, deliberately -- see below.**
 
