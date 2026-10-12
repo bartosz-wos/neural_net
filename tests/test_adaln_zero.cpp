@@ -245,6 +245,53 @@ static void test_adaln_block_fd_gradient() {
 }
 
 // =====================================================================
+// Test 8a: last_pre_silu() has the documented (B, hidden) shape.
+//
+// adaln_zero.h:57 documents `last_pre_silu_` as "(B, hidden), pre-SiLU value
+// (needed for SiLU backward)". The forward pass must therefore cache h_pre
+// -- the OUTPUT of proj1_, before the SiLU -- and NOT proj1_.last_input,
+// which is the layer's INPUT (B, cond_dim). Caching the wrong tensor is
+// invisible whenever cond_dim == hidden and silently wrong (and an
+// out-of-bounds read in backward) whenever they differ, which is the case
+// for every non-square configuration.
+// =====================================================================
+static void test_adaln_pre_silu_cache_shape() {
+    cout << endl << "-- Test 8a: last_pre_silu() is the pre-SiLU h_pre, not the layer input --" << endl;
+
+    // cond_dim != hidden*d_model on purpose: cond_dim=3, hidden_mult=2*4=8.
+    AdaLNModulation m(3, 4, 2);
+    Tensor cond(2, 3);
+    for (size_t i = 0; i < 2; ++i)
+        for (size_t j = 0; j < 3; ++j) cond[i][j] = 0.2 * (double)(i + 1);
+
+    m.forward(cond);
+
+    // hidden = hidden_mult * d_model = 2 * 4 = 8; B = 2.
+    check("last_pre_silu has rows == B == 2", m.last_pre_silu().rows == 2);
+    check("last_pre_silu has cols == hidden == 8 (not cond_dim == 3)",
+          m.last_pre_silu().cols == 8);
+
+    // And it must be h_pre: feeding proj1 through a known affine map and
+    // comparing element-wise. proj1 is deterministic given cond, so compute
+    // the expected pre-SiLU by hand: h_pre[i][j] = sum_c cond[i][c]*W1[j][c] + b1[j].
+    const Tensor& W1 = m.proj1().weights;
+    const Tensor& b1 = m.proj1().bias;
+    double max_diff = 0.0;
+    for (size_t i = 0; i < 2; ++i) {
+        for (size_t j = 0; j < 8; ++j) {
+            double expect = 0.0;
+            for (size_t c = 0; c < W1.cols; ++c)
+                expect += cond[i][c] * W1[j][c];
+            expect += b1[0][j];
+            double diff = std::abs(expect - m.last_pre_silu()[i][j]);
+            if (diff > max_diff) max_diff = diff;
+        }
+    }
+    cout << "    max |h_pre - last_pre_silu| = " << max_diff << endl;
+    check("last_pre_silu equals h_pre (proj1 output before SiLU)", max_diff < 1e-12);
+}
+
+// =====================================================================
 // Test 8: Modulation-gradient numerical check.
 // =====================================================================
 static void test_adaln_modulation_fd_gradient() {
@@ -288,15 +335,26 @@ static void test_adaln_modulation_fd_gradient() {
     // test via the embedding in AdaLNZeroBlock.
     // We instead test the chain by wrapping m in an AdaLNZeroBlock and
     // using the block's backward which should descend through m.
-    AdaLNZeroBlock block(3, 4);
-    // copy m's params into block's adaln
+    AdaLNZeroBlock block(3, 4, 2);
+    // copy m's params into block's adaln.
+    // NOTE: the copy loops must iterate the SOURCE (p1/p2) shape, not the
+    // destination's. `block(3,4,2)` must match `m(3,4,2)` above: with the
+    // block's default hidden_mult=4 its proj1 is (3,16) while p1 is (3,8),
+    // and looping over the destination shape read 192/768 bytes PAST the end
+    // of the source tensors -- a heap-buffer-overflow that poisoned bp1/bp2
+    // with whatever the allocator handed back, which is why this test failed
+    // ~26% of runs with NaN on both the FD and analytical sides.
     Dense& bp1 = block.modulation().proj1();
     Dense& bp2 = block.modulation().proj2();
-    for (size_t i = 0; i < bp1.weights.rows; ++i)
-        for (size_t j = 0; j < bp1.weights.cols; ++j)
+    check("block proj1 shape matches source", bp1.weights.rows == p1.weights.rows &&
+          bp1.weights.cols == p1.weights.cols);
+    check("block proj2 shape matches source", bp2.weights.rows == p2.weights.rows &&
+          bp2.weights.cols == p2.weights.cols);
+    for (size_t i = 0; i < p1.weights.rows; ++i)
+        for (size_t j = 0; j < p1.weights.cols; ++j)
             bp1.weights[i][j] = p1.weights[i][j];
-    for (size_t i = 0; i < bp2.weights.rows; ++i)
-        for (size_t j = 0; j < bp2.weights.cols; ++j)
+    for (size_t i = 0; i < p2.weights.rows; ++i)
+        for (size_t j = 0; j < p2.weights.cols; ++j)
             bp2.weights[i][j] = p2.weights[i][j];
 
     Tensor x(2, 4);
@@ -308,11 +366,11 @@ static void test_adaln_modulation_fd_gradient() {
         // Restore the original projection weights each call (block.forward caches pre-silu etc.)
         Dense& rb1 = block.modulation().proj1();
         Dense& rb2 = block.modulation().proj2();
-        for (size_t i = 0; i < rb1.weights.rows; ++i)
-            for (size_t j = 0; j < rb1.weights.cols; ++j)
+        for (size_t i = 0; i < p1.weights.rows; ++i)
+            for (size_t j = 0; j < p1.weights.cols; ++j)
                 rb1.weights[i][j] = p1.weights[i][j];
-        for (size_t i = 0; i < rb2.weights.rows; ++i)
-            for (size_t j = 0; j < rb2.weights.cols; ++j)
+        for (size_t i = 0; i < p2.weights.rows; ++i)
+            for (size_t j = 0; j < p2.weights.cols; ++j)
                 rb2.weights[i][j] = p2.weights[i][j];
         Tensor y_in = block.forward(x_in, cond);
         double L = 0.0;
@@ -609,6 +667,7 @@ int main() {
     test_adaln_block_nonzero_output();
     test_adaln_block_fd_gradient();
     test_adaln_modulation_fd_gradient();
+    test_adaln_pre_silu_cache_shape();
     test_adaln_model_integration();
     test_adaln_block_updates();
     test_adaln_block_training_reduces_loss();

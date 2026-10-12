@@ -66,8 +66,14 @@ std::vector<Tensor> AdaLNModulation::forward(const Tensor& cond) {
         throw std::invalid_argument("AdaLNModulation::forward: cond feature dim mismatch");
     }
     // Layer 1
-    Tensor h_pre = proj1_.forward(cond);  // (B, hidden), cached via Dense::last_input
-    last_pre_silu_ = proj1_.last_input.clone();   // ACTUAL pre-SiLU (Dense::last_input)
+    Tensor h_pre = proj1_.forward(cond);  // (B, hidden)
+    // Cache the PRE-SiLU activation for the backward pass. This must be
+    // h_pre (proj1's OUTPUT, shape (B, hidden)), NOT proj1_.last_input --
+    // which is the layer's INPUT, shape (B, cond_dim). The two coincide only
+    // when cond_dim == hidden, so caching last_input silently reads the wrong
+    // columns for every non-square config and reads out of bounds in backward,
+    // where d_pre_silu is indexed by the hidden axis (h < W1.rows).
+    last_pre_silu_ = h_pre.clone();
     Tensor h_act(h_pre.rows, h_pre.cols);
     for (size_t i = 0; i < h_pre.rows; ++i)
         for (size_t j = 0; j < h_pre.cols; ++j)
