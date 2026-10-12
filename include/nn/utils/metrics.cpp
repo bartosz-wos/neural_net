@@ -854,3 +854,197 @@ double average_precision_score(const Tensor& y_true_index, const Tensor& y_proba
     }
     return average_ovr(per_class, ovr.supports, averaging, fn);
 }
+
+// ===========================================================================
+// Calibration diagnostics beyond ECE
+// ===========================================================================
+
+namespace {
+
+// Split `probs` into at most n_bins EQUAL-COUNT ranges ordered ascending by
+// probability (Nixon et al., arXiv:1904.01685 Sec. 5.2-5.3).
+//
+// Sec. 5.2: "We chose an adaptive scheme which spaces the bin intervals so
+// that each contains an equal number of predictions." Sec. 5.3: "Calibration
+// range r defined by the floor(N/R)th index of the sorted and thresholded
+// predictions."
+//
+// floor(N/R) does not necessarily divide N, so the ranges are NOT equal in
+// size. The boundary index is therefore rounded UP: with N=3, R=2 the
+// `ceil` reading gives ranges of sizes 2 and 1, matching Sec. 5.2's stated
+// goal ("each contains an equal number of predictions"), while a literal
+// `floor` gives sizes 1 and 2 -- the same multiset, assigned to the opposite
+// ends of the confidence range, which silently changes the metric (0.175 vs
+// 0.200 on the fixture in test 4). Rounding up is the reading that keeps the
+// paper's stated property; the literal floor would put the smallest
+// confidence in its own range and leave the largest confidence crowded
+// together, which is the opposite of the motivation.
+//
+// This is the one place this implementation knowingly generalises past the
+// paper's literal `floor(N/R)` wording, and it does so to satisfy the
+// property the same section states. test_ace_differs_from_count_weighted
+// pins the resulting value.
+//
+// std::stable_sort keeps equal-probability samples in input order, so the
+// assignment cannot vary with sort implementation.
+std::vector<size_t> equal_count_bins(const std::vector<double>& probs, size_t n_bins,
+                                     std::vector<size_t>& bin_size) {
+    const size_t n = probs.size();
+    bin_size.assign(n_bins, 0);
+    std::vector<size_t> order(n);
+    for (size_t i = 0; i < n; ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&probs](size_t a, size_t b) { return probs[a] < probs[b]; });
+
+    const size_t per_bin = (n + n_bins - 1) / n_bins;  // ceil(N/R), min 1
+    std::vector<size_t> bin_of(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        size_t b = (per_bin == 0) ? 0 : i / per_bin;
+        if (b >= n_bins) b = n_bins - 1;  // the remainder lands in the last range
+        bin_of[order[i]] = b;
+        ++bin_size[b];
+    }
+    return bin_of;
+}
+
+// Shared engine for ACE and TACE. `threshold` drops predictions at or below it
+// BEFORE binning. y_true/y_prob are (N,1) binary columns.
+double adaptive_calibration_error_impl(const Tensor& y_true, const Tensor& y_prob,
+                                       double pos_label, size_t n_bins,
+                                       double threshold, const char* fn) {
+    require_binary_columns(y_true, y_prob, fn);
+    if (n_bins == 0) {
+        throw std::invalid_argument(std::string(fn) + " requires n_bins >= 1");
+    }
+    if (!(threshold >= 0.0) || !(threshold <= 1.0)) {
+        throw std::invalid_argument(std::string(fn) + " requires threshold within [0, 1]");
+    }
+    const std::vector<double> labels = label_column(y_true, fn);
+    std::vector<double> probs(y_prob.rows);
+    for (size_t i = 0; i < y_prob.rows; ++i) probs[i] = y_prob(i, 0);
+    require_finite(probs, "probabilities", fn);
+    require_probabilities(y_prob, fn);
+
+    // Thresholding (Nixon Sec. 5.3): keep only predictions AT OR ABOVE the
+    // threshold. The comparison is `>=`, NOT `>` -- with a strict `>` a
+    // prediction of exactly 1.0 is dropped by a threshold of 1.0, and the
+    // single most confident prediction the model can make would silently
+    // vanish from its own calibration score. `>=` makes threshold 0 keep
+    // every prediction (identity) and threshold 1 keep only the certain ones,
+    // which is what both edges mean. Test 5 pins the boundary explicitly.
+    std::vector<size_t> keep;
+    keep.reserve(probs.size());
+    for (size_t i = 0; i < probs.size(); ++i) {
+        if (probs[i] >= threshold) keep.push_back(i);
+    }
+    if (keep.empty()) return 0.0;
+
+    std::vector<double> kp;
+    kp.reserve(keep.size());
+    for (size_t i : keep) kp.push_back(probs[i]);
+    std::vector<size_t> bin_size;
+    const std::vector<size_t> bin_of = equal_count_bins(kp, n_bins, bin_size);
+
+    // UNIFORM 1/R average over the ranges that actually exist. Nixon writes
+    // 1/(K*R); a range holding no kept sample has no acc/conf pair to
+    // contribute, so the mean is taken over the non-empty ones rather than
+    // silently charging the metric for an empty bin.
+    double total = 0.0;
+    size_t nonempty = 0;
+    for (size_t r = 0; r < n_bins; ++r) {
+        if (bin_size[r] == 0) continue;
+        ++nonempty;
+        double sum_p = 0.0, hits = 0.0;
+        for (size_t s = 0; s < keep.size(); ++s) {
+            if (bin_of[s] != r) continue;
+            sum_p += kp[s];
+            hits += (labels[keep[s]] == pos_label) ? 1.0 : 0.0;
+        }
+        const double count = static_cast<double>(bin_size[r]);
+        total += std::fabs(hits / count - sum_p / count);
+    }
+    return total / static_cast<double>(nonempty);
+}
+
+}  // namespace
+
+double adaptive_calibration_error(const Tensor& y_true, const Tensor& y_prob,
+                                  double pos_label, size_t n_bins, double threshold) {
+    return adaptive_calibration_error_impl(y_true, y_prob, pos_label, n_bins, threshold,
+                                           "adaptive_calibration_error");
+}
+
+double thresholded_calibration_error(const Tensor& y_true, const Tensor& y_prob,
+                                     double pos_label, size_t n_bins, double threshold) {
+    return adaptive_calibration_error_impl(y_true, y_prob, pos_label, n_bins, threshold,
+                                           "thresholded_calibration_error");
+}
+
+std::vector<double> classwise_ece_per_class(const Tensor& y_true_index,
+                                            const Tensor& y_proba, size_t n_bins) {
+    const char* fn = "classwise_ece_per_class";
+    if (n_bins == 0) {
+        throw std::invalid_argument(std::string(fn) + " requires n_bins >= 1");
+    }
+    const OvrDecomposition ovr = make_ovr(y_true_index, y_proba, fn);
+    const double n = static_cast<double>(y_proba.rows);
+
+    std::vector<double> per_class(ovr.n_classes, 0.0);
+    for (size_t k = 0; k < ovr.n_classes; ++k) {
+        // Class k's problem is binary: score p_k(x), label = (Y == k). The
+        // binning reuses the SHIPPED equal-width calibration_curve, and the
+        // weight is the SAMPLED |B|/n -- NOT ACE's uniform 1/R. That
+        // asymmetry is the difference between this metric and ACE.
+        const std::vector<double>& scores = ovr.binary_scores[k];
+        const std::vector<double>& labels = ovr.binary_labels[k];
+        Tensor s(static_cast<size_t>(scores.size()), 1);
+        Tensor y(static_cast<size_t>(labels.size()), 1);
+        for (size_t i = 0; i < scores.size(); ++i) {
+            s(i, 0) = scores[i];
+            y(i, 0) = labels[i];
+        }
+        const CalibrationCurve c =
+            calibration_curve(y, s, n_bins, 1.0, CalibrationStrategy::Uniform);
+        double acc = 0.0;
+        for (size_t b = 0; b < c.counts.size(); ++b) {
+            const double w = static_cast<double>(c.counts[b]) / n;
+            acc += w * std::fabs(c.prob_true[b] - c.prob_pred[b]);
+        }
+        per_class[k] = acc;
+    }
+    return per_class;
+}
+
+double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba, size_t n_bins) {
+    const std::vector<double> per = classwise_ece_per_class(y_true_index, y_proba, n_bins);
+    double sum = 0.0;
+    for (double v : per) sum += v;
+    return sum / static_cast<double>(per.size());
+}
+
+double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba,
+                     size_t n_bins, MulticlassAveraging averaging) {
+    const char* fn = "classwise_ece";
+    if (n_bins == 0) {
+        throw std::invalid_argument(std::string(fn) + " requires n_bins >= 1");
+    }
+    const std::vector<double> per = classwise_ece_per_class(y_true_index, y_proba, n_bins);
+    if (averaging == MulticlassAveraging::Macro) {
+        double sum = 0.0;
+        for (double v : per) sum += v;
+        return sum / static_cast<double>(per.size());
+    }
+    // Support-weighted (the w_k of Kull's marginal CE, Eq. 3). A class with
+    // NO instances has an undefined score -- identically 0, which would drag
+    // a mean down without meaning anything -- so it is excluded from both
+    // the sum and the weight.
+    const OvrDecomposition ovr = make_ovr(y_true_index, y_proba, fn);
+    double sum = 0.0, weight = 0.0;
+    for (size_t k = 0; k < per.size(); ++k) {
+        if (ovr.supports[k] == 0) continue;
+        sum += static_cast<double>(ovr.supports[k]) * per[k];
+        weight += static_cast<double>(ovr.supports[k]);
+    }
+    if (weight == 0.0) return 0.0;
+    return sum / weight;
+}

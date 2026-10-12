@@ -173,4 +173,107 @@ double roc_auc_score(const Tensor& y_true_index, const Tensor& y_proba,
 double average_precision_score(const Tensor& y_true_index, const Tensor& y_proba,
                                MulticlassAveraging averaging);
 
+// ---------------------------------------------------------------------------
+// Calibration diagnostics beyond ECE
+//
+// Three further measures, each a variation on the bin-weighting rule that
+// expected_calibration_error already implements. Definitions read from the
+// primary sources (fetched 2026-10-12, NOT from memory) and each pinned by a
+// named test in tests/test_calibration_diagnostics.cpp.
+// ---------------------------------------------------------------------------
+
+// ADAPTIVE calibration error (Nixon et al., "Measuring Calibration in Deep
+// Learning", arXiv:1904.01685 Sec. 5.2-5.3).
+//
+// Two rules make it different from expected_calibration_error, and BOTH are
+// load-bearing:
+//
+//  1. BINS ARE EQUAL-COUNT, NOT EQUAL-WIDTH. Nixon Sec. 5.2: "We chose an
+//     adaptive scheme which spaces the bin intervals so that each contains an
+//     equal number of predictions", and Sec. 5.3 defines range r "by the
+//     floor(N/R)th index of the sorted and thresholded predictions". Because
+//     floor(N/R) need not divide N, the ranges are NOT equal in size -- so the
+//     edges are quantiles OF THE DATA, not fixed multiples of 1/n_bins.
+//  2. THE WEIGHT IS UNIFORM 1/R, not proportional to bin population. Sec. 5.3
+//     writes the average as 1/(K*R). This is the point of the metric: estimate
+//     the error where predictions are actually made, instead of letting a
+//     sparsely-populated bin be silently down-weighted.
+//
+// y_true/y_prob are (N,1) binary columns; n_bins is the requested range count
+// R; threshold drops predictions at or below it before binning (see
+// thresholded_calibration_error). A sample whose predicted probability equals
+// the threshold is KEPT. Returns 0.0 when every sample is filtered out, rather
+// than NaN.
+//
+// A single-class fixture is NOT an error, unlike roc_auc_score: with no
+// positives every bin has accuracy 0, so the metric reduces to the mean
+// confidence -- a well-defined and useful measure of overconfidence.
+double adaptive_calibration_error(const Tensor& y_true, const Tensor& y_prob,
+                                  double pos_label, size_t n_bins,
+                                  double threshold = 0.0);
+
+// THRESHOLDED adaptive calibration error (Nixon Sec. 5.3, "TACE").
+//
+// The same measure, but evaluating ONLY predictions above `threshold`. The
+// motivation is that "the vast majority of softmax predictions become
+// infinitesimal" and a bin is otherwise wasted on a region the model never
+// meaningfully occupies. Nixon states ACE is the special case of TACE at
+// threshold 0 -- that identity is asserted, not assumed.
+//
+// threshold must lie in [0, 1]; 0.0 reproduces adaptive_calibration_error
+// exactly, 1.0 keeps nothing (0.0).
+double thresholded_calibration_error(const Tensor& y_true, const Tensor& y_prob,
+                                     double pos_label, size_t n_bins,
+                                     double threshold);
+
+// CLASSWISE (multiclass) calibration error (Kull et al., "Beyond temperature
+// scaling", NeurIPS 2019, arXiv:1910.12656, Eq. 4):
+//
+//   classwise-ECE = (1/k) sum_j sum_i (|B_ij| / n) |y_j(B_ij) - p_j(B_ij)|
+//
+// EVERY class is scored, not just the predicted one: class j pairs p_j(x)
+// against the indicator Y = j. This is the metric's entire reason to exist --
+// a model can be perfectly confidence-calibrated on its top prediction and
+// still be badly miscalibrated on the classes it did not pick, which is
+// exactly the failure temperature scaling cannot fix (the paper's Fig. 1c).
+//
+// Note the per-class inner weight IS the sampled |B|/n, NOT ACE's uniform
+// 1/R: the two disagree whenever bins are uneven, which test 6b pins.
+//
+// y_true_index is an (N,1) column of class indices; y_proba is (N,C) with
+// each row summing to 1. Classes with zero support still receive a (trivially
+// zero) per-class score in classwise_ece_per_class, and are EXCLUDED from the
+// weighted average -- an undefined estimate should not drag the mean down.
+std::vector<double> classwise_ece_per_class(const Tensor& y_true_index,
+                                            const Tensor& y_proba, size_t n_bins);
+
+// Unweighted mean over the k classes (the 1/k of Kull's Eq. 4).
+double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba,
+                     size_t n_bins);
+
+// Macro is the plain 1/k mean. Weighted averages by class support, matching
+// the w_k weighting of the paper's marginal calibration error (Eq. 3); it
+// differs from Macro exactly when class counts are unequal.
+double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba,
+                     size_t n_bins, MulticlassAveraging averaging);
+
+// ---------------------------------------------------------------------------
+// NOT IMPLEMENTED, DELIBERATELY: the "D2" score.
+// ---------------------------------------------------------------------------
+// The expansion queue listed a "D2 score" alongside adaptive and classwise
+// ECE. D1/D2 are NOT named anywhere in the paper this metric family comes
+// from -- Kumar, Liang & Ma, "Verified Uncertainty Calibration" (NeurIPS 2019,
+// arXiv:1909.10155) defines the top-label CE (Def. 2.3) and the marginal CE
+// (Def. 2.4) in both its v1 and v2, and its public library
+// (github.com/AnanyaKumar/verified_calibration) exposes no d1/d2 symbol.
+//
+// Rather than ship a plausible-looking function under a name that does not
+// mean what the caller will assume it means, D2 is left out until a primary
+// source for its definition is available. If it turns out to be the total
+// variation distance between the predicted probability vector and the one-hot
+// label -- the natural "how far is this distribution from the truth" reading
+// -- that is a two-line addition on top of the (N,C) loop already present in
+// classwise_ece_per_class. Recorded here so the gap is deliberate rather than
+// forgotten.
+
 #endif
