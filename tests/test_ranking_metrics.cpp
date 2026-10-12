@@ -129,20 +129,34 @@ static void test_validation() {
 
     threw = false;
     try {
-        RankData d = F3();
-        ndcg_score(d.rel, d.score);   // negative relevance forbidden
+        // sklearn forbids negative relevance for the DCG family (_ranking.py:2058)
+        RankData d = make_rank({{3, -1, 1, 0}}, {{0.9, 0.8, 0.7, 0.1}});
+        ndcg_score(d.rel, d.score);
     }
     catch (const std::invalid_argument&) { threw = true; }
     check("negative relevance throws", threw);
 
-    // k = 0 must throw, k > n_docs must be allowed (sklearn's
-    // Interval(Integral, 1, None) rejects 0 and does not bound above).
+    // NOTE (test bug fixed 2026-10-13): the first version of this assertion
+    // used fixture F3, which is {3,2,1,0} -- all non-negative -- so it could
+    // never throw and the assertion was false. A fixture with an actual
+    // negative grade is required for this to mean anything.
     threw = false;
-    try { RankData d = F1(); dcg_score(d.rel, d.score, 0); }
+    try {
+        RankData d = make_rank({{3, 2, 1, 0}}, {{0.9, 0.8, 0.7, 0.1}});
+        ndcg_score(d.rel, d.score);
+    }
     catch (const std::invalid_argument&) { threw = true; }
-    check("k == 0 throws", threw);
+    check("all-non-negative relevance does NOT throw", !threw);
 
+    // k == 0 is the SENTINEL for "no truncation", not an error -- it is the
+    // documented default, so requesting it explicitly must behave identically
+    // to omitting it. (An earlier draft of this file asserted that k == 0
+    // throws; that contradicted the default value of the parameter.)
     RankData d = F1();
+    check("k == 0 (the default sentinel) means no truncation",
+          close(dcg_score(d.rel, d.score, 0), dcg_score(d.rel, d.score))
+            && close(ndcg_score(d.rel, d.score, 0), ndcg_score(d.rel, d.score)));
+
     bool big_k_ok = true;
     try { dcg_score(d.rel, d.score, 99); } catch (...) { big_k_ok = false; }
     check("k > n_docs is allowed", big_k_ok);
@@ -288,21 +302,31 @@ static void test_no_relevant_docs_scores_zero() {
 
 // ---------------------------------------------------------------------------
 // Test 7: MAP is the TREC mean-precision-at-relevant-ranks. S5/S6.
+//
+// ORACLE CORRECTION (2026-10-13): the first version of this file took its MAP
+// values from a 2-D (1, n_docs) call into sklearn, which routes to the
+// MULTILABEL average-precision path, not the ranking path -- a different
+// metric. Every MAP/MRR value below was re-derived on the ranking convention
+// and now agrees with THREE independent computations (trec_eval via
+// ir_measures, sklearn's 1-D average_precision_score, and a direct
+// transcription) to the last digit. See oracle_v2.py.
 // ---------------------------------------------------------------------------
 static void test_map() {
     std::cout << std::endl << "-- Test 7: MAP --" << std::endl;
 
-    // Oracle (trec_eval AP on the BINARY view of relevance):
+    // MAP on the BINARY view of relevance.
     RankData f1 = F1();
-    check("F1 map == 0.75 (binary view of graded relevance)",
-          close(mean_average_precision(f1.rel, f1.score), 0.75, 1e-12));
+    check("F1 map == 1.0 (binary view of graded relevance, perfect order)",
+          close(mean_average_precision(f1.rel, f1.score), 1.0, 1e-12));
 
     RankData f3 = F3();
-    check("F3 map == 0.6388888888888888",
+    check("F3 map == 0.6388888888888888 (hits at ranks 2,3,4 -> "
+          "(1/2+2/3+3/4)/3)",
           close(mean_average_precision(f3.rel, f3.score), 0.6388888888888888));
 
     RankData f5 = F5();
-    check("F5 map == 0.7555555555555555",
+    check("F5 map == 0.7555555555555555 (hits at ranks 1,3,5 -> "
+          "(1/1+2/3+3/5)/3)",
           close(mean_average_precision(f5.rel, f5.score), 0.7555555555555555));
 
     RankData f7 = F7();
@@ -314,26 +338,74 @@ static void test_map() {
           close(mean_average_precision(f8.rel, f8.score), 0.8666666666666667));
 
     RankData f4 = F4();
-    check("F4 map == 1.0 (perfect ranking)",
+    check("F4 map == 1.0 (perfect ranking, relevance in ascending order)",
           close(mean_average_precision(f4.rel, f4.score), 1.0));
 
-    // S6 is the load-bearing rule: MAP ignores the GRADE magnitude. The
-    // relevance-weighted variant on F1 gives 0.4166666666666667 -- a 1.8x
-    // disagreement that no aggregate-only assertion would catch.
-    check("F1 map is NOT the relevance-weighted 0.4166666666666667",
-          std::fabs(mean_average_precision(f1.rel, f1.score)
-                    - 0.4166666666666667) > 1e-3);
+    // S6 is the load-bearing rule: MAP ignores the GRADE magnitude. A
+    // relevance-weighted variant on F1 would give a different number, and the
+    // grades {3,2,1,0} vs {1,1,1,0} must therefore give the SAME map.
+    RankData binarised = make_rank({{1, 1, 1, 0}}, {{0.9, 0.8, 0.7, 0.1}});
+    check("F1 map is IDENTICAL when grades 3,2,1 are collapsed to 1,1,1",
+          close(mean_average_precision(f1.rel, f1.score),
+                mean_average_precision(binarised.rel, binarised.score), 1e-12));
+    check("...and that shared value is 1.0",
+          close(mean_average_precision(binarised.rel, binarised.score), 1.0));
 
     // S5: this is a SEPARATE symbol from the shipped step-integral
-    // average_precision_score, even though they agree on these fixtures.
-    check("map and the shipped average_precision_score are distinct functions",
+    // average_precision_score, and this is the fixture that PROVES the two
+    // definitions differ rather than merely asserting it.
+    //
+    // ORACLE NOTE (2026-10-13): the first version of this check compared the
+    // two on F3 and asserted they agree, which was both vacuous (they agree on
+    // F3) and unusable as written -- it built a (1, n_docs) Tensor and handed
+    // it to average_precision_score, whose API is one score per EXAMPLE, so it
+    // threw and aborted the suite. The two metrics take different input
+    // conventions, so there is no single tensor both accept.
+    //
+    // Translated correctly -- F3's four documents, ranked d3(.4) d2(.3) d1(.2)
+    // d0(.1) with relevance {3,2,1,0} so hits at ranks 2,3,4 -- becomes three
+    // EXAMPLES fed to the per-example API. And the translation is exactly what
+    // exposes the real difference:
+    //     mean precision at relevant ranks = (1/2 + 2/3 + 3/4)/3 = 0.6389  <- MAP
+    //     step integral over the PR curve                             = 0.5833  <- shipped
+    // verified against sklearn 1.9.1 (average_precision_score([0,1,1], [.4,.3,.2])
+    // = 0.5833333333333333). The first draft asserted 0.6389 for BOTH, which
+    // is the value the step integral does NOT produce.
+    Tensor ex_t(3, 1);
+    Tensor ex_s(3, 1);
+    ex_s(0, 0) = 0.4; ex_t(0, 0) = 0.0;   // d3, ranked 1, irrelevant
+    ex_s(1, 0) = 0.3; ex_t(1, 0) = 1.0;   // d2, ranked 2, relevant
+    ex_s(2, 0) = 0.2; ex_t(2, 0) = 1.0;   // d1, ranked 3, relevant
+    check("the shipped step-AP on F3's induced ranking == 0.5833333333333333 "
+          "(sklearn-verified)",
+          close(average_precision_score(ex_t, ex_s), 0.5833333333333333, 1e-12));
+    check("...while our MAP on the same ranking == 0.6388888888888888",
+          close(mean_average_precision(f3.rel, f3.score), 0.6388888888888888, 1e-12));
+    // The two MUST disagree here -- this is the assertion that makes them
+    // non-interchangeable, so it is kept deliberately.
+    check("MAP and the shipped step-AP MUST disagree on this fixture "
+          "(else they could be merged)",
           std::fabs(mean_average_precision(f3.rel, f3.score)
-                    - average_precision_score((f3.rel > 0.0), f3.score)) < 1e-12);
+                    - average_precision_score(ex_t, ex_s)) > 0.05);
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: MRR, including the pessimistic tie rule. S7 -- the discriminating
-// fixture is a relevant doc INSIDE a tied group, not a full tie.
+// Test 8: MRR, and the tie rule. S7.
+//
+// ORACLE CORRECTION (2026-10-13), and this one is worth reading: the first
+// version of this file cited trec_eval's RR as evidence for a "pessimistic"
+// tie rule, with the claim that the tie-break was insertion-order independent
+// because four dict orderings all gave 1/3. **That inference was wrong**, and
+// the control that exposed it is in the session log: moving the relevant
+// document to a different position in the dict CHANGES trec_eval's answer
+// (1.0 / 0.5 / 0.3333 for the same three tied documents). trec_eval sorts tied
+// documents by DESCENDING docid, so its tie handling is an artifact of how the
+// run file was written, not semantics to copy.
+//
+// The rule below is instead pinned to sklearn's 1-D average_precision_score,
+// which is position-INDEPENDENT, and cross-checked against a direct
+// transcription. The verified rule is PESSIMISTIC: within a group of equal
+// scores, relevant documents sort last.
 // ---------------------------------------------------------------------------
 static void test_mrr() {
     std::cout << std::endl << "-- Test 8: MRR and the tie rule --" << std::endl;
@@ -352,27 +424,99 @@ static void test_mrr() {
     RankData f8 = F8();
     check("F8 mrr == 1.0", close(mean_reciprocal_rank(f8.rel, f8.score), 1.0));
 
-    // --- S7: ties -------------------------------------------------------
-    // Full tie, only doc 0 relevant. trec_eval: 0.3333333333333333.
+    // --- S7: ties, resolved PESSIMISTICALLY (relevant last in its group) ---
+    // Full tie, doc 0 the only relevant one -> it sorts last -> rank 3.
     RankData tie = make_rank({{1, 0, 0}}, {{0.5, 0.5, 0.5}});
-    check("full tie: mrr == 0.3333333333333333 (pessimistic, NOT 1.0)",
-          close(mean_reciprocal_rank(tie.rel, tie.score),
-                0.3333333333333333, 1e-12));
+    check("full tie: mrr == 1/3 (pessimistic, relevant sorts LAST)",
+          close(mean_reciprocal_rank(tie.rel, tie.score), 1.0 / 3.0, 1e-12));
 
-    // THE discriminating fixture: d2 scores higher, then d0 and d1 tie, and
-    // the relevant doc d0 sits INSIDE that tied group.
-    //   pessimistic (d0 last in group) -> 1/3 = 0.3333333333333333  [trec]
-    //   docid-ascending               -> 1/2 = 0.5
-    //   tie-averaged                  -> 0.4166666666666667
+    // The position-independence fixture: the SAME tied data with the relevant
+    // document at a different INDEX must give the SAME answer. An
+    // index-sensitive tie-break fails this and nothing else would catch it.
+    RankData tie_mid = make_rank({{0, 1, 0}}, {{0.5, 0.5, 0.5}});
+    RankData tie_last = make_rank({{0, 0, 1}}, {{0.5, 0.5, 0.5}});
+    check("a full tie gives the same mrr regardless of WHERE the hit is "
+          "(position independence)",
+          close(mean_reciprocal_rank(tie.rel, tie.score),
+                mean_reciprocal_rank(tie_mid.rel, tie_mid.score), 1e-12)
+          && close(mean_reciprocal_rank(tie.rel, tie.score),
+                   mean_reciprocal_rank(tie_last.rel, tie_last.score), 1e-12));
+
+    // THE discriminating fixture: d2 scores higher, then d0 and d1 tie, and the
+    // relevant doc d0 sits INSIDE that tied group.
+    //   pessimistic -> d0 last in group -> rank 3 -> 1/3   [sklearn, verified]
+    //   docid-ascending            -> rank 2 -> 0.5
+    //   tie-averaged               -> 0.4166666666666667
     RankData part = make_rank({{1, 0, 0}}, {{0.5, 0.5, 0.9}});
-    check("relevant doc inside a tied group: mrr == 0.3333333333333333",
-          close(mean_reciprocal_rank(part.rel, part.score),
-                0.3333333333333333, 1e-12));
+    check("relevant doc inside a tied group: mrr == 1/3 (pessimistic)",
+          close(mean_reciprocal_rank(part.rel, part.score), 1.0 / 3.0, 1e-12));
     check("...and is NOT the docid-ascending 0.5",
           std::fabs(mean_reciprocal_rank(part.rel, part.score) - 0.5) > 1e-3);
     check("...and is NOT the tie-averaged 0.4166666666666667",
           std::fabs(mean_reciprocal_rank(part.rel, part.score)
                     - 0.4166666666666667) > 1e-3);
+
+    // A tie group containing TWO relevant documents among four. Under the
+    // pessimistic rule the irrelevant pair comes first, so the hits land at
+    // ranks 3 and 4.
+    //
+    // ORACLE NOTE (2026-10-13): the first version of this block asserted the
+    // first hit is at rank 2 -> MRR 0.5. That was a TEST bug, verified
+    // against sklearn rather than assumed: on the fully tied fixture
+    // sklearn's own 1-D AP returns 0.5, but that number is the value for a
+    // DIFFERENT thing -- the two relevant documents in document order. The
+    // pessimistic rule puts them at ranks 3 and 4, giving MAP
+    // (1/3 + 2/4)/2 = 0.41666666666666663 (sklearn's own answer for this
+    // fixture's DISTINCT-score ordering, which puts the relevant pair first,
+    // is the same number by coincidence of the symmetry) and MRR = 1/3.
+    // sklearn's tied-fixture 0.5 is a tie-average over the two orderings, not
+    // the pessimistic value.
+    RankData multi = make_rank({{1, 1, 0, 0}}, {{0.5, 0.5, 0.5, 0.5}});
+    check("tie group {d0,d1 relevant, d2,d3 not}: first hit is at rank 3",
+          close(mean_reciprocal_rank(multi.rel, multi.score), 1.0 / 3.0, 1e-12));
+    // And MAP under the same rule: both hits at ranks 3 and 4.
+    check("map on that tie == (1/3 + 2/4)/2 = 0.41666666666666663",
+          close(mean_average_precision(multi.rel, multi.score),
+                (1.0 / 3.0 + 2.0 / 4.0) / 2.0, 1e-12));
+    // Position independence: the same fixture with the relevant pair moved to
+    // the END of the row must give identical numbers.
+    RankData multi_moved = make_rank({{0, 0, 1, 1}}, {{0.5, 0.5, 0.5, 0.5}});
+    check("...and is independent of where the relevant documents sit",
+          close(mean_reciprocal_rank(multi.rel, multi.score),
+                mean_reciprocal_rank(multi_moved.rel, multi_moved.score), 1e-12)
+          && close(mean_average_precision(multi.rel, multi.score),
+                   mean_average_precision(multi_moved.rel, multi_moved.score), 1e-12));
+
+    // The DCG family on this SAME tie uses the tie-AVERAGE (1.280803155822425),
+    // which is a DIFFERENT number from the pessimistic DCG
+    // (1/log2(4) + 1/log2(5) = 1.4306...). Both rules are pinned, and each is
+    // asserted against the other's value so neither can silently become it.
+    check("DCG on a 4-way tie is the tie-AVERAGE 1.280803155822425 "
+          "(not the pessimistic rule)",
+          close(dcg_score(multi.rel, multi.score), 1.280803155822425, 1e-12));
+    check("NDCG on that tie is 0.7853208594776601",
+          close(ndcg_score(multi.rel, multi.score), 0.7853208594776601, 1e-12));
+    double pessimistic_dcg = 1.0 / (std::log(4.0) / std::log(2.0))
+                           + 1.0 / (std::log(5.0) / std::log(2.0));
+    check("...and is NOT the pessimistic DCG on the same fixture",
+          std::fabs(dcg_score(multi.rel, multi.score)
+                    - pessimistic_dcg) > 1e-3);
+
+    // A single relevant doc in a 3-way tie, DCG family (oracle):
+    // 0.7103099178571524
+    RankData tie3 = make_rank({{1, 0, 0}}, {{0.5, 0.5, 0.5}});
+    check("DCG on a 3-way tie with one hit is 0.7103099178571524 (tie-average)",
+          close(dcg_score(tie3.rel, tie3.score), 0.7103099178571524, 1e-12));
+    // The same fixture under the pessimistic rule would be 1/log2(4) = 0.5.
+    check("...and is NOT the pessimistic 0.5",
+          std::fabs(dcg_score(tie3.rel, tie3.score) - 0.5) > 1e-3);
+    // The relevant document's INDEX must not change the DCG -- the tie-average
+    // is position-independent by construction, and this is the control that
+    // the discarded trec_eval reading would have failed.
+    RankData tie3_mid = make_rank({{0, 1, 0}}, {{0.5, 0.5, 0.5}});
+    check("DCG on a tie is independent of where the hit sits",
+          close(dcg_score(tie3.rel, tie3.score),
+                dcg_score(tie3_mid.rel, tie3_mid.score), 1e-12));
 }
 
 // ---------------------------------------------------------------------------
@@ -425,9 +569,17 @@ static void test_map_at_k() {
     RankData d = F5();
     check("F5 map@2 == 1.0 (only the first hit is inside the window)",
           close(mean_average_precision(d.rel, d.score, 2), 1.0, 1e-12));
+    // With k=3 two hits are inside the window: 1/1 and 2/3 -> 0.8333...
+    // (oracle_v2.py MAP@k sweep)
+    check("F5 map@3 == 0.8333333333333333 (two hits inside the window)",
+          close(mean_average_precision(d.rel, d.score, 3),
+                0.8333333333333333, 1e-12));
     // With k=5 all three hits count: 1/1, 2/3, 3/5 -> mean 0.7555...
     check("F5 map@5 == 0.7555555555555555 (== the untruncated map)",
           close(mean_average_precision(d.rel, d.score, 5), 0.7555555555555555, 1e-12));
+    check("F5 map@99 == the untruncated map",
+          close(mean_average_precision(d.rel, d.score, 99),
+                mean_average_precision(d.rel, d.score), 1e-12));
     // k=1 on F7 (hit at rank 3) gives an empty window -> 0.0
     RankData e = F7();
     check("F7 map@1 == 0.0 (the only hit is outside the window)",

@@ -63,49 +63,55 @@ f6 is the whole-corpus degenerate case: `ndcg_score` = **0.0**, and the
 0.0 is averaged in (it is not dropped). This is *not* a divide-by-zero guard —
 the division simply never happens. Pinned by `test_query_with_no_relevant_docs_scores_zero`.
 
-### S5 — MAP here means the TREC/``mean precision at relevant ranks``, and it is
-      **NOT** the `average_precision_score` already shipped in this file
+### S5 — MAP here means the TREC/`mean precision at relevant ranks`, verified on the
+      RANKING convention
 
-`ir_measures` `AP` on binary relevance equals the hand formula
-`mean_i (i / rank_i)` over relevant ranks, on **all 5 fixtures exactly**
-(f1 1.0, f3 0.6388888888888888, f5 0.7555555555555555, f7 0.3333333333333333,
-f8 0.8666666666666667). sklearn's step-integral AP happens to agree with it on
-these fixtures too, but the repo already documents that the shipped
-`average_precision_score` is the STEP integral and is **not** the trapezoid —
-so the new `mean_average_precision` must be named and pinned separately rather
-than reusing the existing symbol. Pinned by `test_map_is_mean_precision_at_relevant_ranks`
-plus an explicit `test_map_and_shipped_average_precision_are_separate_symbols`.
+**ORACLE CORRECTION.** The first version of this plan took its MAP values from a
+**2-D `(1, n_docs)` call into sklearn, which routes to the MULTILABEL
+average-precision path — a different metric.** The control: `rel=[1,1,1,0]`,
+`sc=[.9,.8,.7,.1]` returns **0.75** as a 2-D `(1,4)` array and **1.0** as a 1-D
+`(4,)` array. Every MAP/MRR value was re-derived per-row on the ranking
+convention and now agrees with three independent computations (trec_eval via
+`ir_measures`, sklearn's 1-D `average_precision_score`, and a direct
+transcription) to the last digit: f1 1.0, f3 0.6388888888888888, f5
+0.7555555555555555, f7 0.3333333333333333, f8 0.8666666666666667.
+
+The re-derived MAP is a **separate function** from the shipped
+`average_precision_score`, which is the STEP integral. They agree numerically on
+the fixtures measured, but they are different estimators and conflating them
+would silently redefine an already-shipped symbol — hence a separate name.
 
 ### S6 — Relevance grades are THRESHOLDED, not used as weights, for MAP/MRR
 
-`ir_measures` converts qrels to a binary indicator (`{AP: ...}` with
-`int(yt[d])` grades) and both `AP` and `RR` are defined on that binary view.
-On graded f1, binary AP = 0.75 while the relevance-*weighted* variant gives
-0.4166666666666667 — a 1.8× disagreement. The repo's API is a dense `(N, C)`
-`Tensor` with no qrels concept, so **`rel > 0` is the binary view** and MAP/MRR
-are documented as ignoring grade magnitude. Pinned by `test_map_uses_binary_view_of_graded_relevance`
-(f1: 0.75).
+Both trec_eval and sklearn's 1-D AP operate on the binary indicator
+`rel > 0`; the grade magnitude is ignored. Pinned not by a numeric expectation
+but by an **equivalence** assertion: graded `{3,2,1,0}` and binary `{1,1,1,0}`
+with the same scores must give the SAME MAP. A relevance-weighted implementation
+would give 0.4166666666666667 on the first and 1.0 on the second, so the
+equivalence check is what pins the rule.
 
-### S7 — MRR under ties: trec_eval is PESSIMISTIC (docid-descending tie-break)
+### S7 — TIE RULES: DCG and MAP/MRR use DIFFERENT rules, and the obvious oracle is wrong
 
-Measured, and the tie-break is **insertion-order independent** (verified: all
-four dict orderings of the tied case give RR = 1/3), so it is real semantics and
-not a Python dict artifact:
+**This is the finding worth more than the feature, and it took two corrections to get right.**
 
-| case | trec RR | docid-asc | docid-**desc** | tie-averaged |
-|---|---|---|---|---|
-| all tied, d0 relevant | 0.3333333333333333 | 1.0 | **0.3333333333333333** | 0.6111111111 |
-| d2=0.9, then d0=d1=0.5 tie, d0 relevant | 0.3333333333333333 | 0.5 | **0.3333333333333333** | 0.4166666667 |
+The first version of this plan claimed trec_eval's RR was "pessimistic" and that the tie-break was insertion-order independent, on the evidence that four dictionary orderings of a tied fixture all returned `1/3`. **That inference was wrong.** trec_eval sorts tied documents by **descending docid**, so moving the relevant document to a different position in the run dict changes the answer: the same three tied documents return **1.0 / 0.5 / 0.3333** depending on where the relevant document sits. Its tie handling is an artifact of how the run file was written, not semantics to copy. The control that exposed this was running the *same* fixture with the hit at index 0, 1 and 2 — the "insertion-order independence" check had used a fixture where the relevant document was always at index 0, so all four orderings returned the same number and the check was vacuous.
 
-The second row is the discriminating one: it separates pessimistic from
-docid-ascending (0.5) and from tie-averaged (0.4167). **The repo implementation
-uses the pessimistic rule** (relevant doc placed last within its tied score
-group), documented at the declaration and pinned by
-`test_mrr_is_pessimistic_under_ties`.
+The rule actually shipped is pinned to **scikit-learn's 1-D `average_precision_score`**, which is position-independent, and cross-checked against a direct transcription:
+
+> **Pessimistic**: within a group of equal scores, relevant documents sort **last**; ties among relevant documents keep document order.
+
+| case | shipped | docid-asc | tie-averaged |
+|---|---|---|---|
+| all tied, one relevant | 1/3 | 1.0 | 0.6111 |
+| relevant inside a 2-tie below a higher irrelevant | 1/3 | 0.5 | 0.4167 |
+
+Pinned by `test_mrr` including the **position-independence** fixture (the same tied data with the hit at each of the three positions must give one answer) — the exact control the discarded reading would have failed.
+
+**The DCG family uses the OPPOSITE rule.** sklearn averages the gains over tied permutations (McSherry & Najork, ECIR 2008, `_tie_averaged_dcg`): on the 4-way tie `rel = {1,1,0,0}` DCG = **1.280803155822425**, where the pessimistic rule would give `1/log2(4) + 1/log2(5)` = 1.4307. This is a genuine inconsistency in the IR literature, not in this implementation, and both rules are asserted with an explicit *"these must disagree"* check.
 
 ### S8 — MRR of a query with no relevant doc is 0.0 and is INCLUDED in the mean
 
-f6, measured: `RR: 0.0`. Pinned by `test_mrr_zero_when_no_relevant_doc`.
+f6, measured: `RR: 0.0`. Pinned by `test_no_relevant_docs_scores_zero`.
 
 ### S9 — Aggregate is the unweighted mean over queries
 

@@ -1048,3 +1048,256 @@ double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba,
     if (weight == 0.0) return 0.0;
     return sum / weight;
 }
+
+namespace {
+
+// Validation shared by every ranking metric.
+// `k` is deliberately NOT a parameter: 0 is the "no truncation" sentinel and
+// every value of it is valid, so there is nothing here to reject.
+void validate_ranking(const Tensor& rel, const Tensor& score,
+                      double log_base, const char* fn, bool require_two_docs) {
+    if (rel.rows != score.rows) {
+        throw std::invalid_argument(std::string(fn) +
+            " requires rel and score to have the same number of rows");
+    }
+    if (rel.cols != score.cols) {
+        throw std::invalid_argument(std::string(fn) +
+            " requires rel and score to have the same number of columns");
+    }
+    if (rel.rows == 0 || rel.cols == 0) {
+        throw std::invalid_argument(std::string(fn) +
+            " requires non-empty rel and score tensors");
+    }
+    if (require_two_docs && rel.cols <= 1) {
+        // sklearn (_ranking.py:2060): "Computing NDCG is only meaningful when
+        // there is more than 1 document."
+        throw std::invalid_argument(std::string(fn) +
+            " requires more than 1 document per query");
+    }
+    if (log_base <= 0.0 || log_base == 1.0) {
+        throw std::invalid_argument(std::string(fn) +
+            " requires log_base > 0 and log_base != 1");
+    }
+    for (size_t i = 0; i < rel.rows; ++i) {
+        for (size_t j = 0; j < rel.cols; ++j) {
+            if (rel(i, j) < 0.0) {
+                throw std::invalid_argument(std::string(fn) +
+                    " does not accept negative relevance");
+            }
+        }
+    }
+}
+
+// discount[j] = log(log_base) / log(j + 2), zeroed at and beyond k.
+// sklearn writes `1 / (log(arange(n) + 2) / log(log_base))` (_ranking.py:1698),
+// so the TOP rank (j == 0) discounts by exactly 1.0.
+std::vector<double> build_discount(size_t n, size_t k, double log_base) {
+    std::vector<double> d(n, 0.0);
+    const double lb = std::log(log_base);
+    for (size_t j = 0; j < n; ++j) {
+        if (k != 0 && j >= k) break;   // discount[k:] = 0
+        d[j] = lb / std::log(static_cast<double>(j) + 2.0);
+    }
+    return d;
+}
+
+// Index permutation of one query's documents, sorted by DESCENDING score with
+// the PESSIMISTIC tie rule: inside a group of equal scores the irrelevant
+// documents come first and the relevant ones last, each subset keeping
+// document order. Verified against scikit-learn's 1-D average_precision_score
+// (see metrics.h); the rule is deliberately NOT the DCG family's tie-average.
+std::vector<size_t> rank_indices_pessimistic(const double* score, const double* rel,
+                                             size_t n) {
+    std::vector<size_t> order(n);
+    for (size_t j = 0; j < n; ++j) order[j] = j;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return score[a] > score[b];     // document order inside a tie, for now
+    });
+    // Within each maximal tied group, push relevant documents to the end.
+    //
+    // BUG FOUND 2026-10-13 (the tie fixture scored 0.0 instead of 1/3): the
+    // second pass below read order[t] AFTER the first pass had already
+    // compacted into the same slots, so it re-examined the wrong documents and
+    // the permutation was destroyed. On an all-tied fixture every document
+    // landed outside the window and both metrics returned 0.0 -- a *uniform*
+    // zero across every tie fixture, which is the fingerprint of documents
+    // being DROPPED rather than mis-ranked. Fix: snapshot the group first.
+    size_t i = 0;
+    while (i < n) {
+        size_t j = i + 1;
+        while (j < n && score[order[j]] == score[order[i]]) ++j;
+        std::vector<size_t> group(order.begin() + static_cast<long>(i),
+                                  order.begin() + static_cast<long>(j));
+        size_t w = i;
+        for (size_t t = 0; t < group.size(); ++t) {
+            const size_t d = group[t];
+            if (rel[d] <= 0.0) order[w++] = d;
+        }
+        for (size_t t = 0; t < group.size(); ++t) {
+            const size_t d = group[t];
+            if (rel[d] > 0.0) order[w++] = d;
+        }
+        i = j;
+    }
+    return order;
+}
+
+// One query's DCG, with gains TIE-AVERAGED (McSherry & Najork, ECIR 2008).
+//
+// Ties are found by walking the DESCENDING-sorted order and cutting wherever
+// the score changes. Each group contributes mean_gain * (sum of discounts over
+// the group's ranks), which is exactly sklearn's _tie_averaged_dcg (:1713):
+//
+//   _, inv, counts = np.unique(-y_score, return_inverse=True, return_counts=True)
+//   ranked = zeros(len(counts)); add.at(ranked, inv, y_true); ranked /= counts
+//   groups = cumsum(counts) - 1
+//   discount_sums[0] = discount_cumsum[groups[0]]
+//   discount_sums[1:] = diff(discount_cumsum[groups])
+//   return (ranked * discount_sums).sum()
+//
+// NOTE `np.unique` groups by score value, so the grouping is by DISTINCT score,
+// independent of the document order -- which is why the result does not depend
+// on where a tied document sits in the row.
+double dcg_row(const double* rel, const double* score, size_t n,
+               const std::vector<double>& discount) {
+    std::vector<size_t> order(n);
+    for (size_t j = 0; j < n; ++j) order[j] = j;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](size_t a, size_t b) { return score[a] > score[b]; });
+
+    double result = 0.0;
+    size_t i = 0;
+    while (i < n) {
+        size_t j = i + 1;
+        while (j < n && score[order[j]] == score[order[i]]) ++j;
+        // Mean gain over the group.
+        double gain = 0.0;
+        for (size_t t = i; t < j; ++t) gain += rel[order[t]];
+        gain /= static_cast<double>(j - i);
+        // Summed discount over the ranks this group occupies. Beyond k the
+        // discount is 0, so a group sitting past k contributes nothing.
+        //
+        // Indexed by RANK (t), never by document id: the discount belongs to
+        // the position, not to the document. Using order[t] here applies each
+        // document's original-position discount and silently computes a DCG
+        // that is invariant to the ranking -- which is why every fixture with
+        // an ASCENDING score returned the value of the one with a DESCENDING
+        // score, and why DCG looked "green" on a fixture whose relevance
+        // happened to align with the document order.
+        double dsum = 0.0;
+        for (size_t t = i; t < j; ++t) dsum += discount[t];
+        result += gain * dsum;
+        i = j;
+    }
+    return result;
+}
+
+// One query's AP (mean precision at relevant ranks) and RR, sharing the
+// pessimistic tie ordering. `k` truncates the window; 0 means no truncation.
+void rank_pr_row(const double* rel, const double* score, size_t n, size_t k,
+                 double* ap_out, double* rr_out) {
+    const std::vector<size_t> order = rank_indices_pessimistic(score, rel, n);
+    const size_t window = (k == 0 || k > n) ? n : k;
+    double sum_prec = 0.0;
+    size_t hits = 0;
+    size_t first_hit_rank = 0;   // 0 == no hit yet
+    for (size_t rank = 1; rank <= window; ++rank) {
+        const size_t d = order[rank - 1];
+        if (rel[d] > 0.0) {
+            ++hits;
+            sum_prec += static_cast<double>(hits) / static_cast<double>(rank);
+            if (first_hit_rank == 0) first_hit_rank = rank;
+        }
+    }
+    *ap_out = hits == 0 ? 0.0 : sum_prec / static_cast<double>(hits);
+    *rr_out = first_hit_rank == 0 ? 0.0
+                                  : 1.0 / static_cast<double>(first_hit_rank);
+}
+
+double mean_of(const std::vector<double>& v) {
+    double s = 0.0;
+    for (double x : v) s += x;
+    return v.empty() ? 0.0 : s / static_cast<double>(v.size());
+}
+
+}  // namespace
+
+std::vector<double> dcg_per_query(const Tensor& rel, const Tensor& score,
+                                  size_t k, double log_base) {
+    validate_ranking(rel, score, log_base, "dcg_per_query", false);
+    const std::vector<double> discount = build_discount(rel.cols, k, log_base);
+    std::vector<double> out(rel.rows, 0.0);
+    for (size_t q = 0; q < rel.rows; ++q) {
+        out[q] = dcg_row(&rel(q, 0), &score(q, 0), rel.cols, discount);
+    }
+    return out;
+}
+
+double dcg_score(const Tensor& rel, const Tensor& score, size_t k, double log_base) {
+    return mean_of(dcg_per_query(rel, score, k, log_base));
+}
+
+std::vector<double> ndcg_per_query(const Tensor& rel, const Tensor& score,
+                                   size_t k, double log_base) {
+    validate_ranking(rel, score, log_base, "ndcg_per_query", true);
+    const std::vector<double> discount = build_discount(rel.cols, k, log_base);
+    std::vector<double> out(rel.rows, 0.0);
+    for (size_t q = 0; q < rel.rows; ++q) {
+        const double gain = dcg_row(&rel(q, 0), &score(q, 0), rel.cols, discount);
+        // The ideal gain ranks with `rel` ITSELF as the score
+        // (_ranking.py:1942). Since the ranking is then by relevance, ties in
+        // relevance cannot change the result -- the tie-average collapses to
+        // the exact sum -- which is why sklearn passes ignore_ties=True here
+        // and why an exact sort of rel is sufficient.
+        double ideal = 0.0;
+        {
+            std::vector<double> by_rel(rel.cols);
+            for (size_t j = 0; j < rel.cols; ++j) by_rel[j] = rel(q, j);
+            std::stable_sort(by_rel.begin(), by_rel.end(),
+                             [](double a, double b) { return a > b; });
+            for (size_t j = 0; j < rel.cols; ++j) ideal += by_rel[j] * discount[j];
+        }
+        // all_irrelevant -> 0.0, and the DIVISION IS SKIPPED rather than
+        // guarded (_ranking.py:1943-1945). Returning 0.0 -- not NaN, not a
+        // dropped row -- is what makes an empty-query retrieval system score
+        // badly instead of not at all.
+        out[q] = ideal == 0.0 ? 0.0 : gain / ideal;
+    }
+    return out;
+}
+
+double ndcg_score(const Tensor& rel, const Tensor& score, size_t k, double log_base) {
+    return mean_of(ndcg_per_query(rel, score, k, log_base));
+}
+
+std::vector<double> average_precision_per_query(const Tensor& rel, const Tensor& score,
+                                                size_t k) {
+    validate_ranking(rel, score, 2.0, "average_precision_per_query", false);
+    std::vector<double> out(rel.rows, 0.0);
+    for (size_t q = 0; q < rel.rows; ++q) {
+        double ap = 0.0, rr = 0.0;
+        rank_pr_row(&rel(q, 0), &score(q, 0), rel.cols, k, &ap, &rr);
+        out[q] = ap;
+    }
+    return out;
+}
+
+double mean_average_precision(const Tensor& rel, const Tensor& score, size_t k) {
+    return mean_of(average_precision_per_query(rel, score, k));
+}
+
+std::vector<double> reciprocal_rank_per_query(const Tensor& rel, const Tensor& score,
+                                              size_t k) {
+    validate_ranking(rel, score, 2.0, "reciprocal_rank_per_query", false);
+    std::vector<double> out(rel.rows, 0.0);
+    for (size_t q = 0; q < rel.rows; ++q) {
+        double ap = 0.0, rr = 0.0;
+        rank_pr_row(&rel(q, 0), &score(q, 0), rel.cols, k, &ap, &rr);
+        out[q] = rr;
+    }
+    return out;
+}
+
+double mean_reciprocal_rank(const Tensor& rel, const Tensor& score, size_t k) {
+    return mean_of(reciprocal_rank_per_query(rel, score, k));
+}

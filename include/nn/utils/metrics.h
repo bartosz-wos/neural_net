@@ -258,6 +258,133 @@ double classwise_ece(const Tensor& y_true_index, const Tensor& y_proba,
                      size_t n_bins, MulticlassAveraging averaging);
 
 // ---------------------------------------------------------------------------
+// Ranking metrics beyond binary AUC: DCG / NDCG / MAP / MRR
+//
+// The ROC-AUC / average_precision_score functions above take a (N,1) BINARY
+// label column -- one score per EXAMPLE, and the label is 0 or 1. Everything
+// in this section takes a genuinely different input convention: a
+// (N_queries, N_docs) matrix of RELEVANCE GRADES in [0, inf) alongside a
+// matrix of scores. That is the retrieval / ranking setup, not the
+// single-example setup, and no amount of reshaping turns one into the other.
+//
+// Definitions read from the primary sources on 2026-10-13 -- scikit-learn
+// 1.9.1 `sklearn/metrics/_ranking.py` (_dcg_sample_scores :1655,
+// _tie_averaged_dcg :1713, _ndcg_sample_scores :1898) and trec_eval via
+// ir_measures 0.4.3 (AP, RR) as an independent second implementation. The
+// rules a reimplementation gets wrong are each pinned by a named test in
+// tests/test_ranking_metrics.cpp.
+// ---------------------------------------------------------------------------
+
+// DISCOUNTED CUMULATIVE GAIN (Järvelin & Kekäläinen, SIGIR 2002).
+//
+//   DCG@k(p) = sum_{rank=1..k} rel_p(rank) / log_base(rank + 1)
+//
+// The discount is log_base(rank+1) with rank starting at 1, so the TOP rank is
+// discounted by exactly 1.0. Note the indexing: sklearn writes
+// `discount = 1 / (log(arange(n) + 2) / log(log_base))` (_ranking.py:1698),
+// i.e. the array index j maps to rank j+1 and the log argument is j+2. The
+// classic `1/log2(rank)` starting at 0.6309 is an OFF-BY-ONE that gives a
+// plausible but wrong number.
+//
+// k truncates by ZEROING THE DISCOUNT beyond k, which zeroes the gain and the
+// normalizing ideal gain alike. That is why ndcg@k is normalised by the ideal
+// TRUNCATED AT k and not by the full-length ideal. k == 0 is the SENTINEL for
+// "no truncation" (the default), not an error; k > N_docs is allowed and
+// behaves as the full length.
+//
+// TIES: gains are TIE-AVERAGED, not sorted pessimistically. Within a group of
+// equal scores each document's gain is replaced by the group's MEAN gain and
+// the group contributes mean_gain * (sum of the group's discounts) -- the
+// estimator of McSherry & Najork (ECIR 2008, _tie_averaged_dcg :1713), which
+// is what sklearn computes. This makes DCG independent of the order in which
+// tied documents happen to sit in the row. NOTE the contrast with
+// mean_reciprocal_rank below, which resolves ties the other way; the
+// disagreement is a genuine inconsistency in the IR literature and both rules
+// are pinned by tests.
+//
+// rel is (N_queries, N_docs); score is (N_queries, N_docs) and may be any
+// monotone score (a probability, a logit, a decision-function value). Returns
+// the unweighted MEAN over queries.
+double dcg_score(const Tensor& rel, const Tensor& score,
+                 size_t k = 0, double log_base = 2.0);
+
+// NORMALIZED DCG -- DCG divided by the ideal DCG, in [0, 1].
+//
+// The ideal gain is computed by ranking with `rel` ITSELF as the score
+// (_ranking.py:1942), which is what makes it the maximum. A query whose ideal
+// gain is 0 (NOTHING is relevant) scores 0.0 -- the division is skipped, not
+// guarded, and the 0.0 IS INCLUDED in the mean over queries rather than
+// dropped. Dropping it would let a retrieval system buy a higher score by
+// refusing to return anything, which is precisely the degenerate behaviour a
+// ranking metric exists to penalise.
+//
+// Requires N_docs > 1 (sklearn raises otherwise: "Computing NDCG is only
+// meaningful when there is more than 1 document") and rel >= 0.
+double ndcg_score(const Tensor& rel, const Tensor& score,
+                  size_t k = 0, double log_base = 2.0);
+
+// MEAN AVERAGE PRECISION (the TREC / Manning et al. IR book definition):
+// the mean, over the relevant documents, of the precision at that document's
+// rank. Verified against trec_eval's AP on five fixtures to the last digit.
+//
+// This is a DIFFERENT function from the `average_precision_score` shipped
+// above, which is scikit-learn's STEP integral over the PR curve. The two
+// agree on the fixtures measured here, but they are different estimators and
+// conflating them would silently redefine an already-shipped symbol -- hence a
+// separate name. Pinned by test_map_is_mean_precision_at_relevant_ranks.
+//
+// GRADES ARE THRESHOLDED, NOT WEIGHTED: relevance enters as the binary
+// indicator `rel > 0` and the grade magnitude is ignored. This matches trec_eval,
+// which defines AP over a binary qrel view, and it is a real behavioural
+// difference -- on graded relevance {3,2,1,0} the binary view gives 0.75 while a
+// relevance-weighted variant gives 0.4166666666666667.
+//
+// k restricts the ranking window: only hits at rank <= k count. A window with
+// no hits scores 0.0.
+double mean_average_precision(const Tensor& rel, const Tensor& score,
+                              size_t k = 0);
+
+// MEAN RECIPROCAL RANK: the mean, over queries, of 1/rank of the FIRST
+// relevant document. A query with no relevant document scores 0.0 and is
+// INCLUDED in the mean (same reason as ndcg_score).
+//
+// TIES ARE RESOLVED PESSIMISTICALLY: within a group of equal scores, relevant
+// documents are placed as late as possible (irrelevant first; relevant keep
+// their relative document order). Verified against scikit-learn's 1-D
+// `average_precision_score`, which is position-INDEPENDENT and returns 1/3 both
+// when every score is tied with one relevant document and when the relevant
+// document sits inside a two-way tie below a higher-scoring irrelevant one.
+// That separates this rule from the docid-ascending one (which would give 1.0
+// and 0.5) and from the tie-averaged one (0.6111 and 0.4167).
+//
+// A NOTE ON WHY trec_eval IS NOT CITED FOR THIS: trec_eval sorts tied
+// documents by DESCENDING docid, so its RR returns 1.0 / 0.5 / 0.3333 for the
+// same three tied documents depending only on where the relevant document sits
+// in the run file. Its tie handling is an artifact of file bookkeeping, not
+// semantics, so it is deliberately not the oracle here.
+//
+// Note the contrast with dcg_score above, which tie-AVERAGES instead; the
+// disagreement is a genuine inconsistency in the IR literature, not in this
+// file.
+double mean_reciprocal_rank(const Tensor& rel, const Tensor& score, size_t k = 0);
+
+// Per-query forms. Each returns N_queries values in row order, and the
+// aggregate above is exactly their unweighted mean -- asserted by
+// test_aggregate_is_mean_over_queries. Exposed because a per-query score is
+// what a retrieval system actually reports, and because the difference between
+// a good query and a hopeless one is invisible in the mean.
+std::vector<double> dcg_per_query(const Tensor& rel, const Tensor& score,
+                                  size_t k = 0, double log_base = 2.0);
+std::vector<double> ndcg_per_query(const Tensor& rel, const Tensor& score,
+                                   size_t k = 0, double log_base = 2.0);
+std::vector<double> average_precision_per_query(const Tensor& rel,
+                                                const Tensor& score,
+                                                size_t k = 0);
+std::vector<double> reciprocal_rank_per_query(const Tensor& rel,
+                                              const Tensor& score,
+                                              size_t k = 0);
+
+// ---------------------------------------------------------------------------
 // NOT IMPLEMENTED, DELIBERATELY: the "D2" score.
 // ---------------------------------------------------------------------------
 // The expansion queue listed a "D2 score" alongside adaptive and classwise
