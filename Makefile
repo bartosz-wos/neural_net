@@ -224,6 +224,9 @@ $(BUILD_DIR)/test_gmm: $(LIB_OBJS) $(BUILD_DIR)/test_gmm.o
 $(BUILD_DIR)/test_metrics: $(LIB_OBJS) $(BUILD_DIR)/test_metrics.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_calibration_diagnostics: $(LIB_OBJS) $(BUILD_DIR)/test_calibration_diagnostics.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_model_ema: $(LIB_OBJS) $(BUILD_DIR)/test_model_ema.o
 	$(CXX) $^ -o $@
 
@@ -814,7 +817,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_layer_scale $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
+$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -959,6 +962,7 @@ run_tests: tests
 	@echo "=== Running test_contrastive_losses ==="; if ./$(BUILD_DIR)/test_contrastive_losses; then :; else echo "test_contrastive_losses" >> .run_tests_failed; fi
 	@echo "=== Running test_siglip_loss ==="; if ./$(BUILD_DIR)/test_siglip_loss; then :; else echo "test_siglip_loss" >> .run_tests_failed; fi
 	@echo "=== Running test_metrics ==="; if ./$(BUILD_DIR)/test_metrics; then :; else echo "test_metrics" >> .run_tests_failed; fi
+	@echo "=== Running test_calibration_diagnostics ==="; if ./$(BUILD_DIR)/test_calibration_diagnostics; then :; else echo "test_calibration_diagnostics" >> .run_tests_failed; fi
 	@echo "=== Running test_model_ema ==="; if ./$(BUILD_DIR)/test_model_ema; then :; else echo "test_model_ema" >> .run_tests_failed; fi
 	@echo "=== Running test_integrated_gradients ==="; if ./$(BUILD_DIR)/test_integrated_gradients; then :; else echo "test_integrated_gradients" >> .run_tests_failed; fi
 	@echo "=== Running test_shapley ==="; if ./$(BUILD_DIR)/test_shapley; then :; else echo "test_shapley" >> .run_tests_failed; fi
