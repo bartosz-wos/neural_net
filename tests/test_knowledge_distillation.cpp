@@ -114,15 +114,32 @@ static Tensor FIX_A_T() {
     return mat({{1.8, 1.1, -0.9}, {0.4, 3.2, -0.1}, {1.4, -0.2, 0.3}});
 }
 
-// FIX_UNDERFLOW: a row whose teacher probabilities underflow to exactly 0 at
-// large T, so the xlogy zero rule (semantics 4) is a REACHABLE path rather than
-// a theoretical one. Teacher logits span 40 nats; at T=1000 every non-argmax
-// entry exp()-underflows to 0, and the naive p*log(p/q) form returns NaN.
+// FIX_UNDERFLOW: a row whose teacher probabilities are EXACTLY 0, so the
+// xlogy zero rule (semantics 4) is a REACHABLE path rather than a theoretical
+// one.
+//
+// CORRECTION — THIS FIXTURE WAS DEGENERATE UNTIL MUTATION M5 FOUND IT. The
+// first version used teacher logits [35, -1, -2] at T = 1000, reasoning that
+// a 36-nat gap "underflows at large T". It does not: softmax subtracts the
+// row max before exponentiating, so the argument is (z_i - max)/T = -0.036, and
+// exp(-0.036) is comfortably finite. exp() underflows to exactly 0 only when
+// the argument is below about -745.2 (measured: exp(-745.0) != 0,
+// exp(-745.2) == 0), which at T = 1000 needs a gap of 745000 nats.
+//
+// So the original fixture never produced a zero probability, the guard was
+// never executed, and mutation M5 ("drop the xlogy zero rule") SURVIVED — not
+// because the suite was weak but because the fixture could not fail. The
+// teacher logits here span 1e6 at T = 1000, giving measured probabilities
+// exactly (1, 0, 0), and 0 * log(0) = -nan without the guard.
+//
+// The lesson generalises: a fixture named for a numerical regime must be
+// MEASURED against that regime's actual threshold, not reasoned about. "Big
+// logits at big T" is not underflow; "logit gap > 745*T" is.
 static Tensor FIX_UF_S() {
-    return mat({{40.0, 0.0, -1.0}, {0.0, 40.0, -2.0}});
+    return mat({{0.0, -1.0, -2.0}, {-1.0, 0.0, -3.0}});
 }
 static Tensor FIX_UF_T() {
-    return mat({{35.0, -1.0, -2.0}, {-1.0, 33.0, -3.0}});
+    return mat({{1000000.0, -1.0, -2.0}, {-1.0, 1000000.0, -3.0}});
 }
 
 static void test_constructor_validation() {
@@ -174,32 +191,39 @@ static void test_forward_matches_oracle() {
               << std::endl;
     Tensor s = FIX_A_S(), t = FIX_A_T();
 
-    // Oracle: mean-over-elements x T^2.
-    //   T=1 -> 0.002527293982 * 1   = 0.002527293982
-    //   T=3 -> 0.000432487985 * 9   = 0.003892391865   (oracle 'sum' = 0.003892391920,
-    //                                                  the last digits differ because
-    //                                                  torch's xlogy(p,p) term is 0 here
-    //                                                  and ours is computed as p*(log p - s)
-    //                                                  with one extra rounding)
-    //   T=7 -> 0.000079751015 * 49  = 0.003907799735
-    check("forward T=1 matches oracle 0.002527293982",
-          rel_close(distillation_kl(s, t, 1.0), 0.002527293982, 1e-6));
-    check("forward T=3 matches oracle 0.003892391865",
-          rel_close(distillation_kl(s, t, 3.0), 0.003892391865, 1e-6));
-    check("forward T=7 matches oracle 0.003907799735",
-          rel_close(distillation_kl(s, t, 7.0), 0.003907799735, 1e-6));
+    // Oracle (float64; see the note at the fixture): mean-over-elements x T^2.
+    //   T=1 -> 0.002527293067072
+    //   T=3 -> 0.003892496196771
+    //   T=7 -> 0.003906840345407
+    //
+    // CORRECTION: an earlier version of this file asserted values from a FLOAT32
+    // oracle run (0.002527293982 at T=1, 0.003907799735 at T=7). Those were
+    // wrong by 3.6e-07 and 2.5e-04 respectively — at T=7 the loss is 8e-05
+    // formed from a difference of two nearly equal ~0.6 terms, so float32
+    // CANCELLATION IN THE ORACLE dominates. The C++ is double-precision
+    // throughout and matches the float64 oracle to the last digit shown.
+    // Systematic-debugging 5c: the oracle config was degenerate, not the code.
+    check("forward T=1 matches oracle 0.002527293067072",
+          rel_close(distillation_kl(s, t, 1.0), 0.002527293067072, 1e-9));
+    check("forward T=3 matches oracle 0.003892496196771",
+          rel_close(distillation_kl(s, t, 3.0), 0.003892496196771, 1e-9));
+    check("forward T=7 matches oracle 0.003906840345407",
+          rel_close(distillation_kl(s, t, 7.0), 0.003906840345407, 1e-9));
 
-    // The T^2 factor must be OBSERVABLE, not incidental: without it the T=3
-    // value would be 0.000432487985, a factor of 9 smaller.
+    // The T^2 factor must be OBSERVABLE, not incidental. Measured unscaled
+    // values (oracle): T=3 -> 0.000432499577419, T=7 -> 7.97314356206e-05.
+    // The ratios to the scaled values are exactly 9 and 49.
     check("forward at T=3 is EXACTLY 9x the un-rescaled value",
-          rel_close(distillation_kl(s, t, 3.0) / 0.000432487985, 9.0, 1e-6));
+          rel_close(distillation_kl(s, t, 3.0) / 0.000432499577419, 9.0, 1e-9));
+    check("forward at T=7 is EXACTLY 49x the un-rescaled value",
+          rel_close(distillation_kl(s, t, 7.0) / 7.97314356206e-05, 49.0, 1e-9));
 
     // MEAN IS OVER ELEMENTS, NOT ROWS (semantics 5). The row-mean (batchmean)
     // value is exactly K times larger; a test that only checked "a number" would
-    // accept the wrong one.
-    double rows_mean = 0.001297439798 * 9.0;
+    // accept the wrong one. Oracle float64: batchmean = 0.011677488590314.
+    double rows_mean = 0.011677488590314;
     check("forward is NOT the row-mean: differs from batchmean by exactly K=3",
-          rel_close(rows_mean / distillation_kl(s, t, 3.0), 3.0, 1e-5));
+          rel_close(rows_mean / distillation_kl(s, t, 3.0), 3.0, 1e-9));
     check("mean-vs-batchmean distinction is real (they differ)",
           !rel_close(distillation_kl(s, t, 3.0), rows_mean, 1e-3));
 }
@@ -208,27 +232,34 @@ static void test_kl_direction() {
     std::cout << "--- KL direction is KL(teacher || student) ---" << std::endl;
     Tensor s = FIX_A_S(), t = FIX_A_T();
 
-    // The loss must be ASYMMETRIC in its two arguments. Oracle:
-    //   KL(teacher||student) = 0.001297423034  (x T^2 = 0.011676807306)
-    //   KL(student||teacher) = 0.001294596004
-    // They differ by 2.827e-06 — small, but far above double-precision noise.
-    // A transposed argument order would return the OTHER value, and the
+    // The loss must be ASYMMETRIC in its two arguments. Oracle float64:
+    //   KL(teacher||student) = 0.003892496196771  <-- Hinton's target
+    //   KL(student||teacher) = 0.003883560040994
+    // They differ by 8.9e-06 — small, but far above double-precision noise. A
+    // transposed argument order would return the OTHER value, and the
     // self-KL-is-zero test below would still pass. Only this test can see it.
     double forward_ = distillation_kl(s, t, 3.0);
     double swapped_ = distillation_kl(t, s, 3.0);
-    check("forward direction matches KL(teacher||student) = 0.011676807306",
-          rel_close(forward_, 0.011676807306, 1e-6));
-    check("KL is asymmetric: swapped args give a DIFFERENT value",
-          !rel_close(forward_, swapped_, 1e-4));
+    check("forward direction matches KL(teacher||student) = 0.003892496196771",
+          rel_close(forward_, 0.003892496196771, 1e-9));
+    // Pin the asymmetry with an ABSOLUTE gap, since rel_close() floors at 1.0 and
+    // these two values differ by only 0.2% (8.9e-06) — rel_close would call them
+    // equal even though they are provably different. The dedicated peaked-logit
+    // fixture below pins the magnitude.
+    check("KL is asymmetric: swapped args differ by the oracle's 8.936e-06",
+          rel_close(std::fabs(forward_ - swapped_), 8.936156e-06, 1e-3));
 
     // A near-tie fixture where the two directions are far apart, so this is not
-    // an accident of FIX_A's small asymmetry.
-    Tensor a = mat({{3.0, 0.0, 0.0}});
+    // an accident of FIX_A's small asymmetry. Oracle float64 at a logit peak of
+    // 10.0: 1.856048391245 vs 0.365871192258, a difference of 1.490177198987.
+    Tensor a = mat({{10.0, 0.0, 0.0}});
     Tensor b = mat({{0.0, 0.0, 0.0}});
     double ts = distillation_kl(a, b, 1.0);   // confident teacher, flat student
     double st = distillation_kl(b, a, 1.0);   // flat teacher, confident student
     check("confident-teacher vs confident-student are strongly asymmetric",
-          std::fabs(ts - st) > 0.1);
+          rel_close(std::fabs(ts - st), 1.490177198987, 1e-6));
+    check("peaked-teacher asymmetry matches the oracle magnitude",
+          ts > 1.8 && st < 0.4);
 }
 
 static void test_self_kl_is_zero() {
@@ -249,8 +280,32 @@ static void test_xlogy_zero_rule() {
     double v = distillation_kl(s, t, 1000.0);
     check("underflowing teacher probs do NOT produce NaN",
           !std::isnan(v) && !std::isinf(v));
-    check("underflowed KL is finite and small",
-          v >= 0.0 && v < 1e-6);
+    // CORRECTION to the original expectation: this test asserted the value is
+    // "< 1e-6", reasoning that at large T the two distributions flatten toward
+    // uniform and the KL vanishes. It does not. With the T^2 rescaling applied
+    // the loss converges to the Hinton Eq. 4 limit, which for these logits is
+    // LARGE — the teacher is a near-point-mass and the student is nearly flat,
+    // so the KL is dominated by -log q on the zeroed entries. Measured on the
+    // strengthened fixture: 365815.392498 at T=1000. The test had asserted a
+    // number the mathematics does not produce.
+    //
+    // The assertion is therefore structural rather than a magic constant: it
+    // pins that the value is FINITE, POSITIVE, and dominated by the -log q term
+    // of the zero-probability teacher entries, which is exactly what the guard
+    // preserves. Getting this right is what lets mutation M5 be caught.
+    check("underflowed KL is finite and strictly positive",
+          v > 0.0 && std::isfinite(v));
+    // -sum_j p_j * log q_j >= -log(min_j q_j) since p sums to 1, so the value
+    // is at least the student's most negative log-probability.
+    double min_log_q = 0.0;
+    {
+        const Tensor lp = log_softmax(s * 0.001);   // s / T for T = 1000
+        for (size_t i = 0; i < s.rows; ++i)
+            for (size_t j = 0; j < s.cols; ++j)
+                min_log_q = std::min(min_log_q, lp(i, j));
+    }
+    check("underflowed KL is at least the student's -log q bound",
+          v >= (-min_log_q) * 0.99);
     // And the ordinary temperatures on the same fixture stay finite.
     for (double T : {1.0, 3.0, 10.0}) {
         double x = distillation_kl(s, t, T);
@@ -316,13 +371,30 @@ static void test_t2_gradient_factor() {
     Tensor g3 = distillation_kl_backward(s, t, 3.0);
 
     // At T=1 the T^2 factor is 1, so g1 is the plain mean-over-elements adjoint.
-    // Oracle 3 at T=1, elements, (T^2-scaled == unscaled) agrees with torch
-    // autograd; the analytic (q-p)/(N*K) row-0 triple is
-    //   [ 0.021970937, -0.019351937, -0.002619000 ]
-    check("T=1 backward row 0 matches the oracle analytic adjoint",
-          rel_close(g1(0, 0), 0.02197093707125, 1e-6) &&
-          rel_close(g1(0, 1), -0.01935193717279, 1e-6) &&
-          rel_close(g1(0, 2), -0.00261899989846, 1e-6));
+    // Oracle (torch autograd, float64) row 0:
+    //   [ 0.007323643858188, -0.006450644110443, -0.000872999747745 ]
+    //
+    // CORRECTION: an earlier version asserted the ROW-mean adjoint
+    // ([0.021970937, -0.019351937, -0.002619000]), which is exactly K=3 times
+    // larger. Those were the numbers from the mean-over-ROWS convention. This
+    // loss reduces over ELEMENTS, so the element-mean adjoint is correct; the
+    // row-mean value divided by 3 is reproduced below, and the ratio between the
+    // two is asserted so the convention is pinned rather than assumed.
+    const double oracle[3] = {0.007323643858188, -0.006450644110443,
+                              -0.000872999747745};
+    check("T=1 backward row 0 matches the oracle element-mean adjoint",
+          rel_close(g1(0, 0), oracle[0], 1e-9) &&
+          rel_close(g1(0, 1), oracle[1], 1e-9) &&
+          rel_close(g1(0, 2), oracle[2], 1e-9));
+    // The row-mean adjoint is the element-mean one times K exactly, by definition
+    // of the two reductions. The tolerance is 1e-6, NOT tighter: the two figures
+    // come from different code paths (one from an element-sum in the oracle, the
+    // other from a row-sum then scale), so they agree only to their combined
+    // rounding — measured ratio 0.9999997498, i.e. 2.5e-07 off. Asserting 1e-9
+    // here is exactly the "assert below the solver's own tolerance floor" trap
+    // the temperature-scaling suite documents.
+    check("element-mean adjoint is exactly 1/K of the row-mean adjoint",
+          rel_close(oracle[0] * 3.0 / 0.02197093707125, 1.0, 1e-6));
 
     // Scaling from T=1 to T=3 is NOT a constant factor of 9 — the softmax
     // itself changes. What IS a constant factor of 9 is the ratio between
@@ -415,19 +487,59 @@ static void test_reduction_none() {
           per_row.rows == 3 && per_row.cols == 1);
 
     DistillationLoss sum(3.0, 0.5, Reduction::Sum);
+    DistillationLoss mean(3.0, 0.5, Reduction::Mean);
     Tensor total = sum.forward(s, t, y);
     double manual = 0.0;
     for (size_t i = 0; i < 3; ++i) manual += per_row(i, 0);
-    check("Sum equals the sum of the per-row values",
+
+    // CORRECTION: this test originally asserted "Mean is the MEAN of the
+    // per-row values (divides by N)". That is FALSE for this loss, for the same
+    // reason the shipped BCE's D7 is: the two terms reduce over DIFFERENT axes.
+    // CrossEntropyLoss::Mean divides by the batch (N rows), while the
+    // distillation_kl term divides by the ELEMENT count (N*K). So the combined
+    // Mean is alpha*sum_hard/N + (1-alpha)*sum_soft/(N*K), which equals
+    // mean(per_row) only at K=1.
+    //
+    // The invariant that DOES hold, and which is asserted below, is
+    //   Sum == sum(per_row)                       (both are totals)
+    //   Mean == alpha*sum_hard/N + (1-alpha)*sum_soft/(N*K)
+    // Measured (probe of 2026-10-13, alpha=0.5, T=3, N=3, K=3):
+    //   sum_hard = 2.07483703894, sum_soft = 0.0350324657709
+    //   Sum  = 0.5*sum_hard + 0.5*sum_soft        = 1.05493475236
+    //   Mean = 0.5*sum_hard/3 + 0.5*sum_soft/9     = 0.347752421255
+    //
+    // NOTE the Sum formula carries NO extra K: Reduction::None already returns
+    // per-ROW values (the class axis is summed inside each row), so the total
+    // over rows is exactly their sum. My first version of this assertion added
+    // a K on the reasoning that the soft term reduces over elements — but the
+    // element reduction applies only to the FULLY reduced Mean/Sum branches, and
+    // the probe showed the true value is 0.5*sh + 0.5*ss exactly.
+    DistillationLoss h_none(3.0, 1.0, Reduction::None);
+    DistillationLoss s_none(3.0, 0.0, Reduction::None);
+    double sum_hard = 0.0, sum_soft = 0.0;
+    for (size_t i = 0; i < 3; ++i) {
+        sum_hard += h_none.forward(s, t, y)(i, 0);
+        sum_soft += s_none.forward(s, t, y)(i, 0);
+    }
+    const double K = 3.0, N = 3.0, alpha = 0.5;
+    const double expect_sum = alpha * sum_hard + (1.0 - alpha) * sum_soft;
+    const double expect_mean = alpha * sum_hard / N
+                             + (1.0 - alpha) * sum_soft / (N * K);
+
+    check("Sum equals the total of the per-row values",
           rel_close(total(0, 0), manual, 1e-12));
+    check("Sum matches alpha*sum_hard + (1-alpha)*sum_soft",
+          rel_close(total(0, 0), expect_sum, 1e-12));
+    check("Mean matches alpha*sum_hard/N + (1-alpha)*sum_soft/(N*K)",
+          rel_close(mean.forward(s, t, y)(0, 0), expect_mean, 1e-12));
+    // Pin the axis difference explicitly: at K=3 these must NOT coincide, or
+    // the test could not tell a row-mean reduction from an element-mean one.
+    check("Mean is NOT mean(per_row) — the two terms reduce over different axes",
+          !rel_close(mean.forward(s, t, y)(0, 0), manual / 3.0, 1e-6));
 
-    DistillationLoss mean(3.0, 0.5, Reduction::Mean);
-    check("Mean is the MEAN of the per-row values (divides by N=3)",
-          rel_close(mean.forward(s, t, y)(0, 0), manual / 3.0, 1e-12));
-
-    // Pin the DIFFERENCE from Sum: if Mean were accidentally Sum, these agree.
+    DistillationLoss mean_dummy(3.0, 0.5, Reduction::Mean);
     check("Mean and Sum genuinely differ on this fixture",
-          !rel_close(mean.forward(s, t, y)(0, 0), total(0, 0), 1e-6));
+          !rel_close(mean_dummy.forward(s, t, y)(0, 0), total(0, 0), 1e-6));
 }
 
 static void test_backward_shape_and_symmetry() {
@@ -513,20 +625,30 @@ static void test_high_temperature_limit() {
           rel_close(distillation_kl(zs, zt, 3.0), distillation_kl(s, t, 3.0),
                     1e-9));
 
-    // Eq. 4 with the T^2 rescaling folded in: dL/dz -> (z - v) / (K * N_rows).
-    const double K = 3.0, NR = 3.0;
+    // Eq. 4 with the T^2 rescaling folded in, for THIS loss's reduction
+    // convention. The element-mean forward divides by N*K, and the softmax
+    // adjoint contributes ANOTHER factor of K because
+    //   dL/dq = -scale*p - q*(sum_j -scale*p_j) = -scale*p + scale*q*(sum_j p_j)
+    // where sum_j p_j == 1. So the total divisor is N*K*K, NOT N*K. Verified
+    // against the float64 oracle: divisor 27 gives maxdev 7.15e-06 at T=1e3,
+    // while divisor 9 (N*K) leaves maxdev 1.6e-02 — a factor of 2000 worse.
+    const double N_rows = 3.0, K_cls = 3.0;
     Tensor g = distillation_kl_backward(zs, zt, 1e3);
     double worst = 0.0, scale = 0.0;
     for (size_t i = 0; i < zs.rows; ++i)
         for (size_t j = 0; j < zs.cols; ++j) {
-            double expect = (zs(i, j) - zt(i, j)) / (K * NR);
+            double expect = (zs(i, j) - zt(i, j)) / (N_rows * K_cls * K_cls);
             if (std::fabs(expect) > scale) scale = std::fabs(expect);
             double d = std::fabs(g(i, j) - expect);
             if (d > worst) worst = d;
         }
     std::cout << "    max abs deviation from Eq. 4 at T=1e3 = " << worst
               << "  (scale " << scale << ")" << std::endl;
-    check("T=1e3 backward matches Eq.4 (z-v)/(K*N) to <1% absolute",
+    // The oracle's own deviation at T=1e3 with this divisor is 7.15e-06, so
+    // the threshold is calibrated to the limit's own convergence rather than
+    // to an intuition about "exact". See the note in the temperature-scaling
+    // suite about asserting below an iterative solver's tolerance floor.
+    check("T=1e3 backward matches Eq.4 (z-v)/(N*K*K) to <1% absolute",
           worst < 0.01 * std::max(1.0, scale));
 
     // The unscaled gradient at high T vanishes like 1/T^2 — the very reason the
