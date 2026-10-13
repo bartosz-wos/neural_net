@@ -206,7 +206,23 @@ double fit_temperature(const Tensor& logits, const Tensor& labels,
         }
     }
 
-    // Always respect the requested bracket.
+    // DEFENSIVE: best_T is initialised to t_min and thereafter only ever
+    // assigned t_max or exp(mid) for mid in [lo, hi] — i.e. already inside
+    // [t_min, t_max]. The clamp below is therefore UNREACHABLE.
+    //
+    // It is kept anyway, and this comment says why, because the mutation
+    // harness proved it: M7 ("drop the result clamp") SURVIVES, and a survivor
+    // is normally a question about the tests. Here the probe showed the
+    // mutation is genuinely INERT — removing the line changes no output on any
+    // fixture (the unclamped fit still returns 2.0 on a bracket that excludes
+    // the optimum, and still returns t_min on a separable set). The TDD skill's
+    // inert-mutation escape hatch applies, and it must be justified by
+    // measurement rather than assumed; the measurement is recorded in the
+    // harness as run_mutation_expect_inert.
+    //
+    // If a future change lets best_T escape the bracket, this line becomes the
+    // single place that prevents an out-of-range temperature from reaching the
+    // caller, so it is not redundant in the maintenance sense.
     if (best_T < t_min) best_T = t_min;
     if (best_T > t_max) best_T = t_max;
     return best_T;
