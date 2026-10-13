@@ -5,41 +5,26 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- 2026-10-13: the ideas list is DRAINED again. Ranking metrics (DCG/NDCG/
-     MAP/MRR) was the last unpopped bullet and shipped today; the remaining
-     three below (knowledge distillation, adversarial robustness, temperature
-     scaling) were never popped and are still candidates.
+<!-- 2026-10-13: temperature scaling SHIPPED (see ## Done); the ideas list is
+     DRAINED again. Two candidates remain unpicked:
 
      VERIFIED STILL ABSENT by content grep on 2026-10-13:
        grep -ril 'knowledge_distill\|teacher'  include/ -> only unrelated hits
        grep -ril 'adversarial\|fgsm\|pgd'        include/ -> 0
-       grep -ril 'temperature_scaling\|TemperatureScale' include/ -> 0
 
      - **Knowledge distillation** (Hinton, Vinyals, Dean, arXiv:1503.02531) --
        KL divergence between teacher and student softened distributions at
        temperature T, plus the T^2 rescaling on the gradient. Needs no new
        model: the repo has a `Model` and now has `log_softmax` public, so it
        is a loss, not a layer. Pairs naturally with the just-shipped losses.
+       -> NEXT TO POP. Note the overlap: temperature_scaling.{h,cpp} shipped
+          today already provides the T and the 1/T^2 gradient convention, so
+          this should reuse them rather than re-derive the softened KL.
      - **Adversarial robustness** (Madry et al. arXiv:1706.06083, FGSM/PGD) --
        single-sign and multi-step gradient ascent on the input. Unusually
        cheap here: `Layer::backward` already RETURNS dL/d(input), so an attack
        step is a sign of an ordinary backward pass, and adversarial training
        is just a perturbed training loop.
-     - **Temperature scaling** (Guo et al. arXiv:1707.06552) -- the standard
-       post-hoc calibration fix, now that `metrics.cpp` ships the calibration
-       curve and ECE to measure it with. Without the metric it is
-       unmeasurable, which is why it was not worth building before today.
-     - **Ranking metrics beyond binary AUC** (NDCG, MAP, MRR) -- SHIPPED
-           2026-10-13; see ## Done.
-         - **Calibration diagnostics beyond ECE** (adaptive ECE, class-ECE) --
-       follow-ons to the shipped `expected_calibration_error`, each one a
-       variation on the bin-weighting rule that is now already written.
-       <!-- NOTE 2026-10-12: POPPED. D2 was DROPPED from this item -- it is
-            not named in the paper this metric family comes from and no
-            primary definition could be located; see the ## Done entry for
-            the full record. What shipped is adaptive ECE / thresholded ACE
-            (Nixon arXiv:1904.01685) and classwise-ECE (Kull arXiv:1910.12656
-            Eq. 4). -->
 
 <!-- popped 2026-10-12: Calibration diagnostics beyond ECE (adaptive ACE /
      thresholded TACE, classwise-ECE; D2 dropped -- see Done) -->
@@ -182,6 +167,30 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Temperature scaling** (Guo, Pleiss, Sun, Weinberger — "On Calibration of Modern Neural Networks", ICML 2017, arXiv:**1706.04599**) — **the queue's arXiv ID was WRONG.** `EXPANSION_QUEUE.md` recorded `arXiv:1707.06552`; the arXiv API returns *"Towards a scientific blockchain framework for reproducible data analysis"* for that ID (verified 2026-10-13). The correct ID is **1706.04599**. The queue's own reason for deferring the item was the best part of it — *"Without the metric it is unmeasurable, which is why it was not worth building before today"* — and that is exactly right: `metrics.cpp` shipped `expected_calibration_error` two sessions ago, which turned this from an unmeasurable transform into a one-parameter fit with an objective. Implemented in `include/nn/utils/temperature_scaling.{h,cpp}` as `temperature_scale`, `temperature_nll`, `temperature_nll_grad`, `fit_temperature`, `calibrate_logits` — model-free, so it composes with any classifier in the repo. **68/68 checks pass, 7/8 mutations caught + 1 verified-inert by differential probe, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, no new failures in the full aggregate run.**
+
+  **THE PAPER'S HEADLINE CLAIM ABOUT ITS OWN OBJECTIVE DID NOT SURVIVE MEASUREMENT, AND THAT CHANGED THE IMPLEMENTATION.** Sec. 4.2 says temperature scaling "amounts to a one-dimensional **convex** optimization problem." Checked against scipy on five fixtures over a 3000-point grid, `L(T)` is **unimodal but not convex in `T`, not convex in `log T`, and not convex in `1/T`** — three of five fixtures fail the convexity test in all three parameterisations. So the search is a **golden-section line search on `log T`**, which needs only unimodality; a Newton or gradient step would have had no convexity guarantee to stand on. Searching `log T` is also forced by the data: the measured optima span `T* = 0.036` to `T* = 11.695`, and a symmetric bracket in `T` cannot represent both. **The paper's *recommendation* (line search) survives; its *justification* (convexity) does not, and the recommendation is the part worth keeping.**
+
+  **Two grid "sign changes" were diagnostic artefacts, not second modes** — one was a single sample straddling the minimum with `|dL| ~ 1e-7`, the other had the minimum inside the first cell. The first version of the unimodality check counted slope sign changes and reported "not unimodal" on two fixtures. *A diagnostic is only as good as the threshold it uses to decide what counts as a signal, and a floor on `|dL|` relative to `max|L|` is not optional.*
+
+  **The oracle caught TWO sign/index errors in my own work before a line of C++ was written, and one generalises to any softmax-adjacent feature.** Both came from centered FD disagreeing by a **clean, unmistakable ratio** rather than by "a bit":
+  1. **`dL/dT` with the bracket reversed**: `rel = 2.000000` on all five fixtures, every one. `dL/dT = (1/(nT²)) Σᵢ [z_{i,yᵢ} − Σⱼ pⱼ zⱼ]` — the true-class logit **minus** the softmax-weighted mean. Reversed is exactly `−dL/dT`, so the ratio is exactly 2. The suite asserts `ana * fd > 0.0` alongside the tolerance for exactly this reason: a tolerance check alone would not catch a pure sign flip where both sides are small.
+  2. **The `K=2` sigmoid identity, got wrong twice.** `p₁ = softmax(z/T)[1]` is `sigmoid((z₁−z₀)/T)` = `1/(1+exp((z₀−z₁)/T))`. My first version put the negation in the exponent instead of in the sigmoid and matched `p[:,0]`; the second matched neither. Now pinned by `test_binary_matches_sigmoid` at three temperatures. *An algebraic identity written from memory is a guess wearing the costume of a derivation.*
+
+  **One fixture trap that would silently invalidate any "T > 1" assertion.** At `T = 1`, `p` is peaked on the argmax, so `dL/dT ≈ (1/n) Σᵢ [z_{i,yᵢ} − z_{i,argmax_i}]`: a **correct** row contributes ≈ 0 (its label *is* the argmax) and an **error** contributes `−gap`. **`T` only rises above 1 when confident ERRORS outweigh correct rows.** My first `T > 1` fixture had `label == argmax` on every row — perfectly separable — and the oracle reported `T* = 0.0675` with `NLL = 0`, which is the `T → 0` point-mass limit from Sec. 4.2, not a calibration result. A perfectly separable set always fits by sharpening, so *a fixture asserting softening must contain errors with a large argmax-vs-true gap*; every such fixture here carries that note at its definition.
+
+  **The shipped suite has a fixture with a CLOSED-FORM optimum, which is what let the end-to-end test be an assertion instead of a hope.** With equal logit margins `m`, `K = 3`, and exactly 2/3 of rows labelled correctly, `L(T) = −(2/3)s + log(eˢ+2)` gives `u/(u+2) = 2/3`, hence `u = 4` and **`T* = m / ln 4 = 2.164042561333`** exactly, independent of any optimiser (scipy agrees to 5e-8). At that `T` the top-label confidence equals the accuracy exactly, so **ECE goes from 0.2427763318 to 0**. The end-to-end test therefore asserts a 0.24 ECE reduction against a metric the repo already ships, rather than the arbitrary `> 0.02` threshold my first draft invented — which the oracle showed was *not achievable even at the true optimum* (0.0117), so it was a badly chosen assertion, not a bug in the code.
+
+  **Two TEST bugs, in both cases the implementation was right — the third and fourth time in this repo that the TDD skill's "the test is not automatically right" row has been the correct diagnosis.**
+  1. **A non-vacuity guard that was mathematically IMPOSSIBLE, not merely unmet.** Test 4 asserted "the inverted op `softmax(z·T)` WOULD flip a prediction", intending to prove the suite discriminates divide from multiply. But multiplying by any positive scalar also preserves argmax — measured: **0 flips in 20 000 random near-tie trials**. The guard could never pass and the test could never distinguish the two ops. It is removed, and the comment now says plainly that this test pins a property **true of both ops**, with the discrimination living in Test 3 (which pins the probability *values* against scipy and asserts the inverted op gives a different number). *A guard that asserts the thing under test is impossible is worse than no guard: it trains the reader to believe a test proves something it does not.*
+  2. **An assertion set below the optimiser's own tolerance floor.** "Calibration is EXACT (ECE → 0)" asserted `< 1e-9` and failed at 1.4e-9. Measured: ECE moves ~1e-9 per ~1e-9 relative error in `T`, and a golden section stopping at a 1e-12-wide `log T` bracket leaves `T` accurate to ~1e-8. The code was converging correctly and the threshold was wrong. Now `< 1e-6`, with the closed-form `T` match asserted at 1e-6 **relative** — the meaningful statement. *A numeric assertion on the output of an iterative solver must be calibrated to that solver's convergence, not to an intuition about "exact".*
+
+  **One REAL implementation bug, caught by the test written before it: the search never evaluated its own bracket endpoints.** `fit_temperature` tracked only interior midpoints, so on a perfectly separable validation set — where the NLL is monotone toward `T → 0` and reaches exactly 0 at `t_min` — it returned the golden-section midpoint **5.8e-2 where `t_min = 1e-2` was the true minimiser**. The fix evaluates `t_min` and `t_max` first and only lets a strictly better interior point displace them; ties resolve to the endpoint, because in the degenerate case the endpoint *is* the minimiser and a tie is not a coin flip, it is the answer. The mutation that finally pinned it — **M8 ("never evaluate the endpoints")** — was written *after* the fix, from the diagnosis, and is caught by exactly 2 assertions.
+
+  **M7 is the first VERIFIED-INERT mutation in this repo, and proving it took a harness function rather than a sentence.** The final clamp `if (best_T < t_min) best_T = t_min;` is unreachable — `best_T` is initialised to `t_min` and thereafter only ever assigned `t_max` or `exp(mid)` for `mid ∈ [lo,hi]`, so it cannot leave the bracket. A first harness reported it as `MUT-SURVIVED`, indistinguishable from a real test gap, so rather than waving it away it was **measured**: `tests/probe_inert_m7.cpp` runs the fit over all four assignment paths (interior optimum, both boundaries, bracket excluding the optimum) and the harness compares its output **mutated vs pristine, bit-for-bit**. The verdict function `run_mutation_expect_inert` **inverts** the criterion — it fails if the suite catches the mutation *or* if any output differs — so a wrong "inert" claim cannot survive. The clamp is kept, with a comment recording it as a maintenance-time guard rather than live logic. *The TDD skill's inert-mutation escape hatch is only legitimate when the inertness is measured; the point of inverting the verdict is that "provably changes nothing" is otherwise just an assertion of convenience.*
+
+  **The mutation harness carried all four defences that earlier sessions in this repo had to learn the hard way, and the fourth fired on its first run.** (1) Baseline taken once, before any mutation, and **asserted pristine** by grepping five markers that exist only in the correct implementation — a harness that snapshots after mutating will eventually restore a mutant over correct code (Grad-CAM session). (2) **Relative** `make` targets plus an mtime guard, because an absolute target silently reports "up to date" and never rebuilds — that bug produced 7 false `MUT-SURVIVED` in the metrics session. (3) `diff -q` after every `sed`, with `MUT-NOOP` reported separately from `MUT-SURVIVED`. (4) **Compile failure is `MUT-BROKEN`, never `MUT-CAUGHT`** — and M7's first form used a bare `X` as the sed replacement, leaving a dangling statement that broke the build. The harness reported it as BROKEN rather than claiming a catch, which is correct but worthless as evidence; the mutation was rewritten to a syntax-valid `(void)0;` and then classified properly. **A harness that reports a broken mutant as a catch will eventually convince you your tests are strong on the strength of a compiler error.**
 
 - **Ranking metrics beyond binary AUC** (DCG, NDCG, MAP, MRR) — **the `metrics` module could score a classifier only per-example, with a 0/1 label.** The shipped ROC-AUC / `average_precision_score` take an `(N,1)` binary label column — one score per example — and nothing in the repo could rank documents *within* a query. Implemented in `include/nn/utils/metrics.{h,cpp}` as `dcg_score`, `ndcg_score`, `mean_average_precision`, `mean_reciprocal_rank` plus per-query forms (`*_per_query`), each with a `k` cut-off and `log_base`. **89/89 checks pass, 10/10 mutations caught, deterministic across 3 reruns, zero warnings at `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 239-suite aggregate run shows no new failures.**
 
