@@ -75,6 +75,7 @@
 #include "utils/metrics.h"
 #include "utils/temperature_scaling.h"
 #include "utils/knowledge_distillation.h"
+#include "utils/adversarial.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
 #include "utils/training_history.h"
