@@ -5,38 +5,31 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- 2026-10-13 (later): knowledge distillation SHIPPED (see ## Done). The ideas
-     list is DRAINED once more. One candidate remains unpicked:
+<!-- 2026-10-14: adversarial robustness SHIPPED (see ## Done). The ideas list is
+     DRAINED again -- every candidate named below has now shipped. Verified
+     absent on 2026-10-13 before implementing, confirmed present after:
 
-     VERIFIED STILL ABSENT by content grep on 2026-10-13:
-       grep -ril 'adversarial\|fgsm\|pgd'  include/ -> 0
+       grep -ril 'adversarial\|fgsm\|pgd' include/ -> utils/adversarial.{h,cpp}
 
-     - **Adversarial robustness** (Madry et al. arXiv:1706.06083, FGSM/PGD) --
-       single-sign and multi-step gradient ascent on the input. Unusually
-       cheap here: `Layer::backward` already RETURNS dL/d(input), so an attack
-       step is a sign of an ordinary backward pass, and adversarial training
-       is just a perturbed training loop. -> NEXT TO POP. -->
+     A fresh list is needed for the next session. Two directions worth
+     considering, neither verified-absent yet -- CHECK BEFORE PICKING:
 
-<!-- 2026-10-13: temperature scaling SHIPPED (see ## Done); the ideas list is
-     DRAINED again. Two candidates remain unpicked:
+       grep -ril 'certified\|randomized smoothing\|jpeg\|rotation'  include/
+       grep -ril 'cwl\|trades\|unlabeled\|entropy.minim'           include/
 
-     VERIFIED STILL ABSENT by content grep on 2026-10-13:
-       grep -ril 'knowledge_distill\|teacher'  include/ -> only unrelated hits
-       grep -ril 'adversarial\|fgsm\|pgd'        include/ -> 0
+     - **Certified / provable robustness** (randomized smoothing, Cohen et al.
+       arXiv:1612.00483; JPEG/rotation-certifiable defences) -- the shipped
+       `adversarial.{h,cpp}` attacks a model but cannot BOUND how far any
+       attack can move it. Smoothing gives a closed-form certified radius and
+       composes with the existing losses.
+     - **Unlabeled-data robustness** (CRWD, Stutz et al. arXiv:2007.01174;
+       VAT, Miyato et al. arXiv:1704.03941) -- uses entropy MINIMISATION at a
+       worst-case point rather than a labelled loss, so it needs no labels and
+       reuses the same gradient oracle this repo's attacks already expose. -->
 
-     - **Knowledge distillation** (Hinton, Vinyals, Dean, arXiv:1503.02531) --
-       KL divergence between teacher and student softened distributions at
-       temperature T, plus the T^2 rescaling on the gradient. Needs no new
-       model: the repo has a `Model` and now has `log_softmax` public, so it
-       is a loss, not a layer. Pairs naturally with the just-shipped losses.
-       -> NEXT TO POP. Note the overlap: temperature_scaling.{h,cpp} shipped
-          today already provides the T and the 1/T^2 gradient convention, so
-          this should reuse them rather than re-derive the softened KL.
-     - **Adversarial robustness** (Madry et al. arXiv:1706.06083, FGSM/PGD) --
-       single-sign and multi-step gradient ascent on the input. Unusually
-       cheap here: `Layer::backward` already RETURNS dL/d(input), so an attack
-       step is a sign of an ordinary backward pass, and adversarial training
-       is just a perturbed training loop.
+<!-- 2026-10-13 (later): knowledge distillation SHIPPED (see ## Done). -->
+
+<!-- 2026-10-13: temperature scaling SHIPPED (see ## Done). -->
 
 <!-- popped 2026-10-12: Calibration diagnostics beyond ECE (adaptive ACE /
      thresholded TACE, classwise-ECE; D2 dropped -- see Done) -->
@@ -179,6 +172,31 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Adversarial robustness** (Madry, Makelov, Schmidt, Tsipras, Vladu — "Towards Deep Learning Models Resistant to Adversarial Attacks", ICLR 2018, arXiv:**1706.06083** — the queue's ID is CORRECT, verified against the arXiv API 2026-10-14) — **the repo could build a model and defend it against nothing; this is the entire inner half of the paper's saddle-point formulation (2.1) `max_{δ∈S} L(θ, x+δ, y)`, which was the one half with no code anywhere in `include/`.** Implemented in `include/nn/utils/adversarial.{h,cpp}`: `sign_tensor` (D2), `linf_fgsm`, `linf_pgd`, `l2_fgsm`, `random_restart_pgd`, `PGDConfig`, and `adversarial_train` (the outer minimisation). **Model-free by construction** — every attack takes a `GradientFn` callback, so the attack core is unit-testable with a synthetic gradient and no network, and the `Model`-driven path is a thin adapter. **87/87 checks pass, 9 mutations all given honest verdicts (7 caught, 2 verified-inert by exhaustive probe), deterministic across 3 runs, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.**
+
+  **IT WAS CHEAP HERE FOR A REASON WORTH RECORDING, AND THE REASON IS A REPO PROPERTY NOT A COINCIDENCE.** The queue predicted "unusually cheap: `Layer::backward` already RETURNS dL/d(input)". That is right, and there is a second, unstated property that makes it *safe* rather than merely convenient: **no layer's `backward()` writes to a parameter.** Verified by grep across all ~325 `backward` implementations (`grep -rn '::backward' include/nn --include=*.cpp -A 40 | grep -E 'weights\s*[-+*]?=' | grep -v grad_` → empty; `update_weights` is the sole mutator). So an attack step is the *sign* of an ordinary backward pass and cannot perturb the model even transiently. That is why this needed **zero base-class change and zero risk to the ~250 existing layers**, in the same way Grad-CAM needed none.
+
+  **THE MATH WAS READ, NOT REMEMBERED — from three sources, and each settled something the others left open.** (1) The paper §2.1 for the two formulas. (2) `MadryLab/mnist_challenge/pgd_attack.py`, `LinfPGDAttack.perturb`, read in full — this is what fixes D3 and D5, which the paper does **not** specify. (3) The authors' own `config.json` — `epsilon: 0.3, k: 40, a: 0.01, random_start: true` — which is what makes D6 concrete: **ε and α are independent, with a 30× ratio in the paper's own configuration**, so defaulting α=ε is visibly wrong at the settings the paper actually used. `torch.sign(0.0) == 0.0` was also measured directly rather than assumed.
+
+  **THE ORACLE WAS REAL PyTorch 2.14.1 IN float64, AND THE CHOICE OF FIXTURE WAS THE WHOLE GAME.** The first oracle fixture had `grad = X` with all `X > 0`, so `sign(grad)` was all `+1` — an implementation with the wrong sign convention, or projecting onto the wrong ball, would have matched it exactly. **The fixtures that matter were built backwards from the mutations:** a **mixed-sign** fixture (so the sign convention is pinned) and, critically, one carrying **two exactly-zero coordinates**, because that is the only thing that can distinguish `sign(0) = 0` from `sign(0) = +1` — and no tolerance-style test can see that difference on a fixture without an exact zero.
+
+  **FIVE SEMANTICS PINNED, each a natural mistake, each caught by a named test.**
+  1. **`sign(0) = 0`, not `+1` (D2).** `g >= 0 ? 1 : -1` moves a zero-gradient coordinate by a *full ε*. Verified by torch: the two zero coordinates have delta **exactly 0.0** at both ε=0.1 and ε=0.3. The implementation writes the sign as three separate comparisons *on purpose*, with a comment saying the `>=` version is the documented bug.
+  2. **THE PROJECTION IS CENTRED ON `x_nat`, NOT ON `x_t` (D3).** The discriminator, measured: at ε=0.3/α=0.1/k=7 the correct answer gives `max|δ| = 0.30000000000000004`; the `x_t`-centred variant gives **0.7**. A test asserting only `max|δ| ≤ ε` would pass the wrong implementation for the first two steps.
+  3. **IT IS ASCENT (D1).** A descent implementation is an attack that *improves* the loss, and adversarial training built on it converges to a vulnerable model. Measured end-to-end on a real `Model`: clean `0.73522905727170718` → adversarial `0.76273603563171388`, ratio `1.0374`, and the suite asserts the strictly monotone chain `clean < k=1 < k=3 < k=5` (values `0.73523 / 0.74204 / 0.75580 / 0.76274`) rather than just "bigger k is worse".
+  4. **THE DATA-RANGE CLAMP IS OPT-IN AND APPLIED LAST (D5).** The paper's formula has no clamp; the reference implementation clamps to `[0,1]` because MNIST pixels live there. On the mixed fixture at ε=0.3 the pure form gives row 0 = `[0.8, -0.55, 1.05, -0.425]` and the clamped form `[0.8, 0, 1, 0]` — **numerically different, so the suite pins both.** The repo default is *no* clamp, because `[0,1]` is an image convention and not a property of this library.
+  5. **`k` IS THE NUMBER OF GRADIENT EVALUATIONS (D7).** `k = 0` is the identity attack and never calls the gradient function. And `PGD(k=1, α=ε)` is **bit-identical** to `FGSM(ε)` — asserted as an identity, alongside a second assertion that `α ≠ ε` gives a *different* attack, so the identity is not vacuous.
+
+  **THE MOST EXPENSIVE FINDING WAS A VACUOUS FIXTURE, AND IT TOOK TEN PROBES TO DIAGNOSE — THE PROCESS IS THE POINT.** The adversarial-training comparison originally used two clusters 0.60 apart with ε=0.30 and asserted `advRob > 0.5`. It failed. Six hypotheses were tested and **three refuted by measurement**, in order: (a) *"the attack's `backward()` accumulates into `grad_*` and pollutes the training gradient"* — refuted, `zero_grad()` after every attack backward changed nothing; (b) *"the learning rate is too high for an adversarial objective"* — refuted across lr ∈ {0.05, 0.02, 0.01, 0.005, 0.0005} and 5 different epoch counts; (c) *"batching is needed"* — refuted, batched full-gradient training collapsed identically. The decisive measurement was a **liveness probe** (the SpikingLIF lesson from the TDD skill): `hiddenMass` **collapsed 16.5 → 10.0** under perturbed training while clean training grew to 42, and the loss **froze at 0.692378 for 100 epochs** — `log(2) = 0.693147`, the loss of a uniform predictor. The adversarially-trained model predicted **one class for all 40 examples**; "robustness 0.5" was a constant-predictor artifact. **Root cause: the ε-balls of the two clusters OVERLAP (they overlap iff 2ε ≥ gap), so the two classes were genuinely inseparable inside the ball and the constant predictor really was the minimiser — both models were correct and the test was meaningless.** Fixed by `gap = 0.40, ε = 0.18` (2ε = 0.36 < 0.40, so a robust classifier exists): measured `stdRob = 0.825 → advRob = 1.000`, deterministic across seeds {1234, 7, 999}, with attacked-set predictions splitting **20/20**. **The suite now carries three explicit LIVENESS assertions** that both models must split their attacked predictions, so a constant-predictor collapse cannot pass this test again. *A robust-accuracy number above 0.5 is not evidence of robustness until you have checked the model is not predicting one class.*
+
+  **ONE IMPLEMENTATION BUG, FOUND BY THE TEST AND NOT BY INSPECTION: `adversarial_train` used the wrong loss convention.** It was written against `Softmax::cross_entropy_loss`, which takes **one-hot** labels, while the repo's canonical `CrossEntropyLoss` (and every other loss shipped this year) takes **integer** class indices. Symptom was `terminate called after throwing an instance of 'std::invalid_argument' what(): Tensor dimensions mismatch`. The two conventions coexist in this codebase and the header had *promised* integer labels, so the implementation was wrong, not the doc. The fix routes the objective through the canonical loss, which also makes the standard-training baseline in the test comparable (it previously went through `Model::train_cross_entropy`, the one-hot path — an apples-to-oranges comparison that would have hidden the effect being measured).
+
+  **THREE TEST BUGS, EACH WITH A CLEAN NUMERIC FINGERPRINT, and a process note: the first version of this suite had more bugs in it than the implementation did.** (a) A linearity assertion written `x_0.3 == 2*x_0.1 - x_nat` when ε scales by **three**; every cell failed with a difference of exactly ±0.1. (b) `PGD(k=1)` compared against `FGSM` at a *different* ε — the identity only holds when `α = ε`, which is itself the D6 point. (c) The end-to-end fixture built the model as `l1 → l2 → ReLU` when torch's `Net` is `Linear → ReLU → Linear`; logits came out `[0.69268, 0]` against torch's `[0.65360, 0.00269]` and three loss assertions failed by ~0.0015 **while the perturbation assertions all passed** — because the attack depends only on the SIGN of `dL/dx`, which the wrong layer order happened to preserve. *That is the most dangerous kind of test bug: the tests that were supposed to catch a wrong model were insensitive to a wrong model, and only the loss-value assertions noticed.* The general lesson, already paid once in this repo's KD session: **an oracle-derived number is only as trustworthy as the transcription of the thing it was computed from**, which is why the weights are now printed by the oracle script and compared digit-for-digit.
+
+  **THE MUTATION HARNESS HAD FOUR DEFECTS OF ITS OWN BEFORE IT PRODUCED A SINGLE TRUSTWORTHY VERDICT — the same class of bug the TDD skill documents, hit four times in one script.** (1) It linked `LIB_OBJS`, which **already contains `build/utils/adversarial.o`**, so every mutation double-defined every symbol and the harness cheerfully reported "CAUGHT (compile error)" **eight times running** — a link error is not a test failure. (2) One mutation used `\n` inside a sed *pattern*, which **does not match in GNU sed**, so the mutant was never applied and the harness reported "SURVIVED — the suite does not cover this" for a mutation that had never run. (3) The `inert` marker was left in `"$@"`, so `apply` executed `sed -i inert adversarial.cpp`; GNU sed read a nonexistent file named `inert`, wrote its diagnostics into the source, and the next compile died on `error: 'nert' does not name a type` — **a broken source file masquerading as a mutation result.** (4) A stale `.o` from the previous mutation made one mutant report a build failure that did not reproduce in isolation. Every one of these now has a guard: the baseline is checksum-verified pristine **before any mutation**, `restore()` is atomic (temp + rename), each spec must name a known file tag and carry a sed-shaped expression, and the tree is checksummed before/after each mutation so a no-op edit is reported as a harness defect rather than a verdict. **The lesson generalises: a mutation harness is a program that can lie to you, and "8/8 caught" from a harness that reports a compile error as a catch is worse than no harness at all.**
+
+  **TWO MUTATIONS ARE VERIFIED INERT, AND ONE SURVIVOR WAS NEITHER A GAP NOR INERT UNTIL A PROBE DECIDED IT.** An unexplained survivor is not a gap until a measurement says it can change anything. (a) Swapping `std::min(hi, std::max(lo, v))`'s argument order — inert, since it is the same clamp. (b) Inserting a **redundant** data clamp before the ball projection — *initially reported as a coverage gap*, then **proved inert over 5,000,000 randomised (value, centre, ε, lo, hi) tuples with zero mismatches and `worst_abs_diff = 0`**: both operations are clamps onto intervals and the last one dominates. Recorded as a non-vacuity *result*, and the harness **inverts its own verdict** for it so a wrong "inert" claim fails the run. Meanwhile a *different*, genuinely-order-sensitive mutation — **moving** the clamp so the ball is never re-clamped — **survived the suite as originally written** (874,159 mismatches over 2×10⁶ tuples, so it is a real semantic change), and a new `D5 ORDER` fixture now catches it. **A hand-derived fixture for that fixture was itself wrong on the first attempt** (it predicted 0.32 by mental arithmetic instead of measuring), and the probe that corrected it produced a genuine finding now recorded in the test: **when the data range is DISJOINT from the ε-ball, the output cannot satisfy both, and no ordering fixes that** — the clamp can push a value out of the ball. The first draft of the test asserted exactly that impossible invariant.
 
 - **Knowledge distillation** (Hinton, Vinyals, Dean — "Distilling the Knowledge in a Neural Network", arXiv:**1503.02531** — the queue's ID is CORRECT, verified against the arXiv API 2026-10-13) — **the repo could train a classifier with hard labels but had no way to train it against another model's OUTPUTS, which is the entire premise of the method.** Implemented in `include/nn/utils/knowledge_distillation.{h,cpp}` as `distillation_kl` / `distillation_kl_backward` (the pure soft-target term, reachable as free functions) plus `DistillationLoss` (the full objective: `alpha * CE@T=1 + (1-alpha) * KL@T`, `alpha` being Hinton's weight on the hard labels). Model-free by construction — it consumes `(N,K)` teacher and student logit matrices and needs no `Model`, so it composes with any classifier here. **63/63 checks pass, 9/9 mutations caught, deterministic across 3 rebuilds, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 241-suite aggregate run shows NO new failures** (the single failure, `test_neural_ode`, is the ODERNN entry already deferred in `NOT_FIXED.md`).
 
