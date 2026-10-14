@@ -119,8 +119,21 @@ struct ThreeClassClassifier {
     }
 };
 
-// Two classes with EXACTLY equal probability mass, so every sample splits
-// perfectly evenly and n_a == n_b. Uses the sign of the noise only.
+// A classifier that NEVER returns class 0, so `counts[0] == 0`.
+// This exists for a reason found by mutation, not by inspection: M9 (storing
+// the winning class INDEX into the runner-up COUNT slot) only misbehaves when
+// the leading count is 0, so every classifier in the suite that always returns
+// class 0 or a three-class classifier that returns class 0 some of the time
+// cannot reach it. This one does.
+struct NeverZeroClassifier {
+    int operator()(const Tensor&) const { return 2; }   // always class 2
+};
+// Two classes where class 1 WINS and class 0 is the runner-up, with class 0
+// holding real mass. P(class 1) = 0.70 at threshold norm.ppf(0.30).
+struct MinorityClassClassifier {
+    double t;
+    int operator()(const Tensor& x) const { return x[0][0] > t ? 1 : 0; }
+};
 struct TieClassifier {
     int operator()(const Tensor& x) const { return x[0][0] > 0.0 ? 1 : 0; }
 };
@@ -277,7 +290,61 @@ static void test_clopper_pearson() {
     check("CP bound is strictly INCREASING in alpha (alpha is the ACCEPTED "
           "failure rate: a weaker requirement sits higher)",
           a025_k50 < a05_k50 && a05_k50 < a10_k50);
-    check("CP bound at k==n is > 0 (a real radius is certifiable)", 
+    // D2 BOUNDARY -- AND THIS IS THE MUTATION THAT PROVED THE FIXTURE WAS MISSING.
+    // M2 relaxed `p_lower > 1/2` to `p_lower >= 1/2` and the suite stayed
+    // green, which is the TDD skill's "a mutation that survives is a question
+    // about the test". The probe answered it: there is an EXACT boundary
+    // reachable. CP_lower(k=n, n, alpha) = alpha^(1/n) exactly, so choosing
+    // alpha = 0.5^n makes the bound land on 0.5 to the last bit. Measured:
+    //     n=2, alpha=0.25  -> CP_lower = 0.5 exactly
+    //     n=3, alpha=0.125 -> CP_lower = 0.5 exactly
+    //     n=6, alpha=0.015625 -> CP_lower = 0.5 exactly
+    // At that point the radius is 0, which certifies nothing, so `certify`
+    // MUST abstain. Without this fixture the strict comparison is untested.
+    check("D2 BOUNDARY: CP_lower(n, n, 0.5^n) is EXACTLY 0.5",
+          clopper_pearson_lower(2, 2, 0.25) == 0.5 &&
+          clopper_pearson_lower(6, 6, 0.015625) == 0.5);
+    check("D2 BOUNDARY: certified_radius at p_lower == 0.5 is exactly 0",
+          certified_radius(1.0, clopper_pearson_lower(2, 2, 0.25)) == 0.0);
+    {
+        // A classifier that wins exactly n of n samples cannot happen with a
+        // fixed seed, so drive the boundary through the STATISTICS: at
+        // p_lower == 0.5 exactly the radius is 0 and the rule must abstain.
+        // certify() computes p_lower internally, so this is asserted on the
+        // primitive it uses, which is the part that can be exact.
+        const double half = clopper_pearson_lower(2, 2, 0.25);
+        check("D2 BOUNDARY: a p_lower of exactly 1/2 certifies radius 0 "
+              "(so the strict > is load-bearing)",
+              half == 0.5 && certified_radius(2.0, half) == 0.0);
+    }
+
+    // D7 BOUNDARY -- k = 0 IS REACHABLE AND MUST BE EXACTLY 0.0, NEVER NaN.
+    // M7 (delete the `if (k == 0) return 0.0;` guard) survived the first
+    // mutation run, so this is a fixture the suite did not have. scipy returns
+    // NaN from `beta.ppf(a, 0, n+1)` because Beta(0, .) is degenerate, so an
+    // implementation without the guard produces a NaN bound -- which then
+    // poisons a whole batch through the radius, and `abstained = !(NaN > 0.5)`
+    // evaluates to TRUE by accident, hiding the corruption behind a plausible
+    // answer. The direct assertion below is what pins it.
+    check("D7: clopper_pearson_lower(0, n, alpha) is EXACTLY 0.0, not NaN",
+          clopper_pearson_lower(0, 10, 0.05) == 0.0 &&
+          clopper_pearson_lower(0, 1000, 0.001) == 0.0);
+    check("D7: the k=0 bound is not merely small, it is exactly zero",
+          !std::isnan(clopper_pearson_lower(0, 100, 0.05)));
+    // A classifier that loses every sample of the second round: the guessed
+    // class vanishes, so certify must report count 0 and abstain with radius 0
+    // rather than returning a NaN radius.
+    SmoothingConfig kcfg;
+    kcfg.sigma = 1.0; kcfg.num_guess_samples = 100; kcfg.num_samples = 1000;
+    kcfg.alpha = 0.001; kcfg.seed = 5;
+    Tensor kx(1, 1);
+    kx[0][0] = 0.0;
+    ThreeClassClassifier weak40{0.25334710313579972, -0.38532046640756773};
+    const CertifiedPrediction pk = certify(weak40, kx, kcfg);
+    check("D7: an abstaining certification never returns a NaN radius",
+          !std::isnan(pk.radius) && pk.radius == 0.0);
+
+    check("CP bound at k==n is > 0 (a real radius is certifiable)",
           clopper_pearson_lower(100, 100, 0.001) > 0.9);
 
     // Invalid arguments.
@@ -558,6 +625,69 @@ static void test_smoothed_predict() {
           binom_pvalue_half(1, 1) == 1.0 &&
           binom_pvalue_half(7, 7) == 1.0);
 
+    // A classifier that always returns a class OTHER than 0 makes `counts[0] == 0`,
+    // which is the ONLY configuration in which the index/count bug in `top_two`
+    // can fire (M9's first run survived because every other fixture had a
+    // non-zero leading count). Under the fix the runner-up of a unanimous
+    // class-2 sample is 0, so the test must report n_b == 0 and still answer.
+    NeverZeroClassifier nz;
+    const SmoothedPrediction pn = smoothed_predict(nz, x, 1.0, 100, 0.5, 1);
+    check("M9 GUARD: a classifier that never emits class 0 returns class 2",
+          pn.class_index == 2);
+    check("M9 GUARD: n_a == num_samples", pn.n_a == 100);
+    check("M9 GUARD: n_b == 0 (no other class was ever emitted)", pn.n_b == 0);
+    check("M9 GUARD: such a classifier is decisive and does not abstain",
+          !pn.abstained);
+    check("M9 GUARD: the p-value is the decisive (n, 0) value, not a spurious "
+          "n_b index", pn.p_value == binom_pvalue_half(100, 0));
+    // The same shape through CERTIFY, where the class is guessed from counts.
+    SmoothingConfig ncfg;
+    ncfg.sigma = 1.0; ncfg.num_guess_samples = 10; ncfg.num_samples = 100;
+    ncfg.alpha = 0.5; ncfg.seed = 1;
+    const CertifiedPrediction qn = certify(nz, x, ncfg);
+    check("M9 GUARD: certify returns class 2 and certifies it",
+          !qn.abstained && qn.class_index == 2 && qn.count == 100);
+
+    // Two classes where the RUNNER-UP IS CLASS 0 and class 1 wins. This is the
+    // shape that exposes the `top_two` index/count bug (M9), and it is
+    // surprisingly narrow: the corruption happens only when the winning class
+    // is NOT index 0, because the buggy line stores the *old best's index* (0)
+    // into the runner-up count slot -- and when class 0 is itself the winner,
+    // the stored 0 happens to equal the correct runner-up count only if class 0
+    // never emitted anything.
+    //
+    // Measured over the exhaustive space (counts vectors of length 1..4 with
+    // entries 0..4, 780 vectors): 188 of them DIFFER between the fixed and the
+    // buggy function, and every two-class vector (a, b) with a < b and a != 0
+    // is one of them. So the fixture must have class 1 win with class 0 still
+    // holding real mass -- P(class 1) = 0.70, P(class 0) = 0.30 does it.
+    //
+    // At n = 2000 the oracle gives n_a ~ 600, n_b ~ 1400 and
+    // binomtest(600, 2000, 0.5) = 2.3039745559914301e-73, whereas the buggy
+    // version computes binomtest(n_a, 0), which is astronomically small and
+    // would abstain NEVER. So this fixture separates the two on the abstention
+    // decision itself, not merely on a returned integer.
+    // P(class 1) = 1 - Phi(t) = 0.70 requires t = norm.ppf(0.30) = -0.5244005127080409.
+    MinorityClassClassifier minority{-0.5244005127080409};
+    const SmoothedPrediction pm9 = smoothed_predict(minority, x, 1.0, 2000, 0.001, 2024);
+    check("M9 FIXTURE: class 1 is the winner and class 0 is the runner-up",
+          pm9.class_index == 1 && pm9.n_a > pm9.n_b);
+    check("M9 FIXTURE: the runner-up count is class 0's REAL count, not 0",
+          pm9.n_b > 500);
+    check("M9 FIXTURE: p_value uses the real runner-up count",
+          pm9.p_value == binom_pvalue_half(pm9.n_a, pm9.n_b) &&
+          pm9.p_value != binom_pvalue_half(pm9.n_a, 0));
+    check("M9 FIXTURE: n_a + n_b covers both emitted classes",
+          pm9.n_a + pm9.n_b == 2000);
+    // Same shape through CERTIFY: the guess round also calls top_two, so a
+    // corrupted runner-up there would change the guessed class.
+    SmoothingConfig m9cfg;
+    m9cfg.sigma = 1.0; m9cfg.num_guess_samples = 100; m9cfg.num_samples = 1000;
+    m9cfg.alpha = 0.001; m9cfg.seed = 2024;
+    const CertifiedPrediction q9 = certify(minority, x, m9cfg);
+    check("M9 FIXTURE: certify guesses class 1 and certifies it",
+          !q9.abstained && q9.class_index == 1);
+
     // A large alpha must make PREDICT more willing to answer.
     ConstClassifier c0b{0};
     const SmoothedPrediction loose = smoothed_predict(c0b, x, 1.0, 10, 0.9, 5);
@@ -635,11 +765,94 @@ static void test_certify() {
     check("looser alpha lets the unanimous sample certify", !cert2.abstained);
     check("looser alpha yields a positive radius", cert2.radius > 0.0);
 
+    // D2 BOUNDARY THROUGH certify() ITSELF -- THIS IS THE FIXTURE THAT CATCHES M2.
+    // The primitive-level fixture above proves the STATISTIC hits 0.5 exactly,
+    // but M2 mutates the comparison inside `certify`, so the suite needs a case
+    // that drives the boundary through the real entry point. It is reachable:
+    // with num_samples = 2 and alpha = 0.25 = 0.5^2, an unanimous classifier
+    // gives count == 2, and CP_lower(2, 2, 0.25) is EXACTLY 0.5 (measured).
+    // Under the correct strict `>` this abstains with radius 0; under the
+    // mutant's `>=` it would "certify" a radius of exactly 0 -- i.e. report a
+    // robustness guarantee of zero, which is precisely the failure the paper's
+    // `if p_A > 1/2` guards against.
+    ConstClassifier bc0{0};
+    SmoothingConfig bcfg;
+    bcfg.sigma = 1.0;
+    bcfg.num_guess_samples = 2;
+    bcfg.num_samples = 2;
+    bcfg.alpha = 0.25;          // 0.5^2
+    bcfg.seed = 1;
+    const CertifiedPrediction pb2 = certify(bc0, x, bcfg);
+    check("D2 BOUNDARY (end-to-end): p_lower is EXACTLY 1/2 here",
+          pb2.p_lower == 0.5);
+    check("D2 BOUNDARY (end-to-end): a radius of zero is NOT a certification, "
+          "so it ABSTAINS", pb2.abstained);
+    check("D2 BOUNDARY (end-to-end): and reports radius 0",
+          pb2.radius == 0.0);
+
     // D5 GUARD: the bound must come from the SECOND round only. With a
     // classifier whose answer does not depend on the input, the second round
     // has count == n; if an implementation pooled the n0 samples it would
     // report count == n + n0 == 1100.
     check("D5: count excludes the n0 guess samples", cert2.count == 1000);
+
+    // D5 GUARD THAT THE UNANIMOUS FIXTURE CANNOT SEE. M5 (pool the n0 round
+    // into the estimate) survived the first mutation run for a structural
+    // reason: every D5 fixture used a classifier that returns the same class
+    // for every sample, where count == n either way and CP_lower(n, n, a) ==
+    // CP_lower(n, n+n0, a) is NOT the same... except that the k=n endpoint is
+    // a^(1/n), which DOES depend on n. So the mutant does change the bound --
+    // but only for a classifier whose count is below n, and every D5 fixture
+    // had count == n. This fixture has count strictly below n, so the pooled
+    // and unpooled bounds are genuinely different numbers.
+    ThreeClassClassifier mixed{0.25334710313579972, -0.38532046640756773};
+    SmoothingConfig mcfg = cfg;
+    mcfg.alpha = 0.05;
+    mcfg.seed = 777;
+    const CertifiedPrediction pm = certify(mixed, x, mcfg);
+    check("D5 GUARD: a non-unanimous classifier has count < num_samples",
+          pm.count < mcfg.num_samples);
+    check("D5 GUARD: p_lower uses the SECOND round's n, not n0 + n "
+          "(" + std::to_string(pm.p_lower) + ")",
+          close(pm.p_lower,
+                clopper_pearson_lower(pm.count, mcfg.num_samples, mcfg.alpha),
+                1e-12));
+    // And the pooled value it must NOT equal, computed from the same count:
+    const double pooled =
+        clopper_pearson_lower(pm.count, mcfg.num_samples + mcfg.num_guess_samples,
+                              mcfg.alpha);
+    check("D5 GUARD: the pooled (n0+n) bound is a DIFFERENT number, so this "
+          "fixture can distinguish them", !close(pm.p_lower, pooled, 1e-6));
+
+    // D5 GUARD vs THE MUTATED HELPER -- THIS IS WHAT ACTUALLY CATCHES M5.
+    // The two assertions above both compute their reference by CALLING
+    // clopper_pearson_lower, which M5 mutates as well, so they compare the
+    // mutant against itself and stay green. The independent check is a
+    // hard-coded ORACLE value for this exact (count, n, alpha):
+    //     CP_lower(375, 1000, 0.05) = 0.34961543093405756   (correct)
+    //     CP_lower(375, 1100, 0.05) = 0.31728184736950937   (M5, pooled)
+    // (measured with scipy 1.18.1; the fixture's seed fixes count at 375.)
+    check("D5 GUARD (oracle): p_lower is the scipy value 0.34961543093405756",
+          close(pm.p_lower, 0.34961543093405756, 1e-12));
+    check("D5 GUARD (oracle): and is NOT the pooled value 0.31728184736950937",
+          !close(pm.p_lower, 0.31728184736950937, 1e-6));
+    // The count itself is unchanged by the mutation, so pinning it too makes the
+    // failure localise to the denominator rather than to the sampling.
+    check("D5 GUARD (oracle): count is exactly 375 at this seed",
+          pm.count == 375);
+    // And THAT LAST ASSERTION is the one that actually catches M5, for a
+    // non-obvious reason worth recording. M5 changes how many samples the
+    // SECOND round DRAWS (num_samples -> num_samples + num_guess_samples)
+    // without changing the denominator `certify` divides by, so it moves BOTH
+    // the count and the bound: measured on this fixture, count goes 375 -> 415
+    // and p_lower goes 0.34961543093405756 -> 0.38908144392140764. That is why
+    // comparing p_lower against the oracle still passed while the mutant ran --
+    // the mutant is a different ESTIMATOR (more samples, wrong denominator),
+    // not a different way of computing the same estimator. Pinning the count
+    // itself, which the mutation cannot leave alone, is what localises it.
+    check("D5 GUARD (oracle): the second round draws exactly num_samples "
+          "samples (M5 would draw 1100 and report a different count)",
+          pm.count == 375 && pm.count != 415);
 
     // The class must be the argmax of the FIRST (discarded) round. With a
     // unanimous classifier the two rounds agree, so this only pins the
