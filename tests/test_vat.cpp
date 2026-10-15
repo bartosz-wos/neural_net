@@ -677,13 +677,172 @@ int main() {
     }
 
     {
+        // M8 REACHABILITY. `d_entropy_negative_dlogits` is only reachable via
+        // Config::use_entropy_min, so without this block the mutation harness
+        // reports it as a SURVIVOR -- which is a coverage gap in the SUITE, not
+        // a property of the code. This block is what makes the harness honest.
+
+        // The fixture the end-to-end entropy runs below use.
+        const int n = 40;
+        Tensor Xt(n, 2), yt(n, 1);
+        for (int i = 0; i < n; ++i) {
+            double base = (i % 2 == 0) ? 1.0 : -1.0;
+            double jitter = 0.05 * static_cast<double>((i * 37) % 11) / 5.0;
+            Xt(i,0) = base + jitter;
+            Xt(i,1) = base - jitter;
+            yt(i,0) = static_cast<double>(i % 2);
+        }
+
+        // FD the entropy gradient at a SHIFTED point, which is non-degenerate.
+        Tensor zs = tensor_from({{0.9, -0.4}, {-1.1, 0.7}, {0.3, 0.2}});
+        Tensor dl = d_entropy_negative_dlogits(zs);
+        const double he = 1e-6;
+        double worst_e = 0.0;
+        for (size_t i = 0; i < 3; ++i) {
+            for (size_t k = 0; k < 2; ++k) {
+                Tensor zp = zs, zm = zs;
+                zp(i,k) += he; zm(i,k) -= he;
+                double fd = (entropy_negative(zp) - entropy_negative(zm)) / (2*he);
+                double den = std::max(std::fabs(fd), std::max(std::fabs(dl(i,k)), 1e-300));
+                worst_e = std::max(worst_e, std::fabs(fd - dl(i,k)) / den);
+            }
+        }
+        check("D8: d(entropy_negative)/d(logits) matches FD (sign pinned)", worst_e < 1e-6);
+        std::cout << "     (worst rel_err = " << worst_e << ")" << std::endl;
+
+        // A UNIFORM distribution has the MAXIMUM entropy, so its gradient is
+        // exactly zero -- the discrete stationary point of entropy minimisation.
+        Tensor uni = tensor_from({{0.0, 0.0}, {0.0, 0.0}});
+        Tensor du = d_entropy_negative_dlogits(uni);
+        check("D8: the entropy gradient vanishes at a uniform prediction",
+              std::fabs(du(0,0)) < 1e-15 && std::fabs(du(0,1)) < 1e-15);
+
+        // End-to-end: use_entropy_min must run, reduce the loss, and leave the
+        // model finite. This is the assertion that exercises the whole branch.
+        std::vector<double> ent_losses;
+        {
+            Model e;
+            e.add_layer(new Dense(2, 8));
+            e.add_layer(new Activation<Tanh>(Tanh()));
+            e.add_layer(new Dense(8, 2));
+            VATConfig vc; vc.epsilon = 0.1; vc.xi = 1e-6; vc.power_iterations = 1;
+            VATTrainer::Config tc;
+            tc.epochs = 30; tc.learning_rate = 0.05;
+            tc.use_vat = false; tc.use_entropy_min = true; tc.entropy_weight = 0.5;
+            tc.vat = vc; tc.seed = 3;
+            VATTrainer tr(e);
+            std::vector<double> l;
+            tr.train(Xt, yt, tc, &l);
+            ent_losses = l;
+        }
+        check("use_entropy_min runs to completion with a finite loss",
+              ent_losses.size() == 30 &&
+              std::all_of(ent_losses.begin(), ent_losses.end(),
+                          [](double v) { return std::isfinite(v); }));
+        check("use_entropy_min reduces the (entropy-minimising) objective",
+              ent_losses.back() < ent_losses.front());
+        // It must be a NO-OP when switched off -- otherwise the branch is not
+        // what is driving the result.
+        std::vector<double> off_losses;
+        {
+            Model e;
+            e.add_layer(new Dense(2, 8));
+            e.add_layer(new Activation<Tanh>(Tanh()));
+            e.add_layer(new Dense(8, 2));
+            VATConfig vc; vc.epsilon = 0.1; vc.xi = 1e-6; vc.power_iterations = 1;
+            VATTrainer::Config tc;
+            tc.epochs = 30; tc.learning_rate = 0.05;
+            tc.use_vat = false; tc.use_entropy_min = false;
+            tc.vat = vc; tc.seed = 3;
+            VATTrainer tr(e);
+            std::vector<double> l;
+            tr.train(Xt, yt, tc, &l);
+            off_losses = l;
+        }
+        double dmax = 0.0;
+        for (size_t i = 0; i < ent_losses.size(); ++i)
+            dmax = std::max(dmax, std::fabs(ent_losses[i] - off_losses[i]));
+        check("the entropy term is a real contribution, not a no-op", dmax > 1e-9);
+    }
+
+    {
+        // M9 REACHABILITY. The `1/N` in dkl_divergence_dlogits is
+        // direction-preserving, so no VALUE test can see it -- that is why the
+        // harness flagged it "NOT INERT" against my claim. It IS observable
+        // directly, but the fixture has to be built carefully:
+        //
+        // ROWS MUST BE DUPLICATED, NOT APPENDED. Each row's softmax depends on
+        // that row alone (softmax is row-wise), so duplicating a row leaves
+        // every p and q bit-identical while doubling N -- which isolates the
+        // 1/N exactly. Appending UNRELATED rows instead changes the N but also
+        // changes which rows are in the batch, so the ratio is no longer 2.
+        Tensor la = tensor_from({{2.0, 0.0}, {0.0, -1.0}});
+        Tensor lb(4, 2);
+        for (size_t k = 0; k < 2; ++k) {
+            lb(k,0) = la(k,0); lb(k,1) = la(k,1);
+            lb(k+2,0) = la(k,0); lb(k+2,1) = la(k,1);
+        }
+        Tensor ca = tensor_from({{0.1, 0.0}, {0.0, 0.2}});
+        Tensor cb(4, 2);
+        for (size_t k = 0; k < 2; ++k) {
+            cb(k,0) = ca(k,0); cb(k,1) = ca(k,1);
+            cb(k+2,0) = ca(k,0); cb(k+2,1) = ca(k,1);
+        }
+
+        Tensor ga = dkl_divergence_dlogits(ca, la);
+        Tensor gb = dkl_divergence_dlogits(cb, lb);
+
+        // Every entry must halve when the batch is duplicated, i.e.
+        // gb == ga / 2  <=>  ga == gb * 2. (Comparing ga*2 against gb is the
+        // inverted relation and is off by a factor of 4 -- measured 2.669e-01.)
+        bool ratio_ok = true;
+        for (size_t i = 0; i < 2; ++i)
+            for (size_t k = 0; k < 2; ++k)
+                ratio_ok = ratio_ok &&
+                           close(gb(i,k) * 2.0, ga(i,k), 1e-12);
+        check("D2: the 1/N batch factor is present (duplicating rows halves every entry)",
+              ratio_ok);
+
+        // And it must equal the finite difference of the batch-MEAN KL.
+        const double he = 1e-6;
+        double worst_n = 0.0;
+        for (size_t i = 0; i < 2; ++i) {
+            for (size_t k = 0; k < 2; ++k) {
+                Tensor zp = la, zm = la;
+                zp(i,k) += he; zm(i,k) -= he;
+                double fd = (kl_divergence(ca, zp) - kl_divergence(ca, zm)) / (2*he);
+                double den = std::max(std::fabs(fd), std::max(std::fabs(ga(i,k)), 1e-300));
+                worst_n = std::max(worst_n, std::fabs(fd - ga(i,k)) / den);
+            }
+        }
+        check("D2: dKL/d(logits) matches FD of the BATCH-MEAN KL", worst_n < 1e-6);
+        std::cout << "     (worst rel_err = " << worst_n << ")" << std::endl;
+    }
+
+    {
+        // M10 / M12 documented inertness (see the harness):
+        //   M10 -- replacing `continue` with `max_abs = 1e-300` still divides
+        //          0 by 1e-12 first, giving exactly 0.0 both ways. Bit-identical.
+        //   M12 -- recomputing the CLEAN logits at x is deterministic, so the
+        //          cache is a pure optimisation and cannot change any value.
+        //          The real D5 hazard is recomputing p_bar AT THE PROBE, which
+        //          M4 covers.
+        // These are recorded so a future reader does not mistake the two
+        // survivors for untested code.
+        Tensor z = tensor_from({{0.0, 0.0}, {0.0, 0.0}});
+        check("D11: a uniform zero batch normalises to exact zero",
+              std::fabs(normalise_direction(z)(0,0)) == 0.0 &&
+              std::fabs(normalise_direction(z)(1,1)) == 0.0);
+    }
+
+    {
         // The trainer must reject bad inputs rather than silently no-op.
         Model m;
         m.add_layer(new Dense(3, 2));
-        Tensor Xt(4, 3), yt(3, 1);
+        Tensor Xt2(4, 3), yt2(3, 1);
         VATTrainer::Config tc;
         bool threw = false;
-        try { VATTrainer tr(m); std::vector<double> l; tr.train(Xt, yt, tc, &l); }
+        try { VATTrainer tr(m); std::vector<double> l; tr.train(Xt2, yt2, tc, &l); }
         catch (const std::invalid_argument&) { threw = true; }
         check("VATTrainer rejects mismatched X.rows / y.rows", threw);
     }

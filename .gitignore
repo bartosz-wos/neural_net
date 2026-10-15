@@ -74,3 +74,4 @@ tests/test_gin_debug*.cpp
 .hermes/
 .ccache/
 .run_tests_failed
+build/mutation/
