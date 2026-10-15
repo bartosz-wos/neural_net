@@ -5,7 +5,60 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- 2026-10-15: VAT SHIPPED (see ## Done). The unlabeled-data-robustness item
+<!-- 2026-10-15: VQ-VAE SHIPPED (see ## Done). This drained the ideas list a
+     SECOND time. The list needs refilling again for the next session.
+
+     WHAT THE LAST TWO DRAINED LISTS HAD IN COMMON, and it is the useful
+     signal: both were dominated by PAPER RECITATIONS (VAT, CRWD, calibration
+     metrics, PD/ICE, DeepLIFT, Shapley, LIME, Grad-CAM, temperature scaling,
+     randomized smoothing, adversarial training, knowledge distillation). Every
+     one of those needed a fresh citation check, and six of them had a WRONG
+     arXiv ID or an unresolvable author list. That is now the single largest
+     source of wasted effort in this file.
+
+     THE RULE THAT FOLLOWS, and it is what this session actually did: prefer a
+     feature that can be justified by an ABSENCE MEASURED IN THE REPO over one
+     justified by a citation in this file. `grep -ril` across include/ takes
+     seconds and cannot lie; an arXiv ID in a bullet someone typed six
+     sessions ago has a >50% chance of being wrong by now.
+
+     VQ-VAE was found exactly that way: `grep -ril 'quantiz\|codebook\|vq'
+     include/` -> 0 hits, against a generative/ directory that already held
+     six continuous-latent models. The absence was visible in the directory
+     listing; only the discrete-latent corner was empty.
+
+     DIRECTIONS STILL GENUINELY UNFILLED, each stated so the NEXT session can
+     verify it by CONTENT before committing to it (these are hypotheses about
+     gaps, not specifications -- verify each with grep first):
+
+       - `grep -ril 'discrete\|categorical.*prior\|relaxation' include/`
+         Gumbel-Softmax RELAXED discrete latents as a VQ-VAE alternative. The
+         repo HAS layers/utility/gumbel_softmax.{h,cpp}, so this is a
+         composition question rather than a build question: the interesting
+         deliverable is probably the CONTINUOUS-RELIXATION baseline
+         (c + softmax(logits/tau)) with its straight-through gradient, which
+         is the same shape as the VQ STE shipped today and would make the two
+         directly comparable.
+       - `grep -ril 'autoregressive.*prior\|pixelcnn' include/`
+         A DISCRETE PRIOR over the codebook indices -- paper §3.3, which the
+         shipped header names explicitly as out of scope. pixelcnn.{h,cpp}
+         already exists, so this is wiring plus the categorical-softmax-over-
+         indices loss.
+       - `grep -ril 'residual.*quantiz\|two.stage' include/`
+         VQ-VAE-2 (arXiv:1906.00446 -- VERIFIED REAL on 2026-10-15, unlike the
+         five bad IDs this file produced earlier). Two-stage residual
+         quantization: quantize, subtract, quantize the residual. Explicitly
+         out of scope in the shipped plan.
+       - `grep -ril 'codebook.*restarts\|dead.*code\|restart' include/`
+         Codebook COLLAPSE mitigation as a first-class utility: dead-code
+         reinitialisation from high-error encoder outputs, and/or k-means
+         codebook initialisation. The shipped VectorQuantizer already EXPOSES
+         `dead_code_count()` precisely because collapse is the method's
+         characteristic failure mode, but nothing acts on it yet. This is the
+         cheapest of the four and the most obviously load-bearing.
+       - `grep -ril 'split\|factoriz' include/`
+         VQ-GAN / taming-transformers style factors, if a generative-conditioning
+         direction is wanted rather than an unsupervised one.
      below was popped and resolved as follows:
 
        - VAT (Miyato et al.) SHIPPED as utils/vat.{h,cpp}. Its citation in the
@@ -204,6 +257,20 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **VQ-VAE — Vector Quantized VAE** (van den Oord, Vinyals, Kavukcuoglu — "Neural Discrete Representation Learning", **NeurIPS 2017**, arXiv:**1711.00937** — **verified via the arXiv API on 2026-10-15**, returns that exact title with exactly those three authors) — **the repo had SIX continuous-latent generative models (`vae`, `ddpm`, `dit`, `consistency`, `neural_spline_flow`, `flow_matching`) and NOTHING with a discrete latent, so the paper's central empirical claim (§4.1: a discrete latent beats a continuous one of equal capacity) was untestable here.** Verified absent by content grep before implementing: `grep -ril 'quantiz\|codebook\|straight.through\|commitment' include/` → **0 hits**. Implemented in `include/nn/layers/generative/vq_vae.{h,cpp}`: free functions `vq_squared_distances`, `vq_nearest_indices`, `vq_quantize`, `vq_codebook_loss`, `vq_commitment_loss`, `vq_codebook_gradient`, `vq_commitment_gradient`, `vq_straight_through`, `vq_perplexity`, `vq_ema_step`; layers `VectorQuantizer` (loss-based, Eq. 3), `VectorQuantizerEMA` (moving-average), `VQVAE` (encoder → quantizer → decoder). **Model-free by construction: every numerical core is a free function over Tensors, so the entire quantizer is testable with no Model, no optimizer and no encoder** — the same shape `utils/vat.h` and `utils/randomized_smoothing.h` were built with. **113/113 checks pass, 8/8 mutations caught, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, 246-suite aggregate run introduces NO new failures** (the single failure is the ODERNN entry already deferred in `NOT_FIXED.md`).
+
+  **THE FINDING WORTH MORE THAN THE FEATURE: Eq. (3)'s two VQ terms are the SAME SCALAR, and DIFFERENTIATING THEM TOGETHER IS WRONG — BY A CLEAN FACTOR OF `1 + beta`.** The dictionary term `‖sg[z_e] − e‖²` and the commitment term `β‖z_e − sg[e]‖²` are numerically identical (`stop_gradient` does not change a value); they differ ONLY in which operand is stopped, i.e. in their **dependencies** — one is a function of the codebook alone, the other of `z_e` alone. So there is no value test anywhere that can tell them apart, and a naive forward-mode pass over the combined scalar returns `(1 + beta)` on the codebook gradient. **The first version of the oracle did exactly that and finite differences disagreed at a clean ratio of 1.25 = 1 + β on EVERY cell.** A clean constant ratio is this repo's standing signal for *"the harness differentiates the wrong function"*, so the analytic side was not touched — instead two stop-gradient-honouring functions (`total_for_fd_w`, `total_for_fd_z`) were added to the harness, and FD then agreed to **3.2e-11**. `tests/test_vq_vae.cpp` test 10 differentiates each term separately and never their sum. **A clean constant ratio from an oracle is nearly always a harness bug; check that before editing the implementation.**
+
+  **ONE REAL IMPLEMENTATION BUG, FOUND BY A STANDALONE PROBE AND NOT BY READING.** `VectorQuantizer::backward` returned `grad_output` verbatim, so it returned whatever **shape the caller passed**: a caller seeding with a `(1,1)` scalar — the obvious way to ask *"is this the identity?"* — silently got a `(1,1)` gradient back, truncating the commitment term to one cell. The `VQVAE` caller happens to pass the correct shape, which is exactly why no value-only test could see it. **My first fix was also wrong and the probe caught that too**: it allocated `(M, D)` and copied under a bounds guard, zero-filling everything outside the seed's extent — `gz(0,1)` came back `0.00208` where it must be `1.00208`. A `(1,1)` `grad_output` is now an explicit scalar seed that broadcasts over the whole result, a matching `(M,D)` tensor is used element-wise, and anything else **throws** rather than silently zero-filling.
+
+  **FOUR TEST BUGS, every one found by MEASUREMENT rather than argument, and in every case the implementation was right** — the sixth, seventh, eighth and ninth time in this repo that the TDD skill's *"the test is not automatically right"* row was the correct diagnosis. (a) `‖e_0‖` was asserted as `0.6708203932499369`; the oracle says **`0.62449979983983983`** — the expected value had been hand-derived from a **transposed** sum, i.e. the very error D3 exists to catch. (b) Two points on two codes was asserted as `ln(2) = 0.6931`; perplexity is **`exp(entropy)`**, so the measured answer is **`1.9999999996`**. (c) *"decay=0 sends the codebook to exactly z_e"* was asserted, and the measured answer is **`0.5500036666`** — the Laplace bias survives `decay=0`. **The value I asserted was precisely what an implementation WITHOUT the smoothing would produce**, so the test was pinning the bug, not the code. (d) **The end-to-end training test passed a CONSTANT `1/N` as the incoming gradient.** This repo's `Layer::backward` contract is the gradient of `L = Σ grad_output·forward(x)` **with no ½ anywhere**, so MSE needs `2(r−x)/N`; the constant seed made the loss *rise* and diverge to `inf` at step 131. Measured across `lr ∈ {0.005, 0.01, 0.02, 0.05, 0.1}`: the wrong seed fails **identically at every learning rate**, which is the `advRob = 0.5000` signature meaning *look at the fixture, not the optimiser*. With the correct gradient the loss falls **0.633 → 4.4e-4** and decreases at every lr, and the suite now asserts that across the whole sweep.
+
+  **A DEFECT THE ORACLE EXPOSED IN THE REFERENCE IMPLEMENTATION ITSELF.** With `decay = 1` and a zero-valued statistics state, Sonnet's Laplace smoothing `(n_k + ε)/(N + Kε)·N` computes **0/0 and returns an all-NaN codebook** — the oracle reproduces it exactly, so it is a property of the formula as written. But shipping a function that returns NaN for a legal, in-range argument is a trap, and `decay = 1` legitimately means *"keep the codebook, add no data"*. Guarded by measurement, not by taste: nothing observed yet means no evidence to update from, so the codebook is returned unchanged, and the header records that this is a **deliberate departure from the reference**.
+
+  **TEN SEMANTICS pinned from TWO primary sources, because the paper alone does not determine the implementation.** Each is a natural mistake; each has a named test. **D1** the dictionary term is unweighted and only the commitment term carries β (Sonnet line 102) — the most commonly swapped thing in a reimplementation; **D2** the mean is over all `M·D` elements, not per row; **D3** the codebook is `(D, K)` with **column k IS `e_k`**, matching Sonnet's `self._w` of shape `[embedding_dim, num_embeddings]`; **D4** the tie-break is **first-wins** (`argmax(−d)`, line 95) — pinned with a fixture containing an **exact, bit-identical** distance tie, because no tolerance-based test can observe a tie-break; **D5** the straight-through VALUE is `z_q`, **not** `z_e` — an implementation returning `z_e` has quantized nothing, trains fine, and passes every loss test, so the fixture is additionally asserted to be one where `z_q ≠ z_e`; **D6** under EMA the dictionary term is **dropped entirely** (line 240) and the STE does not apply to the returned loss; **D7** the EMA Laplace smoothing is what makes the update non-trivial; **D8** a never-assigned code collapses to **exactly zero**, not to its initial value; **D9** perplexity is **never exactly an integer** (the `+1e-10` inside the log biases it strictly below) and its ceiling is `min(K, M)`, not `K`; **D10** `β = 0.25` from paper §3.2, robust over `[0.1, 2.0]`.
+
+  **THE MUTATION HARNESS HAD THREE DEFECTS OF ITS OWN BEFORE IT PRODUCED A SINGLE TRUSTWORTHY VERDICT — this repo's eighth recorded instance of the same class, and the second arrived as a *false negative on all eight mutations at once*.** (1) The pristine-marker check **correctly REFUSED to run on the first attempt**, because one marker (`'sg[z_e]'`) lives in the **header**, not the `.cpp` — the exact failure mode the check exists to catch, arriving from the other direction, which is why markers are now verified against the specific file being snapshotted. (2) **The worst one: the `LIB_OBJS` extraction used `'^LIB_OBJS\s*='` but the Makefile writes `LIB_OBJS := …` with a space before the `:=`.** The grep matched nothing, the link set came out **EMPTY**, and all seven real mutations were scored `MUT-BROKEN (did not link)`. **One harness defect reported as eight mutation verdicts is worse than no harness at all** — it would have "certified" a suite that catches nothing. The link set is now **counted** and the run aborts below 10 objects. (3) M6's anchor carried a `const` the source no longer has, so it reported `MUT-NOOP`: **an edit that never applied is indistinguishable from a mutation that survived**, which is why every `sed` is verified with `diff -q`. All seven defences the earlier sessions had to learn the hard way are carried, including atomic restore (`cp` to temp + `mv`), `MUT-BROKEN` never `MUT-CAUGHT`, `MUT-CRASH` as its own column, and verdicts counted from `[FAIL]` lines rather than a summary string.
 
 - **Virtual Adversarial Training** (Miyato, Maeda, Koyama, Ishii — "Virtual Adversarial Training: A Regularization Method for Supervised and Semi-Supervised Learning", **ICLR 2018**, arXiv:**1704.03976**) — **the repo could ATTACK a model (`adversarial.{h,cpp}`), BOUND an attack (`randomized_smoothing.{h,cpp}`), and had no way to REGULARISE a model to be smooth in between; VAT is the third corner, and it is the only one of the three that needs NO LABELS and no attack or certificate at test time.** Implemented in `include/nn/utils/vat.{h,cpp}`: `vat_log_softmax`, `vat_softmax`, `kl_divergence` (+ `kl_divergence_per_sample`), `dkl_divergence_dlogits`, `normalise_direction`, `virtual_adversarial_perturbation`, `vat_loss`, `entropy_negative` (+ `d_entropy_negative_dlogits`), and `VATTrainer`. **Model-free by construction** — the only interface to a network is a `LogitsFn` plus `adversarial.h`'s existing `GradientFn`, so the whole power-iteration core is testable with a synthetic oracle and no network, and it composes with the shipped PGD attacker with no new machinery. **60/60 checks pass, 10/10 mutations caught (2 further mutations measured bit-identical and filed as confirmed-inert), deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.**
 
