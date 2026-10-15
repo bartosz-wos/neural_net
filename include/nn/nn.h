@@ -298,6 +298,7 @@
 
 // Layers — generative
 #include "layers/generative/vae.h"
+#include "layers/generative/vq_vae.h"
 #include "layers/generative/capsnet.h"
 #include "layers/generative/wgan_gp.h"
 #include "layers/generative/ddpm.h"
