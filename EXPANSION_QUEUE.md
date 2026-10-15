@@ -5,19 +5,28 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
-<!-- 2026-10-14 (later): randomized smoothing SHIPPED (see ## Done). The ideas
-     list is DRAINED again. One candidate remains unverified-absent; CHECK
-     BEFORE PICKING:
+<!-- 2026-10-15: VAT SHIPPED (see ## Done). The unlabeled-data-robustness item
+     below was popped and resolved as follows:
 
-       grep -ril 'entropy_minim\|VirtualAdversarial\|CRWD\|unlabeled\|consistency_loss\|divergence_min' include/
+       - VAT (Miyato et al.) SHIPPED as utils/vat.{h,cpp}. Its citation in the
+         queue was WRONG: arXiv:1704.03941 is a neuron-modelling paper. The
+         real ID is arXiv:1704.03976, verified against the abs page. This is the
+         FIFTH wrong arXiv ID this queue has produced.
 
-     - **Unlabeled-data robustness** (CRWD, Stutz et al. arXiv:2007.01174;
-       VAT, Miyato et al. arXiv:1704.03941) -- uses entropy MINIMISATION at a
-       worst-case point rather than a labelled loss, so it needs no labels and
-       reuses the same gradient oracle this repo's attacks already expose. This
-       is the natural next item: `adversarial.{h,cpp}` ships the worst-case
-       point search, and randomized smoothing ships the certified bound; what is
-       still missing is a training objective that needs no labels at all. -->
+       - CRWD (Stutz et al.) was DROPPED, not deferred. The queue cited
+         arXiv:2007.01174, which is "Robust Inverse Reinforcement Learning under
+         Transition Dynamics Mismatch" -- not CRWD. Worse, the paper itself
+         could not be located ANYWHERE: an arXiv title query returns 0 results,
+         the full NeurIPS 2022 proceedings index (2834 entries) and the NeurIPS
+         virtual-site dataset (3490 records) both return 0 hits, Semantic
+         Scholar's title-match says "not found", and OpenReview, OpenAlex,
+         Crossref and CORE have no record. The queue's author list includes
+         "Sebastian EWSCLN", which is not a human name. **Do not implement CRWD
+         from that citation.** If a real identifier turns up, the Wasserstein-
+         consistency idea is still a good fit for this repo.
+
+     The ideas list is DRAINED again. Nothing is queued. A fresh list is needed
+     for the next session. -->
 
 <!-- 2026-10-14: randomized smoothing SHIPPED. Randomized smoothing answers the
      OTHER half of the robustness question from the freshly shipped
@@ -195,6 +204,20 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Virtual Adversarial Training** (Miyato, Maeda, Koyama, Ishii — "Virtual Adversarial Training: A Regularization Method for Supervised and Semi-Supervised Learning", **ICLR 2018**, arXiv:**1704.03976**) — **the repo could ATTACK a model (`adversarial.{h,cpp}`), BOUND an attack (`randomized_smoothing.{h,cpp}`), and had no way to REGULARISE a model to be smooth in between; VAT is the third corner, and it is the only one of the three that needs NO LABELS and no attack or certificate at test time.** Implemented in `include/nn/utils/vat.{h,cpp}`: `vat_log_softmax`, `vat_softmax`, `kl_divergence` (+ `kl_divergence_per_sample`), `dkl_divergence_dlogits`, `normalise_direction`, `virtual_adversarial_perturbation`, `vat_loss`, `entropy_negative` (+ `d_entropy_negative_dlogits`), and `VATTrainer`. **Model-free by construction** — the only interface to a network is a `LogitsFn` plus `adversarial.h`'s existing `GradientFn`, so the whole power-iteration core is testable with a synthetic oracle and no network, and it composes with the shipped PGD attacker with no new machinery. **60/60 checks pass, 10/10 mutations caught (2 further mutations measured bit-identical and filed as confirmed-inert), deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.**
+
+  **BOTH CITATIONS IN THE QUEUE ITEM WERE WRONG, AND ONE OF THEM WAS NOT EVEN A REAL PAPER.** The queue proposed `VAT, Miyato et al. arXiv:1704.03941`; arxiv.org/abs/1704.03941 is *"Analysis of pacemaker activity in a two-component model of some brainstem neurons"*. The correct ID is **1704.03976**. This is the **fifth** wrong arXiv ID this queue has produced (after Greenwell's, DeepLIFT's, the D2 calibration metric, and randomized smoothing's). **The queue's other citation, `CRWD, Stutz et al. arXiv:2007.01174`, was DROPPED entirely rather than implemented**: 2007.01174 is *"Robust Inverse Reinforcement Learning under Transition Dynamics Mismatch"*, and the CRWD paper could not be located in arXiv (title query 0 results), the NeurIPS 2022 proceedings index (2834 entries, 0 hits), the NeurIPS virtual dataset (3490 records, 0 hits), Semantic Scholar, OpenReview, OpenAlex, Crossref or CORE — and its author list contains "Sebastian EWSCLN", which is not a human name. **A citation that cannot be resolved is not a specification**, and implementing one would have meant inventing a Wasserstein-consistency objective and then writing tests that encode the invention.
+
+  **THE ORACLE CAUGHT TWO REAL BUGS BEFORE ANY C++ EXISTED, BOTH BY ITS OWN FINITE-DIFFERENCE SELF-CHECK.** The expectations are transcribed from an independent numpy float64 oracle (`vat_np_oracle.py`) that verifies itself against centred differences before emitting any number. That self-check found (1) a **sign flip** in `dKL/d(logits)` — the analytic `(q-p)/N` disagreed with FD at `rel_err ≈ 2.0`, the signature of an exactly inverted gradient, and FD confirmed `(p-q)/N`; and (2) a **dropped output-layer weight** in the backward — `dlogit_k/dx = Σ_h W2[k,h]·sech²(h)·W1[h,c]`, and omitting `W2` collapses the gradient to `~1e-17` (analytic `-9.305e-18` vs FD `-3.099e-09`) because `dl[k=1] = -dl[k=0]` exactly for a two-class head, so the hidden terms then cancel. In this repo the factor is supplied by `Dense::backward` rather than hand-written, so D9's real risk is bypassing the model, not mistyping the formula — which is why the API takes a `LogitsFn`/`GradientFn` pair.
+
+  **THE THREE IMPLEMENTATION BUGS THE SUITE CAUGHT, ALL OF THEM SILENT.** (1) `entropy_negative` returned `+Σ p log p`, i.e. POSITIVE entropy, so a uniform batch gave `-log K` instead of `+log K` — and entropy minimisation is *added* under gradient descent, so the sign is the entire method. (2) **The power iteration evaluated the gradient at the probe displacement instead of at `x + probe`**, i.e. at the ORIGIN rather than at the probe; rows 1 and 2 of `r_vadv` came out **sign-flipped** versus the reference, and the reference computes `forward(x + d)` (vat.py:45). This is the single most consequential bug in the file and no value test could have localised it — the suite went 35→42→50→52 as it was fixed one layer at a time. (3) `d_entropy_negative_dlogits` needed its sign pinned by FD: the un-negated `p(log p + H)` disagrees at `rel_err` exactly 2.0, the same inverted-gradient fingerprint as (D2).
+
+  **TWO TEST BUGS THAT WERE EQUALLY SILENT AND WORTH THE SAME AMOUNT OF SCRUTINY.** The fixture wrote `bias(1,0)` on a `(1,2)` tensor — **`Tensor::operator()` does `data[r*cols + c]` with no bounds check**, so that write landed one past the end of a 2-element vector, corrupted the adjacent heap block, and the fixture's clean logits came out `0.4583` instead of the oracle's `0.3935`. Separately, the D9 FD probe re-added the base to an already-shifted tensor and so differentiated the wrong function, which showed up as a stable `rel_err = 1.376` rather than the `1.5e-08` the correct probe gives. **A stable non-tiny relative error is a fingerprint of differentiating the wrong function**, not of a gradient bug — the same lesson as the `0.5`/`2.0` clean-ratio fingerprint in the KD and LineAttention sessions.
+
+  **THE `1/N` INSIDE THE KL IS DIRECTION-PRESERVING, SO NO VALUE TEST CAN SEE IT — the mutation harness proved that claim wrong before the tests did.** Removing the batch-mean factor changes the returned tensor but not the direction a power iteration finds, so the first mutation run reported it as a survivor, and an inert-verdict harness correctly reported the "provably inert" label as false. The fix is a **duplication fixture**: duplicating each row leaves every row's softmax bit-identical while doubling N, which isolates the `1/N` exactly (appending unrelated rows does not, because the batch composition changes too). Two other mutations were measured **bit-identical** and filed under an *inverted* harness that fails if they ever start to matter: replacing the zero-row guard with a `1e-300` floor still divides 0 by `1e-12` and gives exactly 0, and recomputing the clean logits with a fresh `forward(x)` returns the same deterministic tensor. **The D5 hazard the header actually warns about — recomputing `p_bar` AT THE PROBE — is a different mutation and is caught.**
+
+  **A NEGATIVE RESULT WORTH RECORDING: VAT's TOTAL training loss does not decrease on an easy fixture, and that is not a bug.** On two clusters separated by 2.0, CE collapses to `5e-4` while the VAT term saturates near `0.65` at every `(alpha, eps)` in a 5×3 sweep, so `CE + α·KL` RISES from 0.655 to ~0.69 and stays there. Measured explanation: the paper's single power iteration is a first-order approximation, and along `t·r` the KL is `[0.5015, 0.5015, 0.4852, 0.3140, 0.3234, 0.3235]` for `t = [-2,-1,-0.5,0.5,1,2]` — `r` is the ascent direction from `t=0`, but the KL is **not monotone in `t`**, and the mirror point `t=-1` is higher than `t=+1`. A linearisation cannot order both sides, and the C++ reproduces the oracle to all 10 printed digits at every `t`. The suite therefore asserts liveness (the VAT path demonstrably changes training, differs from the no-VAT baseline, stays finite, does not explode) rather than asserting a convergence property that measurement shows is false. **Asserting it would have been asserting a bug.** This is the `advRob = 0.5000` lesson from the adversarial session in a new place: when a comparison fails identically across every hyperparameter, suspect the fixture's geometry and the method's own assumptions before the optimiser.
 
 - **Randomized smoothing / certified robustness** (Cohen, Rosenfeld, Kolter — "Certified Adversarial Robustness via Randomized Smoothing", **ICML 2019**, arXiv:**1902.02918**) — **the repo could ATTACK a model but could not BOUND an attack; the freshly shipped `adversarial.{h,cpp}` searches for a worst-case δ and reports only where it got to, and no code anywhere in `include/` could say "no δ of norm < R exists".** Implemented in `include/nn/utils/randomized_smoothing.{h,cpp}`: `normal_cdf` / `normal_quantile`, `clopper_pearson_lower`, `binom_pvalue_half`, `certified_radius_from_probs` (Theorem 1's general form), `certified_radius` (its symmetric form), `certified_accuracy_lower_bound` (Theorem 6), `sample_under_noise`, `smoothed_predict` (Prop. 1), `certify` (Prop. 2), and `smoothing_train` (the §4 outer minimisation). **Model-free by construction** — the only interface to a network is a `BaseClassifierFn` callback returning a class index, narrower even than `adversarial.h`'s `GradientFn`, so every statistical core is testable with a synthetic oracle and no network. **208/208 checks pass, 12/12 mutations caught, deterministic across reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.**
 
