@@ -550,6 +550,71 @@ static void test_committedness_gradients() {
           gz_nonzero);
 }
 
+// THE D6 BOUNDARY FIXTURE, ADDED BECAUSE MUTATION M5 SURVIVED.
+//
+// M5 changes the LRU threshold from `>=` to `>`, i.e. "replace only when the
+// age strictly EXCEEDS the lifespan". It survived the suite on its first run.
+// The cause was measured, not argued: every pre-existing fixture used ages
+// {0, 3, 21, 7, 25} against a lifespan of 20, so the age 21 fired under BOTH
+// `>=` and `>`, and the age 20 -- the ONLY value that can tell them apart --
+// appeared nowhere in the file.
+//
+// An off-by-one that only differs at one exact value needs a fixture that
+// contains that exact value. This one puts age 20, 19, 21 and 20 side by side
+// so the boundary is pinned from both sides at once.
+static void test_lru_lifespan_boundary() {
+    std::cout << "\n--- Task 2d: the lifespan boundary (D6, added for M5) ---\n";
+    Tensor W(2, 4);
+    for (size_t k = 0; k < 4; ++k) {
+        W(0, k) = 100.0 + (double)k;
+        W(1, k) = 200.0;
+    }
+    //   code 0: age 19  -> ALIVE   under both >= and >
+    //   code 1: age 20  -> DEAD   under >=, ALIVE under >   <-- THE discriminator
+    //   code 2: age 21  -> DEAD   under both
+    //   code 3: age 0   -> ALIVE   under both
+    Tensor ages(1, 4);
+    ages(0, 0) = 19.0; ages(0, 1) = 20.0; ages(0, 2) = 21.0; ages(0, 3) = 0.0;
+    Tensor W_before = W.clone();
+
+    Tensor rows(2, 2);
+    rows(0, 0) = 500.0; rows(0, 1) = 500.0;
+    rows(1, 0) = 600.0; rows(1, 1) = 600.0;
+
+    const size_t n = vqcb_lru_replace(W, ages, rows, 20);
+    check("D6: exactly the 2 codes with age >= 20 are replaced "
+          "(19 alive, 20 dead, 21 dead, 0 alive)", n == 2);
+
+    // Identify the dead slots by their value: both replacement rows are far
+    // from every code, so a replaced slot now holds 500 or 600 and a live one
+    // still holds 100+k.
+    bool c1_dead = (W(0, 1) == 500.0 || W(0, 1) == 600.0);
+    bool c2_dead = (W(0, 2) == 500.0 || W(0, 2) == 600.0);
+    bool c0_alive = (W(0, 0) == 100.0);
+    bool c3_alive = (W(0, 3) == 103.0);
+    check("D6: age EXACTLY 20 (code 1) IS dead -- this is what M5 changes",
+          c1_dead);
+    check("D6: age 21 (code 2) is dead", c2_dead);
+    check("D6: age 19 and age 0 (codes 0, 3) are alive",
+          c0_alive && c3_alive);
+
+    // The M<K guard fixture must live where the exception actually fires.
+    // M9 ("pad instead of throwing on M < K") survived because the only M<K
+    // fixture called vqcb_kmeans_initialise with M=12, K=20 -- which DOES
+    // throw -- but the mutation removed the guard in vqcb_kmeans_initialise
+    // while the guard is what produced that throw, so the throw came from the
+    // DELEGATED KMeans::fit instead and the test still saw an exception. The
+    // discriminator is the MESSAGE: the local guard names the constraint in
+    // codebook terms, the delegated one says "n_samples < n_clusters".
+    std::cout << "\n--- Task 1b: the M < K guard is the LOCAL one (added for M9) "
+              << "---\n";
+    std::string msg;
+    try { vqcb_kmeans_initialise(fixture_clusters(), 20, 42u, 10); }
+    catch (const std::invalid_argument& e) { msg = e.what(); }
+    check("M<K throws with the CODEBOOK-SPECIFIC message, not the delegated "
+          "KMeans one", msg.find("codebook") != std::string::npos);
+}
+
 int main() {
     std::cout << std::scientific << std::setprecision(12);
     std::cout << "==========================================================\n";
@@ -564,6 +629,7 @@ int main() {
     test_committedness_values();
     test_committedness_half_is_pinned();
     test_committedness_gradients();
+    test_lru_lifespan_boundary();
 
     std::cout << "\n=== Summary: " << passed << " passed, " << failed
               << " failed ===" << std::endl;
