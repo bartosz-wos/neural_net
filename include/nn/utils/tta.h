@@ -150,4 +150,83 @@ struct TtaFlipReport {
 TtaFlipReport tta_flip_report(const Tensor& base, const Tensor& candidate,
                               const std::vector<int>& labels);
 
+// ===========================================================================
+// AGGREGATIONS
+// ===========================================================================
+//
+// Four ways to combine a (T, N*K) logit bundle into one (N, K) prediction.
+//
+//   tta_mean_logits    -- mean of the LOGITS. Returns LOGITS (D2).
+//   tta_mean_probs     -- mean of the per-transform softmax probabilities.
+//   tta_geo_mean_probs -- mean in LOG space, i.e. the geometric mean of the
+//                         probabilities, NORMALISED (D3).
+//   tta_majority_vote  -- plurality vote over per-transform argmaxes, returned
+//                         as a ONE-HOT (N, K) tensor (D6).
+//
+// These are NOT interchangeable, and the suite asserts they disagree rather than
+// treating any of them as a rescaling of another.
+//
+// D3, THE NORMALISATION IS LOAD-BEARING. The identity "normalised geometric mean
+// of probabilities == softmax of the mean logits" is TRUE, and the obvious
+// derivation of it is WRONG. Writing log softmax(z) = z - logsumexp(z) and
+// averaging does not yield softmax(mean z), because logsumexp is CONVEX:
+// lse(mean z) <= mean(lse(z_t)), strictly unless the members agree. The RAW
+// geometric mean is therefore softmax(mean z) times a per-row factor strictly
+// BELOW 1 -- a sub-probability vector, not a probability vector. Measured raw
+// row sums on the suite fixture: 0.94526606993838813 and 0.90768902185758782,
+// versus 1 for `tta_mean_probs`. Omitting the normalisation is caught by a VALUE
+// assertion and NOT by an argmax assertion, because a positive per-row scale
+// never changes the argmax.
+//
+// D7, SHIFT INVARIANCE IS ASYMMETRIC ACROSS THE AGGREGATIONS. softmax is
+// shift-invariant PER TRANSFORM, so averaging the PROBABILITIES is
+// shift-invariant; averaging the LOGITS is NOT, because the offset survives as a
+// temperature-like rescale on that member. Measured: adding 7.0 to transform 1
+// moves `tta_mean_logits` by 3.500000e+00 and moves `tta_mean_probs` and
+// `tta_geo_mean_probs` by 0.000000e+00.
+
+// Mean of the logits over transforms. The result is LOGITS (D2), not a
+// probability vector -- callers wanting probabilities want `tta_mean_probs`.
+//
+// `weights` is optional; when non-empty it must have exactly T entries and is
+// NORMALISED INTERNALLY (D8), so {1, 3} and {2, 6} give the same answer.
+// Negative weights throw; T == 1 throws, since a single transform is not an
+// aggregation and silently returning the input would hide a mis-wired pipeline.
+Tensor tta_mean_logits(const Tensor& bundle, size_t num_classes,
+                       const std::vector<double>& weights = {});
+
+// Mean of the per-transform softmax probabilities. Output rows sum to 1.
+//
+// THROWS std::invalid_argument if any member's softmax row is degenerate
+// (zero columns), which would make the mean meaningless.
+Tensor tta_mean_probs(const Tensor& bundle, size_t num_classes,
+                      const std::vector<double>& weights = {});
+
+// Geometric mean of the per-transform probabilities, NORMALISED to sum to 1
+// per row (D3). Mathematically equal to `softmax(tta_mean_logits(...))` up to
+// floating point -- the suite asserts the two agree to 1e-15.
+//
+// Numerically this is computed in log space and shifted by each member's own
+// logsumexp, so no intermediate is a raw `log(probability)` of a value that may
+// have underflowed to zero.
+Tensor tta_geo_mean_probs(const Tensor& bundle, size_t num_classes,
+                          const std::vector<double>& weights = {});
+
+// Plurality vote over the per-transform argmaxes, returned as a ONE-HOT
+// (N, K) tensor (D6) -- not counts, and not class indices.
+//
+// D5: a tie goes to the LOWEST CLASS INDEX, not to the earliest transform. The
+// suite feeds an exact 1-1 split with the transforms in both orders, because a
+// suite that only ever sees 3-0 or 2-1 splits cannot tell those rules apart.
+Tensor tta_majority_vote(const Tensor& bundle, size_t num_classes);
+
+// Dispatch on the aggregation named. Every enum value must return the same
+// thing as the corresponding free function above -- the suite asserts that
+// identity for all four, so the dispatcher cannot drift from the cores.
+enum class TtaAggregation { MeanLogits, MeanProbs, GeoMeanProbs, MajorityVote };
+
+Tensor tta_aggregate(const Tensor& bundle, size_t num_classes,
+                    TtaAggregation how,
+                    const std::vector<double>& weights = {});
+
 #endif // NN_UTILS_TTA_H

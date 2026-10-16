@@ -14,7 +14,7 @@
 // arXiv IDs before, so the check is not optional.
 //
 // THE GAP THIS FILLS, measured not assumed:
-//     grep -ril 'test.time.augment|test_time_augment|\btta\b|ensemble.*predict' \
+//     grep -ril 'test.time.augment|test_time_augment|\btta\b|ensemble.*predict'
 //          include/ tests/
 // -> 0 hits. Model::forward runs ONE pass per input; nothing in the repo
 // combines several forward passes of one input into one prediction.
@@ -153,7 +153,7 @@ static Tensor fixture_E() {
         {{-0.30,  0.30}, { 0.90, -0.90}, { 0.90, -0.90}},   // r4 base RIGHT, agg WRONG
         {{-0.90,  0.90}, {-0.90,  0.90}, {-0.90,  0.90}},   // r5 unanimous c1 strong
         {{-0.55,  0.55}, { 0.06, -0.06}, {-0.55,  0.55}},   // r6 t1 wrong only
-        {{-0.55,  0.55}, {-0.55, -0.55}, { 0.06, -0.06}},   // r7 t2 wrong only
+        {{-0.55,  0.55}, {-0.55,  0.55}, { 0.06, -0.06}},   // r7 t2 wrong only
         {{-1.60,  1.60}, { 0.05, -0.05}, { 0.05, -0.05}},   // r8 2 weak wrong beat vote
         {{ 0.50, -0.50}, {-0.90,  0.90}, { 0.50, -0.50}},   // r9 member 1 alone wrong
     };
@@ -406,6 +406,455 @@ static void test_task1_validation() {
     check("a flip report with mismatched labels throws", threw);
 }
 
+// ---------------------------------------------------------------------------
+// Task 2: the four aggregations
+// ---------------------------------------------------------------------------
+static void test_aggregations() {
+    std::cout << "\n--- Task 2: aggregations on fixture_E ---\n";
+    Tensor e = fixture_E();
+
+    Tensor ml = tta_mean_logits(e, kE_K);
+    check("mean_logits returns (N, K)", ml.rows == kE_N && ml.cols == kE_K);
+    bool ml_ok = true;
+    for (size_t n = 0; n < kE_N; ++n)
+        for (size_t c = 0; c < kE_K; ++c)
+            if (std::fabs(ml(n, c) - kEMeanLogits[n][c]) > 1e-12) ml_ok = false;
+    check("D2: mean_logits matches the oracle (values are LOGITS)", ml_ok);
+
+    Tensor mp = tta_mean_probs(e, kE_K);
+    bool mp_ok = true;
+    for (size_t n = 0; n < kE_N; ++n)
+        for (size_t c = 0; c < kE_K; ++c)
+            if (std::fabs(mp(n, c) - kEMeanProbs[n][c]) > 1e-12) mp_ok = false;
+    check("mean_probs matches the oracle digit-for-digit", mp_ok);
+
+    Tensor geo = tta_geo_mean_probs(e, kE_K);
+    bool geo_ok = true;
+    for (size_t n = 0; n < kE_N; ++n)
+        for (size_t c = 0; c < kE_K; ++c)
+            if (std::fabs(geo(n, c) - kEGeo[n][c]) > 1e-12) geo_ok = false;
+    check("geo_mean_probs (NORMALISED) matches the oracle", geo_ok);
+
+    // D3, the assertion the whole normalisation hangs on. A raw geometric mean
+    // is a SUB-PROBABILITY vector: measured row sums 0.94526606993838813 and
+    // 0.90768902185758782 on the oracle's L1 fixture versus 1 here.
+    double worst_sum = 0.0;
+    for (size_t n = 0; n < kE_N; ++n)
+        worst_sum = std::max(worst_sum,
+                             std::fabs(geo(n, 0) + geo(n, 1) - 1.0));
+    check("D3: geo_mean_probs rows sum to 1 (a raw geometric mean would be "
+          "~0.91-0.95, NOT 1)",
+          worst_sum <= 1e-12);
+
+    double worst_mp_sum = 0.0;
+    for (size_t n = 0; n < kE_N; ++n)
+        worst_mp_sum = std::max(worst_mp_sum,
+                                std::fabs(mp(n, 0) + mp(n, 1) - 1.0));
+    check("mean_probs rows sum to 1", worst_mp_sum <= 1e-12);
+
+    // D6: majority vote returns a ONE-HOT tensor, not counts and not indices.
+    Tensor mv = tta_majority_vote(e, kE_K);
+    bool mv_onehot = true;
+    for (size_t n = 0; n < kE_N; ++n) {
+        double s = 0.0;
+        for (size_t c = 0; c < kE_K; ++c) {
+            s += mv(n, c);
+            if (mv(n, c) != 0.0 && mv(n, c) != 1.0) mv_onehot = false;
+        }
+        if (s != 1.0) mv_onehot = false;
+    }
+    check("D6: majority_vote returns a ONE-HOT (N, K), not counts", mv_onehot);
+
+    const int mvWant[10] = {0, 0, 1, 1, 0, 1, 1, 1, 0, 0};
+    check("majority_vote argmaxes match the oracle", argmax_equals(mv, mvWant, 10));
+
+    // D6 non-vacuity: majority vote is NOT the same as mean_probs. On row 8
+    // two WEAK wrong votes beat one strong right one; mean_probs gets it right
+    // and majority vote does not. Interchanging them would change row 8.
+    check("non-vacuity: majority_vote and mean_probs DISAGREE on row 8",
+          argmax_of(mv)[8] != argmax_of(mp)[8]);
+
+    // D2 non-vacuity: mean_logits is not a probability vector, and its argmax
+    // is not mean_probs' argmax.
+    check("D2: mean_logits is NOT a probability vector (rows do not sum to 1)",
+          !(std::fabs(ml(0, 0) + ml(0, 1) - 1.0) <= 1e-6));
+
+    // D7: shift invariance is ASYMMETRIC. softmax is shift-invariant per
+    // transform, so the probability-space aggregations are invariant and the
+    // logit-space one is not. Measured on the oracle: mean_logits moves by
+    // 3.500000e+00, mean_probs and geo_mean_probs by 0.
+    Tensor shifted = e;
+    for (size_t c = 0; c < shifted.cols; ++c) shifted(1, c) += 7.0;
+
+    Tensor ml_s = tta_mean_logits(shifted, kE_K);
+    Tensor mp_s = tta_mean_probs(shifted, kE_K);
+    Tensor geo_s = tta_geo_mean_probs(shifted, kE_K);
+
+    double d_ml = 0.0, d_mp = 0.0, d_geo = 0.0;
+    for (size_t n = 0; n < kE_N; ++n)
+        for (size_t c = 0; c < kE_K; ++c) {
+            d_ml = std::max(d_ml, std::fabs(ml_s(n, c) - ml(n, c)));
+            d_mp = std::max(d_mp, std::fabs(mp_s(n, c) - mp(n, c)));
+            d_geo = std::max(d_geo, std::fabs(geo_s(n, c) - geo(n, c)));
+        }
+    check("D7: mean_logits is NOT shift-invariant (oracle: 3.5)", d_ml > 1e-6);
+    check("D7: mean_probs IS shift-invariant (oracle: exactly 0)",
+          d_mp <= 1e-15);
+    check("D7: geo_mean_probs IS shift-invariant (oracle: exactly 0)",
+          d_geo <= 1e-15);
+}
+
+// ---------------------------------------------------------------------------
+// Task 2: D3 identity + D5 tie-breaks
+// ---------------------------------------------------------------------------
+static void test_geo_identity_and_tiebreaks() {
+    std::cout << "\n--- Task 2: D3 identity + D5/D6 tie-breaks ---\n";
+
+    // D3: normalised geo == softmax(mean logits). The identity the naive
+    // derivation gets wrong; here it is asserted as a property.
+    Tensor e = fixture_E();
+    Tensor geo = tta_geo_mean_probs(e, kE_K);
+    Tensor ml = tta_mean_logits(e, kE_K);
+
+    double worst = 0.0;
+    for (size_t n = 0; n < kE_N; ++n) {
+        double mx = ml(n, 0);
+        for (size_t c = 1; c < kE_K; ++c) mx = std::max(mx, ml(n, c));
+        double sum = 0.0;
+        for (size_t c = 0; c < kE_K; ++c) sum += std::exp(ml(n, c) - mx);
+        const double log_sum = mx + std::log(sum);
+        for (size_t c = 0; c < kE_K; ++c)
+            worst = std::max(worst,
+                             std::fabs(geo(n, c) - std::exp(ml(n, c) - log_sum)));
+    }
+    check("D3: normalised geo_mean_probs == softmax(mean_logits) (oracle: "
+          "4.4e-16 over 5000 random fixtures)",
+          worst <= 1e-12);
+
+    // D3 on the L1 fixture too -- a DIFFERENT fixture, because an identity that
+    // holds only on one fixture is not pinned.
+    Tensor l1 = fixture_L1();
+    Tensor g1 = tta_geo_mean_probs(l1, 3);
+    Tensor m1 = tta_mean_logits(l1, 3);
+    double w1 = 0.0;
+    for (size_t n = 0; n < 3; ++n) {
+        double mx = m1(n, 0);
+        for (size_t c = 1; c < 3; ++c) mx = std::max(mx, m1(n, c));
+        double sum = 0.0;
+        for (size_t c = 0; c < 3; ++c) sum += std::exp(m1(n, c) - mx);
+        const double ls = mx + std::log(sum);
+        for (size_t c = 0; c < 3; ++c)
+            w1 = std::max(w1, std::fabs(g1(n, c) - std::exp(m1(n, c) - ls)));
+    }
+    check("D3: the identity also holds on the independent L1 fixture", w1 <= 1e-12);
+
+    // D5: an exact 1-1 vote split, fed with the transforms in BOTH orders. A
+    // suite that only ever sees 3-0 or 2-1 splits cannot tell "lowest class index"
+    // apart from "earliest transform wins".
+    Tensor split(2, 2);                       // T=2, N=1, K=2
+    split(0, 0) = 1.0; split(0, 1) = 0.0;    // transform 0 votes class 0
+    split(1, 0) = 0.0; split(1, 1) = 1.0;    // transform 1 votes class 1
+    Tensor a = tta_majority_vote(split, 2);
+    check("D5: a 1-1 split resolves to the LOWEST class index, not the first "
+          "transform (which voted 0 anyway -- the discriminator is below)",
+          a(0, 0) == 1.0 && a(0, 1) == 0.0);
+
+    Tensor split_rev(2, 2);                   // transforms swapped
+    split_rev(0, 0) = 0.0; split_rev(0, 1) = 1.0;
+    split_rev(1, 0) = 1.0; split_rev(1, 1) = 0.0;
+    Tensor b = tta_majority_vote(split_rev, 2);
+    check("D5: swapping the transforms does NOT change the tie-break result "
+          "(an earliest-transform rule would give the opposite here)",
+          b(0, 0) == 1.0 && b(0, 1) == 0.0);
+
+    // D5 non-vacuity: the two splits are genuinely different bundles whose
+    // answers differ under an earliest-transform rule. Assert they differ as
+    // INPUTS, so the pair above is not passing on identical data.
+    bool inputs_differ = false;
+    for (size_t c = 0; c < 2; ++c)
+        if (split(0, c) != split_rev(0, c)) inputs_differ = true;
+    check("non-vacuity: the two 1-1 fixtures really are different bundles",
+          inputs_differ);
+
+    // A 3-way tie with T=3, K=3 -> still the lowest class index.
+    Tensor t3(3, 3);
+    for (size_t r = 0; r < 3; ++r)
+        for (size_t c = 0; c < 3; ++c) t3(r, c) = (r == 0) ? 1.0 : ((r == 1) ? 0.0 : 2.0);
+    Tensor mv3 = tta_majority_vote(t3, 3);
+    check("D5: a 3-way tie goes to class 0 (the lowest index)",
+          mv3(0, 0) == 1.0 && mv3(0, 1) == 0.0 && mv3(0, 2) == 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Task 2: the structural fact -- T=2 cannot fix a row both members miss
+// ---------------------------------------------------------------------------
+static void test_t2_cannot_fix_both_wrong() {
+    std::cout << "\n--- Task 2: structural fact (T=2 convexity) ---\n";
+    // Oracle: 0 counterexamples in 20000 random (T=2, N=1, K=2) fixtures. A
+    // mean of two probability vectors is a CONVEX combination, so if both
+    // members prefer the same class the mean prefers it too. This is why the
+    // end-to-end fixture uses T=3 -- a T=2 test could not demonstrate a gain,
+    // and would be asserting something false if it tried.
+    Tensor z(2, 2);                       // T=2, N=1, K=2
+    z(0, 0) =  2.0; z(0, 1) = -2.0;       // both members prefer class 0
+    z(1, 0) =  1.0; z(1, 1) = -1.0;
+    Tensor agg = tta_mean_probs(z, 2);
+    check("T=2: both members preferring class 0 forces the aggregate to class 0",
+          agg(0, 0) > agg(0, 1));
+
+    // And T=3 admits a repair the T=2 fixture cannot -- but the margin is
+    // NOT "the right member is stronger", which is what my first draft of this
+    // fixture assumed and what made it unsatisfiable.
+    //
+    // Measured law, K=2, members (w,-w), (w,-w), (-s,s): with
+    // p = sigmoid(2w) and r = sigmoid(2s), class 1 takes the MEAN iff
+    //     2(1-p) + r > 2p + (1-r)   <=>   r > 2p - 1/2.
+    // Since r <= 1 always, this REQUIRES p < 0.75, i.e. 2w < ln 3, i.e.
+    //     w < 0.5493061443340549.
+    // The weak WRONG members must therefore be weak in the ABSOLUTE sense
+    // (near the 0.5 boundary), not merely weaker than the strong member. The
+    // first draft used w = 1.0 > 0.5493, so the assertion was UNSATISFIABLE at
+    // every value of s -- no fixture of that shape can pass, and an
+    // unsatisfiable assertion is worse than none because it trains the reader
+    // to believe it proves something.
+    Tensor z3(3, 2);
+    z3(0, 0) =  0.30; z3(0, 1) = -0.30;    // class 0, GENUINELY weak (w = 0.30)
+    z3(1, 0) =  0.30; z3(1, 1) = -0.30;    // class 0
+    z3(2, 0) = -1.50; z3(2, 1) =  1.50;    // class 1, strong
+    Tensor agg3 = tta_mean_probs(z3, 2);
+    check("T=3: the same disagreement shape IS repairable (2 genuinely-weak "
+          "wrong vs 1 strong right; w < ln(3)/2 = 0.5493061443340549)",
+          agg3(0, 1) > agg3(0, 0));
+
+    // The boundary itself, pinned from BOTH sides -- an off-by-one class of
+    // error needs a fixture containing the exact threshold, and the threshold
+    // is a closed form here (s > 0.666428 at w = 0.30).
+    Tensor zlow(3, 2);
+    zlow(0, 0) =  0.30; zlow(0, 1) = -0.30;
+    zlow(1, 0) =  0.30; zlow(1, 1) = -0.30;
+    zlow(2, 0) = -0.60; zlow(2, 1) =  0.60;    // s = 0.60 < 0.666428
+    Tensor agg_low = tta_mean_probs(zlow, 2);
+    check("T=3: just BELOW the threshold the weak majority wins (s=0.60 < "
+          "0.666428) -- pins the boundary from one side",
+          agg_low(0, 0) > agg_low(0, 1));
+
+    // And the converse structural fact, which is the reason the fixture above
+    // needed a boundary at all: with the weak members at w = 1.0 (> ln(3)/2) no
+    // value of s can flip it. Asserted as a fact about the LAW, not as a claim
+    // that the code can produce it.
+    Tensor zbig(3, 2);
+    zbig(0, 0) =  1.0; zbig(0, 1) = -1.0;
+    zbig(1, 0) =  1.0; zbig(1, 1) = -1.0;
+    zbig(2, 0) = -50.0; zbig(2, 1) = 50.0;   // an arbitrarily strong member
+    Tensor agg_big = tta_mean_probs(zbig, 2);
+    check("structural law: at w = 1.0 (> ln(3)/2) NO strength of the single "
+          "right member can flip the mean -- the original unsatisfiable case, "
+          "now asserted as the reason the fixture above needed w = 0.30",
+          agg_big(0, 0) > agg_big(0, 1));
+}
+
+// ---------------------------------------------------------------------------
+// Task 3: weights (D8)
+// ---------------------------------------------------------------------------
+static void test_weights() {
+    std::cout << "\n--- Task 3: weights (D8) ---\n";
+    Tensor l1 = fixture_L1();                       // T=2, N=3, K=3
+    Tensor e = fixture_E();                         // T=3, N=10, K=2
+
+    // EQUAL weights reproduce the unweighted answer to EXACTLY 0.0 -- measured,
+    // not "within a tolerance". The normalisation is what makes this hold for
+    // {2, 2} as well as {1, 1}.
+    const std::vector<double> eq2 = {2.0, 2.0};
+    Tensor a = tta_mean_logits(l1, 3, eq2);
+    Tensor b = tta_mean_logits(l1, 3);
+    check_close("D8: EQUAL weights reproduce the unweighted mean_logits to "
+                "EXACTLY 0.0", a(0, 0) - b(0, 0), 0.0, 0.0);
+    check_close("D8: equal weights on mean_probs are also exactly equal",
+                tta_mean_probs(l1, 3, eq2)(0, 0) - tta_mean_probs(l1, 3)(0, 0),
+                0.0, 0.0);
+    check_close("D8: equal weights on geo_mean_probs are also exactly equal",
+                tta_geo_mean_probs(l1, 3, eq2)(0, 0) -
+                    tta_geo_mean_probs(l1, 3)(0, 0),
+                0.0, 0.0);
+
+    // SCALED weights are equivalent -- {1,3} == {2,6}, which is the observable
+    // consequence of normalising internally.
+    const std::vector<double> w13 = {1.0, 3.0};
+    const std::vector<double> w26 = {2.0, 6.0};
+    check_close("D8: weights are NORMALISED internally: {1,3} == {2,6}",
+                tta_mean_logits(l1, 3, w13)(0, 0) -
+                    tta_mean_logits(l1, 3, w26)(0, 0),
+                0.0, 0.0);
+
+    // UNEQUAL weights genuinely change the answer -- otherwise the parameter is
+    // being ignored, which no value assertion above would catch.
+    const std::vector<double> wE = {1.0, 1.0, 2.0};
+    double d = std::fabs(tta_mean_logits(e, 2, wE)(4, 0) -
+                         tta_mean_logits(e, 2)(4, 0));
+    check("non-vacuity: unequal weights DO change mean_logits", d > 1e-6);
+
+    // Oracle: weighted mean_logits of L1 with {1,3} -> normalised {0.25, 0.75}.
+    Tensor wl = tta_mean_logits(l1, 3, w13);
+    const double want[3][3] = {
+        {0.625,  0.0625, -0.6875},
+        {0.75,   0.75,    0.75},
+        {-1.25,  2.625,   2.125},
+    };
+    bool wl_ok = true;
+    for (size_t n = 0; n < 3; ++n)
+        for (size_t c = 0; c < 3; ++c)
+            if (std::fabs(wl(n, c) - want[n][c]) > 1e-12) wl_ok = false;
+    check("weighted mean_logits matches the oracle for {1, 3}", wl_ok);
+
+    // D8 rejections.
+    bool threw = false;
+    try { tta_mean_logits(e, 2, {1.0}); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: weights must have one entry per transform", threw);
+
+    threw = false;
+    try { tta_mean_logits(e, 2, {1.0, -1.0, 1.0}); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: a negative weight throws", threw);
+
+    threw = false;
+    try { tta_mean_logits(e, 2, {0.0, 0.0, 0.0}); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: all-zero weights throw rather than dividing by zero", threw);
+
+    // A single transform is not an aggregation.
+    Tensor one(1, 20);
+    for (size_t c = 0; c < 20; ++c) one(0, c) = c * 0.1;
+    threw = false;
+    try { tta_mean_logits(one, 2); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: T == 1 throws (a single transform is not an aggregation)", threw);
+
+    threw = false;
+    try { tta_mean_probs(one, 2); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: T == 1 throws for mean_probs too", threw);
+
+    threw = false;
+    try { tta_majority_vote(one, 2); } catch (const std::invalid_argument&) { threw = true; }
+    check("D8: T == 1 throws for majority_vote too", threw);
+
+    // A vote has no notion of a weight; accepting one and ignoring it would be
+    // a silent no-op.
+    threw = false;
+    try { tta_aggregate(e, 2, TtaAggregation::MajorityVote, {1.0, 2.0, 3.0}); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check("D8: majority_vote REFUSES weights rather than silently ignoring them",
+          threw);
+}
+
+// ---------------------------------------------------------------------------
+// Task 3: dispatcher identity
+// ---------------------------------------------------------------------------
+static void test_dispatcher() {
+    std::cout << "\n--- Task 3: dispatcher identity ---\n";
+    Tensor e = fixture_E();
+    // The dispatcher must return exactly what the cores return, for all four
+    // values -- otherwise the enum becomes a second implementation that can
+    // drift from the first.
+    struct { TtaAggregation how; const char* name; } all[] = {
+        {TtaAggregation::MeanLogits,   "MeanLogits"},
+        {TtaAggregation::MeanProbs,    "MeanProbs"},
+        {TtaAggregation::GeoMeanProbs, "GeoMeanProbs"},
+        {TtaAggregation::MajorityVote, "MajorityVote"},
+    };
+    bool all_match = true;
+    for (const auto& a : all) {
+        Tensor d = tta_aggregate(e, 2, a.how);
+        Tensor direct = (a.how == TtaAggregation::MeanLogits)
+                            ? tta_mean_logits(e, 2)
+                            : (a.how == TtaAggregation::MeanProbs)
+                                ? tta_mean_probs(e, 2)
+                                : (a.how == TtaAggregation::GeoMeanProbs)
+                                    ? tta_geo_mean_probs(e, 2)
+                                    : tta_majority_vote(e, 2);
+        if (d.rows != direct.rows || d.cols != direct.cols) all_match = false;
+        for (size_t i = 0; i < d.rows && i < direct.rows; ++i)
+            for (size_t c = 0; c < d.cols && c < direct.cols; ++c)
+                if (std::fabs(d(i, c) - direct(i, c)) > 1e-15) all_match = false;
+    }
+    check("tta_aggregate returns exactly the free function's result for all "
+          "four enum values (the dispatcher cannot drift from the cores)",
+          all_match);
+
+    // And the dispatcher's weighted path matches the core's weighted path.
+    Tensor w1 = tta_aggregate(e, 2, TtaAggregation::MeanLogits, {1.0, 1.0, 2.0});
+    Tensor w2 = tta_mean_logits(e, 2, {1.0, 1.0, 2.0});
+    check("the dispatcher's weighted path matches the core's",
+          std::fabs(w1(4, 0) - w2(4, 0)) <= 1e-15);
+}
+
+// ---------------------------------------------------------------------------
+// Task 3: END TO END -- the headline, and the paper's finding (D9)
+// ---------------------------------------------------------------------------
+static void test_end_to_end() {
+    std::cout << "\n--- Task 3: end-to-end ---\n";
+    Tensor e = fixture_E();
+    std::vector<int> labels(kELabels, kELabels + 10);
+
+    // The HEADLINE: aggregation strictly beats EVERY individual member, and
+    // beats majority vote. Oracle: members 0.70 / 0.70 / 0.60, aggregate 0.80,
+    // majority vote 0.70.
+    int m0 = accuracy_of(tta_transform_view(e, 0, kE_K));
+    int m1 = accuracy_of(tta_transform_view(e, 1, kE_K));
+    int m2 = accuracy_of(tta_transform_view(e, 2, kE_K));
+    int agg_acc = accuracy_of(tta_mean_probs(e, kE_K));
+    int vote_acc = accuracy_of(tta_majority_vote(e, kE_K));
+
+    check("oracle: member accuracies are 7, 7, 6",
+          m0 == 7 && m1 == 7 && m2 == 6);
+    check("oracle: majority_vote gets 7", vote_acc == 7);
+    check("HEADLINE: aggregation gets 8 -- strictly better than EVERY member",
+          agg_acc == 8);
+    check("HEADLINE: aggregation beats majority_vote too", agg_acc > vote_acc);
+    check("the aggregate is at least as good as the best member",
+          agg_acc >= std::max(m0, std::max(m1, m2)));
+
+    // All three probability-space aggregations agree here; assert it, because a
+    // silent change in one of them should be noticed.
+    check("mean_probs and geo_mean_probs give the same argmaxes on this fixture",
+          argmax_of(tta_mean_probs(e, kE_K)) ==
+              argmax_of(tta_geo_mean_probs(e, kE_K)));
+
+    // D9 -- the paper's actual finding, now measured on a real aggregate.
+    Tensor base = tta_transform_view(e, 0, kE_K);
+    Tensor agg = tta_mean_probs(e, kE_K);
+    TtaFlipReport r = tta_flip_report(base, agg, labels);
+    check("D9: changed == 3", r.changed == 3);
+    check("D9: correct_to_incorrect == 1 -- the aggregate LOSES a prediction "
+          "the base member got RIGHT", r.correct_to_incorrect == 1);
+    check("D9: incorrect_to_correct == 2", r.incorrect_to_correct == 2);
+    check("D9: c2i + i2c == changed",
+          r.changed == r.correct_to_incorrect + r.incorrect_to_correct);
+    check("D9: net_change() == +1 WHILE a correct prediction was lost -- this "
+          "is exactly the case a net-only report cannot see",
+          r.net_change() == 1 && r.correct_to_incorrect == 1);
+
+    // LIVENESS (the adversarial session's lesson): assert the base member SPLITS
+    // its predictions, so a constant-predictor collapse cannot satisfy the
+    // comparison above.
+    std::vector<size_t> base_a = argmax_of(base);
+    std::vector<size_t> agg_a = argmax_of(agg);
+    int base_split = 0, agg_split = 0;
+    for (size_t i = 1; i < base_a.size(); ++i)
+        if (base_a[i] != base_a[0]) ++base_split;
+    for (size_t i = 1; i < agg_a.size(); ++i)
+        if (agg_a[i] != agg_a[0]) ++agg_split;
+    check("liveness: the base member SPLITS its predictions (not a constant "
+          "predictor, which would make the accuracy comparison vacuous)",
+          base_split >= 5);
+    check("liveness: the aggregate SPLITS its predictions", agg_split >= 5);
+    check("liveness: neither is at chance (5/10)", m0 > 5 && agg_acc > 5);
+
+    // Determinism across rebuilds (D-safety): same input, bit-identical output.
+    Tensor again = tta_mean_probs(fixture_E(), kE_K);
+    bool same = true;
+    for (size_t i = 0; i < agg.rows; ++i)
+        for (size_t c = 0; c < agg.cols; ++c)
+            if (again(i, c) != agg(i, c)) same = false;
+    check("aggregation is deterministic (bit-identical on a fresh fixture)", same);
+}
+
 int main() {
     std::cout << std::scientific << std::setprecision(12);
     std::cout << "==========================================================\n";
@@ -416,6 +865,12 @@ int main() {
     test_bundle_and_argmax();
     test_flip_report();
     test_task1_validation();
+    test_aggregations();
+    test_geo_identity_and_tiebreaks();
+    test_t2_cannot_fix_both_wrong();
+    test_weights();
+    test_dispatcher();
+    test_end_to_end();
 
     std::cout << "\n=== Summary: " << passed << " passed, " << failed
               << " failed ===" << std::endl;

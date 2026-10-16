@@ -1,4 +1,5 @@
 #include "tta.h"
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -148,4 +149,195 @@ TtaFlipReport tta_flip_report(const Tensor& base, const Tensor& candidate,
         else            ++r.incorrect_to_correct;
     }
     return r;
+}
+
+// ===========================================================================
+// AGGREGATIONS
+// ===========================================================================
+namespace {
+
+// Shared validation + weight normalisation (D8).
+struct BundlePlan {
+    size_t num_transforms;
+    size_t num_rows;
+    size_t num_classes;
+    std::vector<double> w;          // normalised, sums to 1
+};
+
+BundlePlan plan_aggregation(const Tensor& bundle, size_t num_classes,
+                            const std::vector<double>& weights) {
+    require(num_classes > 0,
+            "tta: num_classes must be > 0");
+    require(bundle.rows > 0,
+            "tta: the bundle must have at least one transform");
+    require(bundle.cols % num_classes == 0,
+            "tta: bundle width must be a multiple of num_classes, got width " +
+            std::to_string(bundle.cols) + " and num_classes " +
+            std::to_string(num_classes));
+
+    // D8: T == 1 is not an aggregation. Returning the single member's logits
+    // unchanged would silently hide a mis-wired pipeline that was supposed to
+    // apply several transforms.
+    require(bundle.rows > 1,
+            "tta: aggregation requires at least 2 transforms, got " +
+            std::to_string(bundle.rows) +
+            " -- a single transform is not an aggregation");
+
+    BundlePlan p;
+    p.num_transforms = bundle.rows;
+    p.num_classes = num_classes;
+    p.num_rows = bundle.cols / num_classes;
+
+    if (weights.empty()) {
+        p.w.assign(p.num_transforms,
+                   1.0 / static_cast<double>(p.num_transforms));
+        return p;
+    }
+
+    require(weights.size() == p.num_transforms,
+            "tta: weights must have one entry per transform, got " +
+            std::to_string(weights.size()) + " for " +
+            std::to_string(p.num_transforms) + " transforms");
+
+    double total = 0.0;
+    for (double v : weights) {
+        require(v >= 0.0, "tta: weights must be non-negative");
+        total += v;
+    }
+    require(total > 0.0, "tta: weights must not sum to zero");
+    p.w.resize(weights.size());
+    for (size_t i = 0; i < weights.size(); ++i)
+        p.w[i] = weights[i] / total;
+    return p;
+}
+
+// Numerically stable softmax of one row, written straight into `out`.
+void softmax_row_into(const Tensor& bundle, size_t transform, size_t row,
+                      size_t k, Tensor& out) {
+    double mx = bundle(transform, row * k);
+    for (size_t j = 1; j < k; ++j)
+        mx = std::max(mx, bundle(transform, row * k + j));
+    double sum = 0.0;
+    for (size_t j = 0; j < k; ++j)
+        sum += std::exp(bundle(transform, row * k + j) - mx);
+    for (size_t j = 0; j < k; ++j)
+        out(row, j) = std::exp(bundle(transform, row * k + j) - mx) / sum;
+}
+
+}  // namespace
+
+// D2 -- returns LOGITS, not probabilities.
+Tensor tta_mean_logits(const Tensor& bundle, size_t num_classes,
+                       const std::vector<double>& weights) {
+    const BundlePlan p = plan_aggregation(bundle, num_classes, weights);
+    Tensor out(p.num_rows, p.num_classes);
+    for (size_t t = 0; t < p.num_transforms; ++t)
+        for (size_t n = 0; n < p.num_rows; ++n)
+            for (size_t c = 0; c < p.num_classes; ++c)
+                out(n, c) += p.w[t] * bundle(t, n * p.num_classes + c);
+    return out;
+}
+
+Tensor tta_mean_probs(const Tensor& bundle, size_t num_classes,
+                      const std::vector<double>& weights) {
+    const BundlePlan p = plan_aggregation(bundle, num_classes, weights);
+    Tensor probs(p.num_rows, p.num_classes);
+    Tensor out(p.num_rows, p.num_classes);
+    for (size_t t = 0; t < p.num_transforms; ++t) {
+        for (size_t n = 0; n < p.num_rows; ++n) {
+            softmax_row_into(bundle, t, n, p.num_classes, probs);
+            for (size_t c = 0; c < p.num_classes; ++c)
+                out(n, c) += p.w[t] * probs(n, c);
+        }
+    }
+    return out;
+}
+
+// D3 -- the normalisation here is the whole point.
+//
+// Computed in LOG space: each member contributes `log_softmax(z_t)` directly
+// rather than `log(softmax(z_t))`, so no intermediate is ever a logarithm of a
+// probability that may have underflowed to exactly zero (which happens once a
+// logit gap exceeds ~745 -- the regime the knowledge-distillation suite had to
+// build a separate fixture for).
+Tensor tta_geo_mean_probs(const Tensor& bundle, size_t num_classes,
+                          const std::vector<double>& weights) {
+    const BundlePlan p = plan_aggregation(bundle, num_classes, weights);
+    Tensor acc(p.num_rows, p.num_classes);
+    for (size_t t = 0; t < p.num_transforms; ++t)
+        for (size_t n = 0; n < p.num_rows; ++n) {
+            double mx = bundle(t, n * p.num_classes);
+            for (size_t c = 1; c < p.num_classes; ++c)
+                mx = std::max(mx, bundle(t, n * p.num_classes + c));
+            double sum = 0.0;
+            for (size_t c = 0; c < p.num_classes; ++c)
+                sum += std::exp(bundle(t, n * p.num_classes + c) - mx);
+            const double log_sum = mx + std::log(sum);
+            for (size_t c = 0; c < p.num_classes; ++c)
+                acc(n, c) += p.w[t] * (bundle(t, n * p.num_classes + c) - log_sum);
+        }
+
+    Tensor out(p.num_rows, p.num_classes);
+    for (size_t n = 0; n < p.num_rows; ++n) {
+        double mx = acc(n, 0);
+        for (size_t c = 1; c < p.num_classes; ++c) mx = std::max(mx, acc(n, c));
+        double sum = 0.0;
+        for (size_t c = 0; c < p.num_classes; ++c) sum += std::exp(acc(n, c) - mx);
+        for (size_t c = 0; c < p.num_classes; ++c)
+            out(n, c) = std::exp(acc(n, c) - mx) / sum;
+    }
+    return out;
+}
+
+// D5 / D6 -- plurality over per-transform argmaxes, returned one-hot.
+Tensor tta_majority_vote(const Tensor& bundle, size_t num_classes) {
+    require(num_classes > 0, "tta_majority_vote: num_classes must be > 0");
+    require(bundle.rows > 0, "tta_majority_vote: bundle must have transforms");
+    require(bundle.cols % num_classes == 0,
+            "tta_majority_vote: bundle width must be a multiple of num_classes");
+    require(bundle.rows > 1,
+            "tta_majority_vote: a vote needs at least 2 transforms, got " +
+            std::to_string(bundle.rows));
+
+    const size_t n = bundle.cols / num_classes;
+    Tensor out(n, num_classes);
+    for (size_t i = 0; i < n; ++i) {
+        std::vector<double> votes(num_classes, 0.0);
+        for (size_t t = 0; t < bundle.rows; ++t) {
+            // D4 applies here too: the per-transform argmax must use the same
+            // tie-break as tta_argmax, or a tied member would vote for a
+            // different class depending on which helper is used.
+            size_t best = 0;
+            for (size_t c = 1; c < num_classes; ++c)
+                if (bundle(t, i * num_classes + c) >
+                    bundle(t, i * num_classes + best)) best = c;
+            votes[best] += 1.0;
+        }
+        // D5: ties go to the LOWEST class index (strict `>`), NOT to the
+        // earliest transform that voted. Those rules disagree on a 1-1 split.
+        size_t best = 0;
+        for (size_t c = 1; c < num_classes; ++c)
+            if (votes[c] > votes[best]) best = c;
+        out(i, best) = 1.0;
+    }
+    return out;
+}
+
+Tensor tta_aggregate(const Tensor& bundle, size_t num_classes,
+                    TtaAggregation how, const std::vector<double>& weights) {
+    switch (how) {
+        case TtaAggregation::MeanLogits:
+            return tta_mean_logits(bundle, num_classes, weights);
+        case TtaAggregation::MeanProbs:
+            return tta_mean_probs(bundle, num_classes, weights);
+        case TtaAggregation::GeoMeanProbs:
+            return tta_geo_mean_probs(bundle, num_classes, weights);
+        case TtaAggregation::MajorityVote:
+            // A vote has no notion of a weight, so accepting one here would
+            // silently drop it. Refuse rather than ignore.
+            require(weights.empty(),
+                    "tta_aggregate: majority_vote does not accept weights");
+            return tta_majority_vote(bundle, num_classes);
+    }
+    throw std::invalid_argument("tta_aggregate: unknown aggregation");
 }
