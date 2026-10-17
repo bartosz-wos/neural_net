@@ -81,6 +81,7 @@
 #include "utils/vqcodebook.h"
 #include "utils/tta.h"
 #include "utils/ortho_penalty.h"
+#include "utils/ptq.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
 #include "utils/training_history.h"
