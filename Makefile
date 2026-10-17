@@ -248,6 +248,9 @@ $(BUILD_DIR)/test_vqcodebook: $(LIB_OBJS) $(BUILD_DIR)/test_vqcodebook.o
 $(BUILD_DIR)/test_tta: $(LIB_OBJS) $(BUILD_DIR)/test_tta.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_ortho_penalty: $(LIB_OBJS) $(BUILD_DIR)/test_ortho_penalty.o
+	$(CXX) $^ -o $@
+
 # Print the fully-expanded link set, one object per line. Exists because
 # `LIB_OBJS` is a RECURSIVE make variable (`:=` over a `$(LIB_SRCS:...)`
 # substitution reference), so its literal text in the Makefile contains no `.o`
@@ -853,7 +856,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_randomized_smoothing $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_layer_scale $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
+$(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_ortho_penalty $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -1008,6 +1011,7 @@ run_tests: tests
 	@echo "=== Running test_vq_vae ==="; if ./$(BUILD_DIR)/test_vq_vae; then :; else echo "test_vq_vae" >> .run_tests_failed; fi
 	@echo "=== Running test_vqcodebook ==="; if ./$(BUILD_DIR)/test_vqcodebook; then :; else echo "test_vqcodebook" >> .run_tests_failed; fi
 	@echo "=== Running test_tta ==="; if ./$(BUILD_DIR)/test_tta; then :; else echo "test_tta" >> .run_tests_failed; fi
+	@echo "=== Running test_ortho_penalty ==="; if ./$(BUILD_DIR)/test_ortho_penalty; then :; else echo "test_ortho_penalty" >> .run_tests_failed; fi
 	@echo "=== Running test_randomized_smoothing ==="; if ./$(BUILD_DIR)/test_randomized_smoothing; then :; else echo "test_randomized_smoothing" >> .run_tests_failed; fi
 	@echo "=== Running test_model_ema ==="; if ./$(BUILD_DIR)/test_model_ema; then :; else echo "test_model_ema" >> .run_tests_failed; fi
 	@echo "=== Running test_integrated_gradients ==="; if ./$(BUILD_DIR)/test_integrated_gradients; then :; else echo "test_integrated_gradients" >> .run_tests_failed; fi
