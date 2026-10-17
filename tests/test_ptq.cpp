@@ -515,6 +515,208 @@ static void test_quantize_aware_training_reduces_loss() {
     check(wsum > 0.0, "the first layer still holds non-zero weights (liveness)");
 }
 
+// ---------------------------------------------------------------------------
+// Test 16: added because mutation M12 SURVIVED, and the probe said why.
+//   M12 removes the write-back `*p = w_hat;`, so `ptq_quantize_model` reports
+//   work it does not do. The end-to-end accuracy assertion CANNOT see it: an
+//   UN-quantized model is trivially within the 5% tolerance of the float one.
+//   *A test that only checks an outcome cannot see a bug in how that outcome is
+//   produced* -- the same lesson the ortho-penalty session recorded for its
+//   gradient-accumulator overwrite.
+//
+//   The discriminator is GRID MEMBERSHIP: after quantization every weight must
+//   satisfy |w/scale - round(w/scale)| == 0, i.e. it is exactly on the grid.
+// ---------------------------------------------------------------------------
+static void test_quantize_model_actually_writes_the_grid() {
+    Model m;
+    m.add_layer(new Dense(5, 7));
+    m.add_layer(new Dense(7, 3));
+    srandom(24680u);
+
+    PtqReport rep = ptq_quantize_model(m, PtqGranularity::kPerChannel);
+    check(rep.num_tensors > 0, "quantize_model reports touching tensors");
+
+    // Every parameter must now lie EXACTLY on its per-channel int8 grid.
+    double worst_off_grid = 0.0;
+    int checked = 0;
+    for (auto& layer : m.layers) {
+        std::vector<Tensor*> ps = layer->parameters();
+        for (Tensor* p : ps) {
+            if (p->rows == 0 || p->cols == 0) continue;
+            Tensor scales = ptq_scale_per_channel(*p);
+            for (size_t i = 0; i < p->rows; ++i) {
+                for (size_t j = 0; j < p->cols; ++j) {
+                    double s = scales[0][j];
+                    if (s == 0.0) continue;
+                    double code = (*p)[i][j] / s;
+                    worst_off_grid =
+                        std::fmax(worst_off_grid,
+                                  std::fabs(code - std::floor(code + 0.5)));
+                    ++checked;
+                }
+            }
+        }
+    }
+    std::printf("  grid membership: %d entries checked, worst off-grid = %.3e\n",
+                checked, worst_off_grid);
+    check(checked > 0, "the grid check actually examined weights (liveness)");
+    // Tolerance rather than exactly 0.0 because `w_hat = q*scale` and then
+    // `w_hat/scale` is a division round-trip, not the original integer.
+    check(worst_off_grid < 1e-9,
+          "every quantized weight lies on the int8 grid (catches M12)");
+
+    // And the report must be non-degenerate: a report of zero error over a
+    // non-zero tensor would itself be a lie.
+    check(rep.max_abs_err > 0.0,
+          "the report's max error is non-zero on non-trivial weights");
+    check(rep.rel_l2_err > 0.0,
+          "the report's relative L2 error is non-zero on non-trivial weights");
+}
+
+// ---------------------------------------------------------------------------
+// Test 17: added because mutation M15 SURVIVED. The mismatched-scale-width
+//   guard is unreachable from the internal callers, so only a DIRECT external
+//   call can reach it -- and the suite made none.
+// ---------------------------------------------------------------------------
+static void test_dequantize_per_channel_rejects_mismatched_scales() {
+    Tensor codes(2, 3);
+    codes[0][0] = 1; codes[0][1] = 2; codes[0][2] = 3;
+    codes[1][0] = -1; codes[1][1] = -2; codes[1][2] = -3;
+
+    Tensor good(1, 3);
+    good[0][0] = 0.1; good[0][1] = 0.2; good[0][2] = 0.3;
+    Tensor out = ptq_dequantize_per_channel(codes, good);
+    check(out.rows == 2 && out.cols == 3, "matching scales dequantize fine");
+
+    bool threw_width = false;
+    try {
+        Tensor bad(1, 2);                      // wrong width
+        bad[0][0] = 0.1; bad[0][1] = 0.2;
+        (void)ptq_dequantize_per_channel(codes, bad);
+    } catch (const std::invalid_argument&) {
+        threw_width = true;
+    }
+    check(threw_width,
+          "a scales tensor of the wrong WIDTH throws (catches M15)");
+
+    bool threw_rows = false;
+    try {
+        Tensor bad(2, 3);                      // wrong height
+        (void)ptq_dequantize_per_channel(codes, bad);
+    } catch (const std::invalid_argument&) {
+        threw_rows = true;
+    }
+    check(threw_rows, "a scales tensor of the wrong HEIGHT throws");
+}
+
+// ---------------------------------------------------------------------------
+// Test 18: added because mutation M10 SURVIVED. `>` vs `>=` in the argmax is
+//   invisible unless a fixture contains an EXACT tie.
+//
+//   MEASURED by exhaustive enumeration (probe): over all 120 logit vectors of
+//   length 1-4 drawn from {0, 1, 2}, 105 contain an exact tie, and the two
+//   rules DIFFER on 60 of them. So the tie is common and the discriminator is
+//   cheap -- the suite simply had no tie in it.
+// ---------------------------------------------------------------------------
+static void test_argmax_tie_goes_to_lowest_index() {
+    // (a) The tie is at the maximum: [1.0, 2.0, 2.0] -> lowest index 1, NOT 2.
+    Tensor t(1, 3);
+    t[0][0] = 1.0; t[0][1] = 2.0; t[0][2] = 2.0;
+    check(ptq_argmax_rows(t)[0][0] == 1.0,
+          "argmax tie at the top goes to the LOWEST index");
+
+    // (b) A tie that does NOT include index 0, which `>=` would resolve to the
+    //     last index and a fixture where class 0 wins would never see.
+    Tensor u(1, 3);
+    u[0][0] = 5.0; u[0][1] = 1.0; u[0][2] = 3.0;
+    check(ptq_argmax_rows(u)[0][0] == 0.0,
+          "a strictly-greater value at index 0 wins over later ones");
+
+    // (c) Full tie across every column.
+    Tensor v(1, 4);
+    for (size_t c = 0; c < 4; ++c) v[0][c] = 3.0;
+    check(ptq_argmax_rows(v)[0][0] == 0.0,
+          "an all-equal row returns index 0");
+
+    // (d) Ties on the two-row fixture: a strictly-greater value at index 1 with
+    //     a tied value at index 2 -- the asymmetric case.
+    Tensor w(2, 3);
+    w[0][0] = 0.0; w[0][1] = 7.0; w[0][2] = 7.0;
+    w[1][0] = 9.0; w[1][1] = 9.0; w[1][2] = 0.0;
+    Tensor p = ptq_argmax_rows(w);
+    check(p[0][0] == 1.0, "row 0 tie -> lowest index 1");
+    check(p[1][0] == 0.0, "row 1 tie -> lowest index 0");
+
+    // (e) A single-column row: the only index is 0.
+    Tensor s(2, 1);
+    s[0][0] = 4.0; s[1][0] = -4.0;
+    Tensor sp = ptq_argmax_rows(s);
+    check(sp[0][0] == 0.0 && sp[1][0] == 0.0,
+          "a single-column row always returns index 0");
+}
+
+// ---------------------------------------------------------------------------
+// Test 19: added because mutation M11 SURVIVED, and the probe localised it.
+//   M11 replaces ptq_relative_l2's zero-denominator guard with `0.0 / 0.0`,
+//   which the compiler evaluates to NaN (MEASURED: -nan, isnan == 1). The guard
+//   fires only when the reference tensor `w` is EXACTLY all-zero, and no
+//   fixture called the metric with one -- so the mutation was unreachable rather
+//   than inert.
+//
+//   This is D4 on the METRIC side: 0/0 is the same trap as the quantizer's, in
+//   the same file, one function over.
+// ---------------------------------------------------------------------------
+static void test_relative_l2_on_zero_tensor_is_zero_not_nan() {
+    Tensor z(2, 3);                       // all-zero
+    double v = ptq_relative_l2(z, z);
+    std::printf("  relative_l2(zeros, zeros) = %.17g\n", v);
+    check(!std::isnan(v), "relative_l2 of two zero tensors is NOT NaN (catches M11)");
+    check(v == 0.0, "relative_l2 of two zero tensors is exactly 0");
+
+    // The other branch of the same guard: a zero reference with a NON-zero
+    // estimate must return the raw squared error, not NaN and not 0.
+    Tensor est(2, 3);
+    est[0][0] = 1.0; est[1][1] = 1.0;      // two unit errors
+    double v2 = ptq_relative_l2(z, est);
+    check(!std::isnan(v2), "zero reference with a non-zero estimate is not NaN");
+    check_close(v2, 2.0, 1e-15,
+                "zero reference returns the raw sum of squared errors");
+}
+
+// ---------------------------------------------------------------------------
+// Test 20: mutation M08 was PROVED INERT and is re-checked every run by the
+//   harness's INVERTED-verdict function (see tests/mutation_ptq.sh).
+//
+//   The measurement: ptq_dequantize's zero-scale guard returns zeros, and the
+//   unguarded path computes codes * scale. For every FINITE scale s and finite
+//   code c these agree when s == 0, because IEEE 754 defines c * 0.0 == 0.0 for
+//   any finite c -- 127 * 0.0 is 0.0, not NaN. NaN requires 0 * inf or inf * 0,
+//   and `scale` is a finite double here.
+//   MEASURED over the cross product {0, 1e-320, 1e-12, 1e-6, 1} x
+//   {0, +-1, +-127, 0.5}: ZERO differing cases.
+//
+//   So the guard documents D4 rather than implementing it, and the assertion
+//   below pins the PROPERTY the guard was there to express.
+// ---------------------------------------------------------------------------
+static void test_dequantize_zero_scale_property() {
+    Tensor codes(1, 4);
+    codes[0][0] = 127.0; codes[0][1] = -127.0; codes[0][2] = 1.0; codes[0][3] = 0.0;
+    Tensor out = ptq_dequantize(codes, 0.0);
+    bool all_zero = true, any_nan = false;
+    for (size_t j = 0; j < codes.cols; ++j) {
+        if (out[0][j] != 0.0) all_zero = false;
+        if (std::isnan(out[0][j])) any_nan = true;
+    }
+    check(all_zero,
+          "dequantizing NON-ZERO codes by a zero scale gives exact zeros "
+          "(IEEE 754: c*0.0 == 0.0)");
+    check(!any_nan, "a zero scale never yields NaN even for non-zero codes");
+
+    // A subnormal scale is finite and must behave like any other finite scale.
+    Tensor tiny = ptq_dequantize(codes, 1e-320);
+    check(!std::isnan(tiny[0][0]), "a subnormal scale does not produce NaN");
+}
+
 int main() {
     test_per_tensor_scale();
     test_codes_and_saturation();
@@ -532,6 +734,11 @@ int main() {
     test_straight_through_is_identity();
     test_end_to_end_accuracy_preserved();
     test_quantize_aware_training_reduces_loss();
+    test_quantize_model_actually_writes_the_grid();
+    test_dequantize_per_channel_rejects_mismatched_scales();
+    test_argmax_tie_goes_to_lowest_index();
+    test_relative_l2_on_zero_tensor_is_zero_not_nan();
+    test_dequantize_zero_scale_property();
 
     std::printf("=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
