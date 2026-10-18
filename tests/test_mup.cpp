@@ -380,6 +380,34 @@ static void test_zero_dimensions_throw() {
                  "D7 init_var_input(0) throws");
     check_throws([] { (void)mup_attn_scale_rel(8, 0); },
                  "D7 attn_scale_rel throws on base_head 0");
+
+    // Every guarded entry point, one by one. Mutation M09 (dropping the
+    // `require_nonzero` from `mup_init_var_hidden`) SURVIVED the first run
+    // because this function had no assertion of its own -- the suite tested
+    // its input and output siblings and assumed the middle one behaved the
+    // same way. Measured: without the guard it returns `inf`, silently.
+    check_throws([] { (void)mup_init_var_hidden(0); },
+                 "D7 init_var_hidden(0) throws");
+    check_throws([] { (void)mup_sgd_lr_input(0, 8); },
+                 "D7 sgd_lr_input(0 fan_out) throws");
+    check_throws([] { (void)mup_sgd_lr_output(0); },
+                 "D7 sgd_lr_output(0) throws");
+    check_throws([] { (void)mup_adam_lr_hidden(0); },
+                 "D7 adam_lr_hidden(0) throws");
+    check_throws([] { (void)mup_adam_lr_output(0); },
+                 "D7 adam_lr_output(0) throws");
+    check_throws([] { (void)mup_bias_init_var(0); },
+                 "D7 bias_init_var(0) throws");
+    check_throws([] { (void)mup_sgd_lr_bias(0); },
+                 "D7 sgd_lr_bias(0) throws");
+    check_throws([] { (void)mup_attn_scale(0, 8); },
+                 "D7 attn_scale(0 head_dim) throws");
+
+    // Non-vacuity companion: a nonzero argument must NOT throw, or the
+    // checks above could pass on a function that always throws.
+    bool threw = false;
+    try { (void)mup_init_var_hidden(8); } catch (...) { threw = true; }
+    check(!threw, "D7 init_var_hidden(8) does NOT throw");
 }
 
 // 13. Empty tensors / tensors of the wrong shape throw, per repo convention.
@@ -403,9 +431,48 @@ static void test_empty_tensor_and_guards() {
     // asserted 1/8 for the hidden row, which no spec at the base width can
     // produce. Both cases are now covered, and the at-base-width one is
     // asserted to be 1 rather than worked around.
+    //
+    // EVERY valid role must be accepted, one at a time, and this loop comes
+    // BEFORE the first combined fixture on purpose. Mutation M13 (routing
+    // "bias" to the hidden branch) reported MUT-CRASH twice before this
+    // ordering existed: the first combined call raised an UNCAUGHT throw
+    // from the test's own setup and killed the process before any assertion
+    // ran. A crash is not a verdict and is certainly not a caught mutation.
+    // With each role checked alone and first, a misrouted role is reported
+    // as an ordinary [FAIL] and the remaining assertions still execute.
+    const std::vector<std::string> valid = {"input", "hidden", "output", "bias"};
+    MupSpec one;
+    one.width = 8; one.base_width = 8;
+    one.head_dim = 8; one.base_head_dim = 8;
+    bool all_roles_ok = true;
+    for (const std::string& r : valid) {
+        bool accepted = true;
+        try {
+            Tensor single = mup_adam_lr_tensor({r}, one);
+            accepted = (single.rows == 1 && single.cols == 1);
+        } catch (...) {
+            accepted = false;
+        }
+        check(accepted, "role '" + r + "' is accepted alone");
+        if (!accepted) all_roles_ok = false;
+    }
+
+    // The per-role loop DETECTS a misrouted role, but on its own it does not
+    // stop the crash: execution falls straight through to the combined
+    // fixtures below, and the very same bad role raises there from test
+    // setup with nothing to catch it. That is why M13 reported MUT-CRASH on
+    // two consecutive runs even with the loop in place -- the detection was
+    // working and the harness still had nothing to count, because the process
+    // died before the summary line. Gating the combined fixtures on the loop
+    // is what turns the detection into a verdict.
+    if (!all_roles_ok) {
+        check(false, "combined-role fixtures SKIPPED: a role is not accepted");
+        return;
+    }
+
     std::vector<std::string> ok = {"input", "hidden", "output", "bias"};
     Tensor u = mup_adam_lr_tensor(ok, s);
-    check(u.rows == 1 && u.cols == 4, "4 roles -> (1,4)");
+    check(u.rows == 1 && u.cols == 4, "at base width 4 roles -> (1,4)");
     check_exact(u(0, 0), 1.0, "at base width every tensor entry is 1");
     check_exact(u(0, 1), 1.0, "at base width hidden is 1");
     check_exact(u(0, 2), 1.0, "at base width output is 1");
@@ -415,7 +482,13 @@ static void test_empty_tensor_and_guards() {
     MupSpec wide;
     wide.width = 64; wide.base_width = 8;
     wide.head_dim = 8; wide.base_head_dim = 8;
+    // NOTE: these use the combined 4-role list, and the per-role loop above
+    // is what keeps that list honest -- a role that stops being accepted
+    // fails there first, so this line can only ever be reached with a list
+    // the suite has already proven acceptable. (M13 crashed HERE, not in the
+    // loop, the first time this fixture ran: the loop did not exist.)
     Tensor v = mup_adam_lr_tensor(ok, wide);
+    check(u.rows == 1 && u.cols == 4, "4 roles -> (1,4) [adam]");
     check_exact(v(0, 0), 1.0, "8->64 Adam input LR stays 1");
     check_close(v(0, 1), 1.0 / 8.0, 1e-15, "8->64 Adam hidden LR = 1/8");
     check_close(v(0, 2), 1.0 / 8.0, 1e-15, "8->64 Adam output LR = 1/8");
@@ -423,6 +496,7 @@ static void test_empty_tensor_and_guards() {
 
     // ... and the SGD bundle, where the input row DOES move.
     Tensor w = mup_sgd_lr_tensor(ok, wide);
+    check(w.rows == 1 && w.cols == 4, "4 roles -> (1,4) [sgd]");
     check_close(w(0, 0), 8.0, 1e-15, "8->64 SGD input LR = 8x");
     check_exact(w(0, 1), 1.0, "8->64 SGD hidden LR stays 1");
     check_close(w(0, 2), 1.0 / 8.0, 1e-15, "8->64 SGD output LR = 1/8");
