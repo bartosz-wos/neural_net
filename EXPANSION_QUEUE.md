@@ -5,6 +5,61 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+<!-- 2026-10-19 (later): Hutchinson trace estimation SHIPPED (see ## Done). The
+     list is drained a NINTH time.
+
+     THE PICK CAME FROM THE DOCS-GAP GREP AGAIN, AND IT NOW HAS A TRACK
+     RECORD WORTH MORE THAN THE FEATURE. Running
+
+         grep -rinE 'not entitled|out of scope|deliberately not|is not
+         exposed|for now we do not|this repo does not|no hook' \
+             include/nn --include=*.h
+
+     found, among 12 hits, `optimizers/sophia.h` -- the repo's ONLY
+     second-order optimizer -- saying it wants "typically with a Hutchinson
+     trace estimate". Followed by:
+
+         grep -rinE 'hutchinson|gauss.newton|directional.deriv|second.deriv
+                     |jvp|vjp' include/          -> NOTHING
+         grep -rn  'set_hessian_estimates' --include=*.cpp --include=*.h .
+         -> only sophia.{h,cpp} and tests/test_sophia.cpp, which feeds it a
+            HAND-MADE tensor
+
+     So the higher-order path in the only second-order optimizer in the repo
+     is reachable only from a test fixture, and every real run silently falls
+     back to the empirical Fisher. **The docs-gap grep has now produced two
+     consecutive picks (lr_multiplier via mup.h:239, this one via sophia.h:25),
+     both of which were real and both of which could not have been found by
+     any amount of paper search. Run it FIRST on any future session that
+     starts with a drained list.**
+
+     THE TWO CANDIDATES FROM THE 2026-10-19 LIST THAT THIS SESSION
+     RE-MEASURED, one taken and one closed:
+
+       - `grep -rinE 'coral|domain_adapt|feature_align|\bmmd\b' include/` ->
+         `utils/mmd_loss.{h,cpp}` already ships MMD AND its header names
+         "domain adaptation (DeepCORAL, DANN)". CORAL IS CLOSED. Do not re-pop.
+       - `grep -rinE 'second.order|hessian|newton_step|trust.region|natural.grad'`
+         -> Sophia only. SHIPPED today. Do not re-pop.
+
+     STILL UNBUILT, verified absent BY CONTENT this session -- and note that
+     the Sinkhorn/OT candidate measured 0 hits, so it is the strongest
+     remaining lead:
+
+       - `grep -rinE 'sinkhorn|optimal.transport|ot_solver|unbalanced_sinkhorn
+                     |brenier|entropic' include/` -> **0 hits**. The repo has
+         a WGAN-GP (a critic gradient penalty on the critic's INPUT) and a
+         Sinkhorn-style option may or may not exist in the generative family;
+         measure before taking. If the only transportation work is the
+         adversarial one, a differentiable ENTROPIC-REGULARISED OT solver
+         (Sinkhorn-Knopp) with its adjoint is a genuine model-free addition
+         that composes with the shipped adversarial code.
+
+     THE GENERALISABLE RULE IS UNCHANGED AND HAS NOW COST TWO FEATURES: an
+     absence proves a feature is missing, not that it belongs -- measure
+     whether the repo's existing design already made it redundant, which is
+     what REFUTED activation checkpointing (2026-10-17). -->
+
 <!-- 2026-10-19: per-tensor/per-layer LR multipliers SHIPPED (see ## Done). The
      list is drained an EIGHTH time.
 
@@ -478,6 +533,25 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+- **Hutchinson stochastic Hessian-trace estimation** (Hutchinson, M. F. (1989/90), "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines", *Comm. Statist. Simulation and Computation* **18**(3):1059-1076; and Pearlmutter, B. A. (1995), "Gradient calculations for dynamic recurrent neural networks: a survey", *IEEE Trans. Neural Networks* **6**(5):1212-1228 — **there is NO arXiv ID for either, because both are pre-arXiv, and none was invented**, which is the rule this queue keeps relearning after producing nine wrong IDs) — **the repo's only second-order optimizer names the estimator it cannot get, in its own header, and nothing in the repo computes it.** `optimizers/sophia.h:25` says `before step() -- typically with a Hutchinson trace estimate`, and `set_hessian_estimates(layer_ptr, h_diag)` exists to receive one; but `grep -rn set_hessian_estimates --include=*.cpp --include=*.h .` returns ONLY `sophia.{h,cpp}` and `tests/test_sophia.cpp`, which feeds it a **hand-made tensor**. So the higher-order path is reachable only from a test fixture and every real run silently falls back to the empirical Fisher `g (.) g`. Implemented in `include/nn/utils/hutchinson.{h,cpp}`: `hutch_trace_rademacher` / `hutch_trace_gaussian` (via `tr(H) = E_z[z'Hz]`), `hutch_hvp` (forward-over-reverse), and `hutch_trace_diagonal` (the Model-level adapter, index-aligned with `Layer::parameters()`, which is the shape `set_hessian_estimates` wants). **Model-free core — the estimator consumes a `HessianGradFn = std::function<Tensor(const Tensor&)>`, the idiom already established at `utils/adversarial.h:128`, so the whole core is testable with no Model, no optimizer and no network.** **47/47 checks pass, 12/12 mutations caught with 0 survived / 0 broken / 0 crash / 0 noop, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, and the 254-suite aggregate run (8200 checks) introduces NO new failures** — the single failure is the ODERNN entry already deferred in `NOT_FIXED.md`.
+
+  **THE PEARLMUTTER YEAR IS VERY WIDELY CITED AS 1994 — INCLUDING BY PYTORCH, whose `torch.autograd.functional.hvp` docstring says "d. Pearlmutter (1994)" — BUT dblp's authoritative record is `journals/tnn/Pearlmutter95`, IEEE Trans. Neural Networks 6(5):1212-1228 (1995).** Recorded in the header rather than silently reconciled, because a future session re-deriving the citation would otherwise "correct" it back to the wrong year.
+
+  **THE DOCS-GAP GREP NOW HAS TWO CONSECUTIVE HITS AND IS THE HIGHEST-YIELD PICK IN THIS FILE.** The 2026-10-19 `lr_multiplier` session found its pick in `utils/mup.h:239` ("this repo's optimizers have no per-tensor-LR hook"); this session found `optimizers/sophia.h:25` by the same grep. Neither could have been found by paper search, and neither was on the ideas list. **Run `grep -rinE 'not entitled|out of scope|deliberately not|is not exposed' include/nn --include=*.h` FIRST whenever the ideas list is drained.**
+
+  **THE ORDER-OF-ACCURACY TEST WAS A DEGENERATE FIXTURE, AND ITS FAILURE MODE WAS THE OPPOSITE OF THE OBVIOUS ONE.** The FOM test measured first-order convergence on the *quadratic* fixture, where `g(x+eps*v) - g(x) = eps*H*v` **exactly** — the truncation error is identically zero, so the only thing measured was cancellation noise, which **grows** as eps shrinks (1.1e-14 at eps=1e-1 rising to 1.4e-10 at eps=1e-5). The error sat at the round-off floor already at the LARGEST eps, i.e. there was no signal at all, and **a symmetric-difference implementation would have passed the same broken test.** Fixed with a cubic fixture, where truncation error dominates: rel_err **9.35e-2 -> 9.35e-3 -> 9.35e-4 -> 9.35e-5**, ratio exactly 10. *An order test needs a function whose truncation error is the dominant term, which means a function that is not linear-plus-constant.* The quadratic was KEPT for the cancellation floor (D6), precisely because its exactness is what makes the floor observable.
+
+  **A WRONG IMPLEMENTATION THAT PRESERVES THE EXPECTATION IS INVISIBLE TO EVERY FIRST-MOMENT TEST — M02 IS NOT A BIAS AND I ASSUMED IT WAS.** Contracting `z'` against `zp` instead of the perturbation `(zp - x)` adds a spurious `x'Hz` term. I wrote a mean-based unbiasedness test; **it survived, because `E[x'Hz] = E[x']E[Hz] = 0`** — `z` is independent of `x` and has mean zero. M02 is an **unbiased estimator with a 4.62x inflated dispersion** (measured sd 0.792423 correct vs 3.657607 mutant). The property that separates them is that the correct estimator's dispersion is **independent of x**, so D10b asserts the sd at two magnitudes — measured ratio **1.0000**.
+
+  **TWO MORE REAL TEST GAPS, BOTH FOUND BY A SURVIVOR AND BOTH EXPLAINED BY A PROBE.** (1) **M08 survived because the NEXT guard throws anyway** (`x.cols != dim`), and the test asserted only *that* it threw — this file's third instance of "asserts that it threw, not that it threw here". (2) **The first fix was WORSE: it used a zero-column `x` so only the dim guard could fire, and the mutant SEGFAULTED** (`Tensor::operator()` is `data[r*cols+c]` with no bounds check, so the estimator walked off a zero-element allocation) — a mutation detected as a crash is **not** a verdict. **And the sharpened assertion then survived M08 AGAIN, because it searched for the substring `"dim"`, which the mismatch guard's message also contains.** *A substring that appears in two different messages discriminates nothing; the assertion must name the message unique to the guard under test.*
+
+  **THE ORACLE CAUGHT ITS OWN BUG BEFORE ANY C++ EXISTED, AND IT CAUGHT IT A SECOND TIME.** (a) Its variance check drew TWO independent probes — measuring `E[z1' H z2]` with `z1 != z2`, whose expectation is **zero** rather than `tr(H)`. The fingerprint — means hovering around 0.0 against a true trace of 0.442 — said "my estimator is wrong", not "the theory is wrong" (systematic-debugging 4c). (b) Its `[3]` section printed `1.0e-14 -> 1.2e-13 -> 9.0e-14 -> 9.0e-13` and then **printed "SELF-CHECK PASS" despite having no assertion on that section** — a self-checking oracle that prints a verdict it never tested is worse than one that does not self-check, because it looks verified. The degenerate-quadratic finding above is exactly what it should have caught.
+
+  **THE HARNESS LEAKED A MUTANT INTO THE TREE — THE SEVENTEENTH RECORDED INSTANCE OF THIS CLASS, AND THE POST-HARNESS REBUILD CHECK EARNED ITS KEEP BY CATCHING IT.** `restore()` ended with `rm -f "$BAK_SRC" "$BAK_HDR"`, but `restore` is called once **per mutation** as well as on EXIT, so the first call deleted the backups and every later restore was a silent no-op that printed `cp: cannot stat`. The tree was left holding whatever mutant ran last, and the post-harness verification reported `23 passed / 17 failed` against a tree nobody had edited. **Seven mutants had to be repaired by hand afterwards.** The fix is one line of principle: **`restore()` must never delete the backups; cleanup happens exactly once, on EXIT. A restore that cleans up after itself is a restore that works once.**
+
+  **TWO MORE HARNESS DEFECTS, AND `MUT-BROKEN` WAS NOT ONE OF THEM.** (1) **M09's anchor was NON-UNIQUE** — the `probes` guard appears in both `validate_trace_args` and `hutch_trace_diagonal` — and the harness correctly refused it as `MUT-NOOP` rather than silently editing the first match. (2) **The statistical tests called production code outside a try/catch, so an inverted guard ABORTED the binary** (`terminate called after throwing an instance of 'std::invalid_argument'`, exit 134) and the harness had **nothing to count**, reporting `MUT-CRASH` for a mutation it was detecting perfectly well — the muP M13 shape, where the detector was working and only the counting was missing. Every throwing call is now inside `call_guarded`. (3) **M08's first spec used `return 0.0;` inside a `void` function**, which the harness scored `MUT-BROKEN`. **A build verdict is not a mutation verdict: the mutation was rewritten, never the guard.**
+
+  **FIFTEEN SEMANTICS PINNED, each a natural mistake, each with a named test.** **D1/D2** `E[z'Hz] = tr(H)` for both probe laws, in **standard errors** so the assertion is a statistical statement. **D3** `k=1` is legal but a **poor** estimator (measured spread **3004%** of `|tr|`) and the test asserts that, rather than special-casing it. **D4** dispersion falls as `1/sqrt(k)` and the **ratio** is asserted, so a `k^(3/2)`-wrong estimator fails. **D5** the FOM is **first order**; the bound `4..25` catches a symmetric difference (~100) while admitting the cancellation floor. **D6** `eps` below ~1e-12 is a **cancellation floor that throws** rather than returning plausible garbage (measured `rel_err = 0.985` at `eps=1e-16`) — the repo's fifth member of the `1/0`-family of traps. **D7** determinism comes from a **local** generator, never the global `rand()`, so the estimator cannot perturb every other stochastic layer in the repo. **D8** the returned HVP is fresh; asserted by mutating the inputs afterwards, with a companion proving the mutation was real. **D9** `dim==0` and `probes<1` throw, **discriminated by message**, since the exception type never was the discriminator. **D10/D10b** closed-form recovery on a quadratic, plus the dispersion-independence property that kills M02. **D11** estimates are per-tensor and index-aligned with `parameters()`. **D12** a rank-1 `H` makes the Rademacher estimate **exactly** `tr(H)` (`z_0^2 = 1`), which is stronger than "converges to". **D13** every parameter is restored **bit-identically**, measured rather than assumed, with a companion proving the perturbation was real. **D14** gradients are **zeroed** before each probe's backward, because `Dense::backward` accumulates (`core/layer.cpp:78`) — a failure invisible to a single-probe test. **D15** `probes < 1` and an empty model throw. Plus **E2E**: the estimate is handed to a real `Sophia::set_hessian_estimates` and consumed by a real `step()`, and every entry is asserted **finite** because a NaN would poison Sophia's update with no downstream guard.
 - **Per-tensor / per-layer learning-rate multipliers** (no paper — this is a repo-shaped gap, and the queue's own standing rule prefers an absence measured IN the repo over a citation typed from memory) — **the repo has 39 optimizers and NOT ONE accepts a per-tensor learning rate, and `utils/mup.h:239` says so against itself**: its `mup_adam_lr_tensor` returns per-tensor LR multipliers and the header records that "this repo's optimizers have no per-tensor-LR hook, and adding one is a repo-wide change this header is not entitled to make unilaterally". Measured, not assumed: `grep -rinE 'param_group|parameter_group|param_groups|layer.*lr.*decay|llrd|depth.*scal.*lr' include/` → **0 hits**, and of the 39 optimizer `.cpp` files exactly **ONE** routes its update through `update_weights(lr)` — the other 38 read `lr` directly inside their update loop, so adding a per-tensor hook is genuinely repo-wide. Implemented in `include/nn/utils/lr_multiplier.{h,cpp}`: `LrMultiplier` (name→scale lookup with an explicit default, plus per-`parameters()`-index entries), `lr_multiplier_snapshot` / `lr_multiplier_apply_snapshot` / `lr_multiplier_apply`, and `LrMultiplierOptimizer`. **27/27 checks pass, 8/8 mutations caught with 0 survived / 0 broken / 0 noop, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native`, umbrella header compiles standalone, and the 253-suite aggregate run introduces NO new failures** (the single failure is the ODERNN entry already deferred in `NOT_FIXED.md`).
 
   **THE FIRST DRAFT'S MECHANISM WAS WRONG, AND A PROBE CAUGHT IT BEFORE IT BECAME PRODUCTION CODE: gradient pre-scaling `g ← s·g` IS SILENTLY ANNIHILATED BY ADAM.** Measured the homogeneity identity `step(s·g) − step(0) == s·(step(g) − step(0))`: **SGD `2.64e-16`, Adam `6.67e-01`** — with `step(1g) == step(3g) == 0.4`, exactly. Adam's update is `lr·m̂/(√v̂+ε)`, so after one step `m̂ ∝ g` and `v̂ ∝ g²` and the update carries `g/√(g²) = sign(g)`: multiplying the gradient by 3 changes *nothing*. A gradient-scaling feature would have been a **silent no-op on the repo's single most-used optimizer family** — green tests, correct-looking code, zero effect. *A mechanism that is reached and has no effect is §5d's silent-no-op failure arriving at design time rather than at test time.* The shipped mechanism rescales the **realized delta** (`w ← w_before + s·(w − w_before)`), which assumes nothing about how the update was computed and therefore works for all 39 optimizers, scale-invariant ones included.
