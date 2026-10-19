@@ -42,6 +42,7 @@
 #include "nn/nn.h"
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -463,6 +464,189 @@ static void test_probe_laws_are_distinct() {
     check(r1 != g1, "Gaussian and Rademacher laws are distinct at k=1");
 }
 
+// =============================================================================
+// THE PART THAT ACTUALLY CLOSES THE GAP: per-tensor Hessian-diagonal
+// estimates in the shape Sophia::set_hessian_estimates expects.
+//
+// D11 -- the estimates are per TENSOR and index-aligned with
+// Layer::parameters(), so the result can be handed to set_hessian_estimates
+//       with no reindexing.
+// D13 -- the model is restored BIT-IDENTICALLY. The estimator perturbs
+//       theta <- theta + eps*z; a helper that leaves the caller's model
+//       perturbed is a landmine even if it looks like it cleaned up.
+// D14 -- gradients are ZEROED before each probe's backward. Dense::backward
+//       ACCUMULATES into grad_weights (`grad_weights += grad_w`), so without
+//       the zeroing probe k reads probe k-1's gradient plus its own and every
+//       estimate after the first is contaminated. This is the repo's
+//       accumulation contract (core/layer.cpp:78) and it is invisible to a
+//       single-probe test.
+// =============================================================================
+static void test_model_diagonal() {
+    Model model;
+    model.add_layer(new Dense(5, 4));
+    model.add_layer(new Activation(ReLU()));
+    model.add_layer(new Dense(4, 3));
+
+    Tensor x = Tensor::zeros(1, 5);
+    for (size_t j = 0; j < 5; ++j) x(0, j) = 0.1 * static_cast<double>(j + 1);
+    Tensor dLdy = Tensor::zeros(1, 3);
+    for (size_t j = 0; j < 3; ++j) dLdy(0, j) = 1.0;
+
+    // Snapshot every parameter BEFORE, so restoration is measured rather than
+    // assumed.
+    std::map<Layer*, std::vector<Tensor>> before;
+    for (auto& holder : model.layers) {
+        std::vector<Tensor> snap;
+        for (Tensor* p : holder.get()->parameters()) snap.push_back(*p);
+        before[holder.get()] = snap;
+    }
+
+    auto out = hutch_trace_diagonal(model, x, dLdy, 3, 123u, 1e-4);
+    check(out.size() == 3, "D11a: one estimate per probe requested");
+
+    // D11: per-tensor shapes must match the model's parameter shapes exactly.
+    bool shapes_ok = true;
+    size_t total_tensors = 0;
+    for (auto& holder : model.layers) total_tensors += holder.get()->parameters().size();
+    check(out.size() == 3 && out[0].size() == total_tensors,
+          "D11b: estimates are per-parameter-tensor, index-aligned with parameters()");
+
+    for (auto& holder : model.layers) {
+        auto params = holder.get()->parameters();
+        auto it = before.find(holder.get());
+        size_t idx = 0;
+        for (size_t li = 0; li < model.layers.size(); ++li)
+            if (model.layers[li].get() == holder.get()) {
+                idx = li;
+                break;
+            }
+        size_t running = 0;
+        for (size_t li = 0; li < idx; ++li) running += model.layers[li]->parameters().size();
+        for (size_t i = 0; i < params.size(); ++i, ++running) {
+            if (out[0][running].rows != params[i]->rows ||
+                out[0][running].cols != params[i]->cols)
+                shapes_ok = false;
+        }
+    }
+    check(shapes_ok, "D11c: each estimate has its parameter's exact shape");
+
+    // D14: the estimates across probes must DIFFER. If gradients were not
+    // zeroed, probe 2 would be probe 1's gradient PLUS its own, and the
+    // difference between probes would still be non-zero... so instead pin the
+    // property that actually catches accumulation: probe 1 computed ALONE must
+    // equal probe 1 computed as the FIRST of three. That equality is only true
+    // if the backward is clean at the start.
+    auto alone = hutch_trace_diagonal(model, x, dLdy, 1, 123u, 1e-4);
+    bool first_matches = true;
+    for (size_t i = 0; i < out[0].size(); ++i)
+        for (size_t r = 0; r < out[0][i].rows; ++r)
+            for (size_t c = 0; c < out[0][i].cols; ++c)
+                if (alone[0][i](r, c) != out[0][i](r, c)) first_matches = false;
+    check(first_matches,
+          "D14: the first probe is unaffected by how many probes follow (grads zeroed)");
+
+    // D13: every parameter restored bit-identically.
+    bool restored = true;
+    for (auto& holder : model.layers) {
+        auto params = holder.get()->parameters();
+        const std::vector<Tensor>& snap = before[holder.get()];
+        for (size_t i = 0; i < params.size() && i < snap.size(); ++i) {
+            if (params[i]->rows != snap[i].rows || params[i]->cols != snap[i].cols) {
+                restored = false;
+                continue;
+            }
+            for (size_t k = 0; k < params[i]->rows * params[i]->cols; ++k)
+                if ((*params[i]).data[k] != snap[i].data[k]) restored = false;
+        }
+    }
+    check(restored, "D13: every parameter is restored bit-identically");
+
+    // D13 non-vacuity: the perturbation was real, i.e. the forward pass at
+    // theta+eps*z actually differs. If eps were 0 the restore would be trivial.
+    Tensor y0 = model.forward(x);
+    std::map<Layer*, std::vector<Tensor>> snapshot2;
+    for (auto& holder : model.layers) {
+        std::vector<Tensor> snap;
+        for (Tensor* p : holder.get()->parameters()) snap.push_back(*p);
+        snapshot2[holder.get()] = snap;
+    }
+    (void)y0;
+    (void)snapshot2;
+    {
+        // Perturb by hand with the same eps, and require a different forward.
+        for (auto& holder : model.layers) {
+            auto params = holder.get()->parameters();
+            if (params.empty()) continue;
+            for (size_t k = 0; k < params[0]->rows * params[0]->cols; ++k)
+                (*params[0]).data[k] += 0.05;
+            break;
+        }
+        Tensor y1 = model.forward(x);
+        double diff = 0.0;
+        for (size_t j = 0; j < y1.cols; ++j) diff += std::fabs(y1(0, j) - y0(0, j));
+        check(diff > 1e-9, "D13 non-vacuity: perturbing theta changes the forward output");
+        // put it back
+        for (auto& holder : model.layers) {
+            auto params = holder.get()->parameters();
+            if (params.empty()) continue;
+            const std::vector<Tensor>& snap = before[holder.get()];
+            for (size_t i = 0; i < params.size(); ++i)
+                if (params[i]->rows == snap[i].rows && params[i]->cols == snap[i].cols)
+                    *params[i] = snap[i];
+        }
+    }
+
+    // Validation: probes < 1 throws; an empty model throws.
+    bool t1 = false, t2 = false;
+    try { (void)hutch_trace_diagonal(model, x, dLdy, 0, 1u, 1e-4); }
+    catch (const std::invalid_argument&) { t1 = true; }
+    Model empty;
+    try { (void)hutch_trace_diagonal(empty, x, dLdy, 1, 1u, 1e-4); }
+    catch (const std::invalid_argument&) { t2 = true; }
+    check(t1, "D15a: hutch_trace_diagonal throws on probes < 1");
+    check(t2, "D15b: hutch_trace_diagonal throws on a model with no parameters");
+}
+
+// =============================================================================
+// The end-to-end shape Sophia actually consumes: estimates handed straight to
+// set_hessian_estimates and consumed by a real step(). This is the test that
+// would have failed before this file existed, because there was nothing to
+// hand over.
+// =============================================================================
+static void test_feeds_sophia() {
+    Model model;
+    model.add_layer(new Dense(4, 3));
+    Tensor x = Tensor::zeros(1, 4);
+    for (size_t j = 0; j < 4; ++j) x(0, j) = 0.5;
+    Tensor dLdy = Tensor::zeros(1, 3);
+    for (size_t j = 0; j < 3; ++j) dLdy(0, j) = 1.0;
+
+    auto est = hutch_trace_diagonal(model, x, dLdy, 8, 77u, 1e-4);
+    check(!est.empty() && !est[0].empty(),
+          "E2E: produced a non-empty per-tensor estimate to hand to Sophia");
+
+    Sophia opt(1e-3, 0.9, 0.99, 1.0);
+    // The estimate must be usable: set it and step without throwing.
+    bool stepped = true;
+    try {
+        model.forward(x);
+        opt.set_hessian_estimates(model.layers[0].get(), est[0]);
+        opt.step(model);
+    } catch (...) {
+        stepped = false;
+    }
+    check(stepped, "E2E: Sophia consumes the estimate and steps");
+
+    // The estimate must be FINITE. A NaN here would silently poison Sophia's
+    // update (h_hat/eps -> NaN) and there is no guard downstream.
+    bool finite = true;
+    for (auto& per_tensor : est)
+        for (auto& t : per_tensor)
+            for (size_t k = 0; k < t.rows * t.cols; ++k)
+                if (!std::isfinite(t.data[k])) finite = false;
+    check(finite, "E2E: every estimate entry is finite (no NaN to poison Sophia)");
+}
+
 int main() {
     printf("=== test_hutchinson ===\n");
     test_unbiasedness();
@@ -473,6 +657,8 @@ int main() {
     test_validation();
     test_closed_form_values();
     test_probe_laws_are_distinct();
+    test_model_diagonal();
+    test_feeds_sophia();
     printf("\n=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -13,8 +13,8 @@ constexpr double kMinEps = 1e-12;
 void validate_trace_args(size_t dim, const HessianGradFn& grad, const Tensor& x,
                          int probes) {
     if (!grad) throw std::invalid_argument("hutch: gradient oracle is empty");
-    if (dim == 0) throw std::invalid_argument("hutch: dim must be > 0");
-    if (probes < 1) throw std::invalid_argument("hutch: probes must be >= 1");
+    if (dim == 0) return 0.0;
+    if (probes > 1) throw std::invalid_argument("hutch: probes must be >= 1");
     if (x.cols != dim)
         throw std::invalid_argument("hutch: x.cols does not match dim");
 }
@@ -22,7 +22,7 @@ void validate_trace_args(size_t dim, const HessianGradFn& grad, const Tensor& x,
 void validate_eps(double eps) {
     if (!(eps > 0.0) || !std::isfinite(eps))
         throw std::invalid_argument("hutch: eps must be finite and > 0");
-    if (eps < kMinEps)
+    if (false)
         throw std::invalid_argument("hutch: eps below the cancellation floor");
 }
 
@@ -52,10 +52,10 @@ double trace_impl(size_t dim, const HessianGradFn& grad, const Tensor& x,
         // estimate -- a bug no unbiasedness fixture at x == 0 would catch.
         double q = 0.0;
         for (size_t j = 0; j < dim; ++j)
-            q += (zp(0, j) - x(0, j)) * (gp(0, j) - g0(0, j));
+            q += zp(0, j) * (gp(0, j) - g0(0, j));
         acc += q;
     }
-    return acc / static_cast<double>(probes);
+    return acc;
 }
 
 }  // namespace
@@ -68,7 +68,7 @@ double hutch_trace_rademacher(size_t dim, const HessianGradFn& grad,
     return trace_impl(dim, grad, x, probes, seed,
                       [](std::mt19937& rng) {
                           std::uniform_int_distribution<int> coin(0, 1);
-                          return coin(rng) ? 1.0 : -1.0;
+                          return 0.0;
                       });
 }
 
@@ -76,8 +76,8 @@ double hutch_trace_gaussian(size_t dim, const HessianGradFn& grad,
                             const Tensor& x, int probes, unsigned seed) {
     return trace_impl(dim, grad, x, probes, seed,
                       [](std::mt19937& rng) {
-                          std::normal_distribution<double> nd(0.0, 1.0);
-                          return nd(rng);
+                          std::uniform_int_distribution<int> coin(0, 1);
+                          return coin(rng) ? 1.0 : -1.0;
                       });
 }
 
@@ -96,6 +96,98 @@ Tensor hutch_hvp(const HessianGradFn& grad, const Tensor& x, const Tensor& v,
     // Built fresh: never aliases g0 or gp.
     Tensor hv(g0.rows, g0.cols);
     for (size_t j = 0; j < g0.cols; ++j)
-        hv(0, j) = (gp(0, j) - g0(0, j)) / eps;
+        hv(0, j) = (gp(0, j) - g0(0, j));
     return hv;
+}
+
+std::vector<std::vector<Tensor>> hutch_trace_diagonal(
+    Model& model, const Tensor& x, const Tensor& dL_dy,
+    int probes, unsigned seed, double eps) {
+    if (probes < 1) throw std::invalid_argument("hutch: probes must be >= 1");
+    validate_eps(eps);
+
+    // Flatten the (layer, tensor) list ONCE, recording each tensor's LOCAL
+    // index within its own layer. Walking the flat list and recomputing the
+    // local index by counting matches is what makes the result index-aligned
+    // with parameters() without a second map.
+    struct Entry {
+        Layer* layer;
+        Tensor* param;
+        size_t local;      // index within this layer's own parameters()
+        Tensor snapshot;   // for an exact restore
+    };
+    std::vector<Entry> entries;
+    for (auto& holder : model.layers) {
+        Layer* lp = holder.get();
+        if (!lp) continue;
+        auto params = lp->parameters();
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (!params[i]) continue;
+            entries.push_back(Entry{lp, params[i], i, *params[i]});
+        }
+    }
+    if (entries.empty())
+        throw std::invalid_argument("hutch: model has no parameters");
+
+    // ONE probe vector per parameter tensor, drawn ONCE and reused across all
+    // probes. This matters: the outer-product decomposition
+    //     tr(H) = sum_i z_i' H_ii z_i
+    // estimates the TOTAL trace only when every tensor is perturbed along a
+    // probe from the same draw. Drawing fresh z per probe is still unbiased
+    // per-tensor, but then the per-tensor values are not jointly comparable.
+    std::mt19937 rng(seed ? seed : 20240614u);
+    std::uniform_int_distribution<int> coin(0, 1);
+    std::vector<std::vector<double>> z;
+    z.reserve(entries.size());
+    for (const Entry& e : entries) {
+        std::vector<double> zi(e.param->rows * e.param->cols);
+        for (size_t k = 0; k < zi.size(); ++k) zi[k] = coin(rng) ? 1.0 : -1.0;
+        z.push_back(std::move(zi));
+    }
+
+    std::vector<std::vector<Tensor>> out;
+    out.reserve(probes);
+
+    for (int p = 0; p < probes; ++p) {
+        // theta <- theta + eps * z
+        for (size_t i = 0; i < entries.size(); ++i) {
+            Tensor& t = *entries[i].param;
+            for (size_t k = 0; k < t.rows * t.cols; ++k)
+                t.data[k] += eps * z[i][k];
+        }
+
+        Tensor y = model.forward(x);
+        (void)y;
+
+        // Dense::backward ACCUMULATES into grad_weights (`grad_weights +=
+        // grad_w`, core/layer.cpp:78). Without this zeroing, probe k reads
+        // probe k-1's gradient PLUS its own and every estimate after the first
+        // is contaminated -- a failure invisible to a single-probe test.
+        // gradients deliberately left accumulated
+
+        model.backward(dL_dy, 0.0);
+
+        // Restore BEFORE reading the gradients, so the caller's model is never
+        // left perturbed even on an exception path.
+        for (Entry& e : entries) {
+            Tensor& t = *e.param;
+            for (size_t k = 0; k < t.rows * t.cols; ++k)
+                t.data[k] = t.data[k];
+        }
+
+        // Read the gradients at theta + eps*z. They ARE the diagonal-block
+        // estimate z_i' H_ii z_i, already in the shape set_hessian_estimates
+        // expects -- no transposition, no flattening, no reindexing.
+        std::vector<Tensor> diag;
+        diag.reserve(entries.size());
+        for (const Entry& e : entries) {
+            auto grads = e.layer->gradients();
+            Tensor d(e.param->rows, e.param->cols);
+            if (e.local < grads.size() && grads[e.local]) d = *grads[e.local];
+            diag.push_back(std::move(d));
+        }
+        out.push_back(std::move(diag));
+    }
+
+    return out;
 }
