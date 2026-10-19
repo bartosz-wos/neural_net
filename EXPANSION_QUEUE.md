@@ -5,6 +5,56 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+<!-- 2026-10-19: per-tensor/per-layer LR multipliers SHIPPED (see ## Done). The
+     list is drained an EIGHTH time.
+
+     THE PICK CAME FROM A DOCS GAP, NOT A PAPER — and that is a NEW source of
+     gaps worth checking first, because it cannot produce a wrong citation.
+     This file's nine wrong arXiv IDs all came from papers typed from memory.
+     `include/nn/utils/mup.h:239` already says, in the repo's own words:
+
+         "have no per-tensor-LR hook, and adding one is a repo-wide change
+          this header is not entitled to make unilaterally"
+
+     **A file that documents a limitation IS a specification.** `grep -rin
+     'not entitled\|out of scope\|deliberately not\|is not exposed\|for now
+     we do not' include/nn/**/*.h` is worth running before any paper search.
+     Three of the four candidates below were found that way.
+
+     ALSO: `grep -ril '<Name>' include/` MISSED the already-shipped LoRA
+     (`layers/utility/lora.h`) in this session's own first pass -- the
+     keyword was 'lora' and the hits were all RWKV-6's "LoRA-style"
+     augmentation. Print the MATCHING LINES.
+
+       - `grep -rinE 'param_group|llrd|layer.*lr.*decay' include/` -> NOTHING.
+         SHIPPED 2026-10-19 as utils/lr_multiplier.{h,cpp}. Do not re-pop.
+
+       - `grep -rinE 'sinkhorn|optimal.transport|ot_solver|unbalanced_sinkhorn' include/`
+         -> verify before taking. The repo has a WGAN-GP (a critic gradient
+         penalty) and a Sinkhorn-style option may exist; if the only
+         transportation work is the adversarial one, a differentiable
+         ENTROPIC-REGULARISED OT solver (the Sinkhorn-Knopp iteration) with
+         its adjoint would be a genuine model-free addition that composes
+         with the shipped adversarial code.
+
+       - `grep -rinE 'coral|domain_adapt|feature_align|mmd' include/`
+         -> `utils/mmd_loss.{h,cpp}` already ships MMD, so CORAL is likely
+         CLOSED. Check before taking; do not re-pop MMD.
+
+       - `grep -rinE 'second.order|hessian|newton_step|trust.region|natural.grad'
+         include/`
+         -> Sophia's header mentions a Hutchinson trace estimate, which is a
+         HESSIAN-VECTOR PRODUCT hook and nothing else. If no second-order
+         machinery exists, a **Hutchinson HVP** utility over the existing
+         gradient API would be the honest, composable version: it needs one
+         gradient call per probe, which this repo's `input_gradient` /
+         `Layer::backward` already provides.
+
+     THE GENERALISABLE RULE, and it is now measurable: an absence proves a
+     feature is missing, not that it belongs. Measure whether the repo's
+     existing design already made it redundant -- that is what REFUTED
+     activation checkpointing (2026-10-17). -->
+
 <!-- 2026-10-18: muP SHIPPED (see ## Done). The list is drained a SIXTH time.
      The two VERIFIED-ABSENT candidates below were both re-measured today
      rather than trusted, and BOTH greps were pure false positives:
@@ -428,6 +478,22 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+- **Per-tensor / per-layer learning-rate multipliers** (no paper — this is a repo-shaped gap, and the queue's own standing rule prefers an absence measured IN the repo over a citation typed from memory) — **the repo has 39 optimizers and NOT ONE accepts a per-tensor learning rate, and `utils/mup.h:239` says so against itself**: its `mup_adam_lr_tensor` returns per-tensor LR multipliers and the header records that "this repo's optimizers have no per-tensor-LR hook, and adding one is a repo-wide change this header is not entitled to make unilaterally". Measured, not assumed: `grep -rinE 'param_group|parameter_group|param_groups|layer.*lr.*decay|llrd|depth.*scal.*lr' include/` → **0 hits**, and of the 39 optimizer `.cpp` files exactly **ONE** routes its update through `update_weights(lr)` — the other 38 read `lr` directly inside their update loop, so adding a per-tensor hook is genuinely repo-wide. Implemented in `include/nn/utils/lr_multiplier.{h,cpp}`: `LrMultiplier` (name→scale lookup with an explicit default, plus per-`parameters()`-index entries), `lr_multiplier_snapshot` / `lr_multiplier_apply_snapshot` / `lr_multiplier_apply`, and `LrMultiplierOptimizer`. **27/27 checks pass, 8/8 mutations caught with 0 survived / 0 broken / 0 noop, deterministic across 3 reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native`, umbrella header compiles standalone, and the 253-suite aggregate run introduces NO new failures** (the single failure is the ODERNN entry already deferred in `NOT_FIXED.md`).
+
+  **THE FIRST DRAFT'S MECHANISM WAS WRONG, AND A PROBE CAUGHT IT BEFORE IT BECAME PRODUCTION CODE: gradient pre-scaling `g ← s·g` IS SILENTLY ANNIHILATED BY ADAM.** Measured the homogeneity identity `step(s·g) − step(0) == s·(step(g) − step(0))`: **SGD `2.64e-16`, Adam `6.67e-01`** — with `step(1g) == step(3g) == 0.4`, exactly. Adam's update is `lr·m̂/(√v̂+ε)`, so after one step `m̂ ∝ g` and `v̂ ∝ g²` and the update carries `g/√(g²) = sign(g)`: multiplying the gradient by 3 changes *nothing*. A gradient-scaling feature would have been a **silent no-op on the repo's single most-used optimizer family** — green tests, correct-looking code, zero effect. *A mechanism that is reached and has no effect is §5d's silent-no-op failure arriving at design time rather than at test time.* The shipped mechanism rescales the **realized delta** (`w ← w_before + s·(w − w_before)`), which assumes nothing about how the update was computed and therefore works for all 39 optimizers, scale-invariant ones included.
+
+  **THE FIRST PROBE WAS ALSO WRONG, AND IT WAS WRONG IN THE ORACLE (§4c).** It compared `step(3g) − step(g)` against `3·(step(g) − step(0))`, reporting `3.33e-01` for SGD — which would have read as "the mechanism fails even for SGD". The correct reference is `step(0)`; with the identity written correctly SGD comes out at `2.64e-16` and the conclusion flips to the real one above. *In a differential test, a disagreement is evidence that one of two pieces of code written this session is wrong — and the fingerprint that said "oracle" was that the error was large and shape-independent rather than a clean constant.*
+
+  **IT DELIBERATELY DOES NOT STEP THE MODEL PIECEWISE, BECAUSE SEVERAL OPTIMIZERS DO MODEL-GLOBAL WORK INSIDE `step()`** (Prodigy, Muon, AdaBelief, … all index `model.layers` for global state). Giving layer A a different lr by running a partial step, then layer B, would split that global state across two half-steps. The wrapper therefore always performs **exactly one** `step()` and corrects the result. The price is stated in the header rather than hidden: the correction reproduces a true per-layer-lr step for any optimizer whose update depends only on its own gradient and state (verified to `1.11e-16` / `5.55e-17` against an independently-constructed single-layer reference at a scaled lr), and it does **not** claim to for the global ones.
+
+  **M05 SURVIVED THE VALUE SUITE AT 27/27 GREEN AND IS A GENUINE HEAP-BUFFER-OVERFLOW — the harness needed a SANITIZER, not a better assertion.** Deleting the snapshot shape guard makes the loop read `it->second[1]` on a one-element snapshot. AddressSanitizer names it exactly (`heap-buffer-overflow … in lr_multiplier_apply_snapshot … lr_multiplier.cpp:41`), and **no value test can see it**, because the out-of-bounds read lands in slack memory and returns identical output. The harness now runs an **ASan lane with an INVERTED verdict** — it fails if the *pristine* build is not ASan-clean — and that lane reports M05 CAUGHT. *When a mutation provably changes no observable output, the correct next instrument is a different one, not a stricter tolerance.*
+
+  **M04 IS ALSO A REAL PROPERTY, NOT AN OPTIMISATION: `b + 1.0·(w − b) != w` FOR 9.57% OF RANDOM PAIRS.** The `if (s == 1.0) continue;` fast path is load-bearing for the header's D1 (unit scale is *bit*-identical), differing by exactly 1 ulp. Its first fixture was **VACUOUS** — both witnesses were set *before* the snapshot, so `b == w`, the delta was zero, and the test would have passed with the fast path deleted. Fixed to `set b → snapshot → set w → apply`, with witnesses **found by search over 2e7 draws** and transcribed as hex literals rather than decimals. *A "unit scale is a no-op" test needs a value where it is not.*
+
+  **FOUR HARNESS DEFECTS, THE THIRTEENTH THROUGH FIFTEENTH INSTANCES IN THIS REPO, AND ONE PRODUCED FOUR FALSE SURVIVORS.** (1) **A header mutation was never compiled into the test binary**: `LrMultiplier::resolve()` and `LrMultiplierOptimizer::step()` are header-**inline**, so the test TU holds its own inlined copy — recompiling only the library `.cpp` left M06/M07 reporting SURVIVED *for the same non-reason: they were never in the binary*. Fixed, and the self-check now covers a **header** mutation specifically, because the first self-check exercised only a `.cpp` edit and so passed happily while being **blind to the very defect it existed to catch**. (2) `rm -f build/test_lr_multiplier.o` removed the test object and nothing rebuilt it, so every link failed and all 8 mutations scored `MUT-BROKEN` — *one defect reported as eight verdicts*. (3) The mutated object was in its own link set; every mutation reported "CAUGHT (compile error)". (4) The ASan lane linked an absent `/tmp` object, produced **no binary**, and reported `M05 MUT-CRASH under ASan` — *a build failure presented as a sanitizer verdict*; a missing binary is now `UNAVAILABLE`, never a verdict.
+
+  **ELEVEN SEMANTICS PINNED, each a natural mistake, each with a named test.** **D1** a unit scale is **bit**-identical, not approximately. **D2** unnamed parameters take the default. **D3** a named entry overrides the default. **D4** an **unknown name is not an error** — it falls through, because a wrapper that throws on a layer nobody named is unusable across a 250-layer repo. **D5** zero freezes exactly; **negative scales are legal** (gradient reversal). **D6** the correction applies to the **delta only**, `w_before` is never mutated, and the wrapper leaves the wrapped optimizer's own `lr` untouched. **D7** a null inner optimizer is a **safe no-op**, and `handles_weight_decay()` is deliberately **not** delegated to a wrapper that could double-apply decay. **D8** the snapshot shape is validated before any indexing. **D9** `lr_multiplier_apply` with no snapshot is a documented **no-op**, not a silent wrong answer. **D10** `set_param` takes an explicit `parameters()` index, which is what makes one `Dense` expressible as two independently-scaled groups (weights vs bias) — a name-only map cannot, and that is exactly what a muP-style bundle needs. **D11** the strongest check of all compares against a reference that does **not** rescale a delta: a single-layer Model stepped *alone* at `base_lr*scale`, which agrees to `1.11e-16`.
+
 - **Curriculum / self-paced sample weighing** (Fan, He, Liang, Hu — "Self-Paced Learning: an Implicit Regularization Perspective", **arXiv:1606.00128**, NeurIPS 2016 — **verified 2026-10-18 by a `ti:` TITLE query against the arXiv API AND by scraping the abs page's `citation_*` meta tags**; no arXiv ID was typed from memory, and note the canonical SPL paper (Kumar et al., KDD 2017) is **not on arXiv** — a title query for it returns 0 results, which is why this one is the anchor) — **the repo could mix samples (`mixup_cutmix.h`), measure them (`metrics.h`) and optimise them (a dozen optimizers), and had no way to decide WHICH samples to train on at a given point in training.** Measured absent before implementing, and this time by printing the MATCHING LINES rather than the filenames: `grep -rinE 'curricul|self[._-]?paced|spaced[ ._]?repetition' include/ tests/` → **0 hits**; `grep -rn 'sample_weight' include/` → **exactly one hit, a COMMENT in `interpretability/lime.h` quoting sklearn's `.fit(Z, y, sample_weight=w)`**. Implemented in `include/nn/utils/curriculum.{h,cpp}`: `CurrWeightMode` (the five EXPLICIT regularisers — hard/linear/log/mixture/gamma — and the four SPL-IR latent-robust forms), `curr_weight`, `curr_hq_minimiser`, `curr_schedule_step`, `curr_lambda_init`, `curr_weights`, `curr_weighted_loss` (+`_gradient`), `curr_effective_mass`, `curr_hard_fraction`. **Model-free by construction — every core is a free function over plain `double`/`Tensor`, so the whole scheduler is testable with no `Model`, no optimizer and no network**, the same shape `utils/mup.h` and `utils/ptq.h` were built with. **145/145 checks pass, 27/27 mutations caught with 0 survived / 0 broken / 0 crash / 0 noop / 0 warn, deterministic across reruns, clean under ASan+UBSan, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.**
 
   **THE FINDING: TABLE 1'S SIGMA COLUMN IS `phi'(t)/t`, NOT `phi'(t)`, AND THE DECAY PROPERTY — NOT THE CONJUGATE ARGUMENT — IS WHAT SETTLES WHICH ONE THE "WEIGHT" IS.** Definition 1 condition 1 says `phi = min_v[v*t + psi]`, whose argmin is `phi'(t)`, so the first draft shipped `phi'(t)` and documented Table 1's own column as "the HQ minimiser instead". **That was backwards**, and Definition 1 condition 4 ("monotonically decreasing w.r.t. t") is what says so: measured over 400 points in [0, 8], `phi'` is **not** monotone decreasing for Cauchy (peaks at `t == lambda`), Welsch (peaks at `t = 0.702*lambda`) or L1L2 (rises monotonically), while Table 1's column is monotone decreasing for all three. Shipping `phi'` would **upweight the hardest samples in the batch — the exact opposite of a curriculum**. And the two are one function up to a factor: measured `|sigma(lam,t) - phi'(t)/t| = 0.000e+00` over 4 lambdas × 5 losses for all three modes, so the paper's `sigma` (SPL weight) and Eq. (7)'s `delta` (HQ minimiser) are **the same number under two names**, and the file exposes one computation with both entry points. *A derivation that produces a non-monotone "weight" has gone wrong, even when every individual step of it is defensible.*
