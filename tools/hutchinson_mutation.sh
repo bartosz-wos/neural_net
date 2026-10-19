@@ -87,14 +87,27 @@ if ! make -s print-lib-objs | grep -qx "$OBJ"; then
 fi
 
 # --- snapshot BOTH files (defence 5), restored ATOMICALLY ------------------
+# HARNESS DEFECT FOUND AND FIXED HERE, 2026-10-19 -- the seventeenth instance
+# of this class in this repo, and it LEAKED A MUTANT INTO THE TREE.
+#
+# The first draft had `restore()` end with `rm -f "$BAK_SRC" "$BAK_HDR"`, and
+# `restore` is called once PER MUTATION (at the top of run_one) as well as on
+# EXIT. The first call therefore deleted the backups, and every subsequent
+# restore silently did nothing except print "cp: cannot stat". The tree was
+# left holding whatever mutant ran last, and the post-harness verification
+# correctly reported 23 passed / 17 failed -- which is that defence WORKING,
+# and is the only reason the leak was caught at all.
+#
+# The fix: restore must NEVER delete the backups. Cleanup happens exactly once,
+# on EXIT. A restore that cleans up after itself is a restore that works once.
 BAK_SRC=$(mktemp); BAK_HDR=$(mktemp)
 cp "$SRC" "$BAK_SRC"; cp "$HDR" "$BAK_HDR"
 restore() {
     cp "$BAK_SRC" "$SRC.tmp" && mv -f "$SRC.tmp" "$SRC"
     cp "$BAK_HDR" "$HDR.tmp" && mv -f "$HDR.tmp" "$HDR"
-    rm -f "$BAK_SRC" "$BAK_HDR"
 }
-trap restore EXIT INT TERM
+cleanup() { restore; rm -f "$BAK_SRC" "$BAK_HDR"; }
+trap cleanup EXIT INT TERM
 
 # --- pristine check: refuse to run unless the suite is green ---------------
 rm -f "$TOBJ" "$OBJ"
@@ -218,16 +231,36 @@ run_one M07 \
                 t.data[k] = t.data[k];'
 
 # ---- M08: the dim==0 guard removed ---------------------------------------
+# NOTE: the first draft was `if (dim == 0) return 0.0;` inside
+# validate_trace_args, whose signature is `void` -- that is a RETURN-TYPE
+# error, so the harness correctly reported MUT-BROKEN. MUT-BROKEN IS A BUILD
+# VERDICT, NOT A MUTATION VERDICT, and the fix is the mutation, never the
+# guard. This form keeps the signature and simply stops throwing.
 run_one M08 \
   '    if (dim == 0) throw std::invalid_argument("hutch: dim must be > 0");' \
-  '    if (dim == 0) return 0.0;'
+  '    if (dim == 0) { /* guard removed */ }'
 
 # ---- M09: the probes guard inverted --------------------------------------
+# TWO HARNESS DEFECTS HERE, both worth keeping.
+#
+# (1) The first draft inverted to `probes > 1`, which makes a NORMAL k=40
+#     call throw from the first test that uses it. The process dies inside the
+#     test body and prints no summary line, i.e. MUT-CRASH. A crash is not a
+#     verdict. Narrowing the inversion to reject only probes == 1 keeps the
+#     suite running and breaks the same contract, and D9c then fails live.
+# (2) The ANCHOR WAS NOT UNIQUE -- "probes must be >= 1" appears in BOTH
+#     validate_trace_args and hutch_trace_diagonal, so the harness correctly
+#     refused to edit and reported MUT-NOOP. A non-unique anchor is reported,
+#     never silently applied to the first match; extending it to span both
+#     guard sites would make one edit fix two things, so the anchor now pins
+#     the surrounding context to identify one site.
 run_one M09 \
-  '    if (probes < 1) throw std::invalid_argument("hutch: probes must be >= 1");
-    if (x.cols != dim)' \
-  '    if (probes > 1) throw std::invalid_argument("hutch: probes must be >= 1");
-    if (x.cols != dim)'
+  '    if (!grad) throw std::invalid_argument("hutch: gradient oracle is empty");
+    if (dim == 0) throw std::invalid_argument("hutch: dim must be > 0");
+    if (probes < 1) throw std::invalid_argument("hutch: probes must be >= 1");' \
+  '    if (!grad) throw std::invalid_argument("hutch: gradient oracle is empty");
+    if (dim == 0) throw std::invalid_argument("hutch: dim must be > 0");
+    if (probes != 1) throw std::invalid_argument("hutch: probes must be >= 1");'
 
 # ---- M10: FOM uses the SUM of gradients instead of the difference --------
 run_one M10 \

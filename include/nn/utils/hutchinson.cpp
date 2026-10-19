@@ -13,8 +13,8 @@ constexpr double kMinEps = 1e-12;
 void validate_trace_args(size_t dim, const HessianGradFn& grad, const Tensor& x,
                          int probes) {
     if (!grad) throw std::invalid_argument("hutch: gradient oracle is empty");
-    if (dim == 0) return 0.0;
-    if (probes > 1) throw std::invalid_argument("hutch: probes must be >= 1");
+    if (dim == 0) throw std::invalid_argument("hutch: dim must be > 0");
+    if (probes < 1) throw std::invalid_argument("hutch: probes must be >= 1");
     if (x.cols != dim)
         throw std::invalid_argument("hutch: x.cols does not match dim");
 }
@@ -22,7 +22,7 @@ void validate_trace_args(size_t dim, const HessianGradFn& grad, const Tensor& x,
 void validate_eps(double eps) {
     if (!(eps > 0.0) || !std::isfinite(eps))
         throw std::invalid_argument("hutch: eps must be finite and > 0");
-    if (false)
+    if (eps < kMinEps)
         throw std::invalid_argument("hutch: eps below the cancellation floor");
 }
 
@@ -52,10 +52,10 @@ double trace_impl(size_t dim, const HessianGradFn& grad, const Tensor& x,
         // estimate -- a bug no unbiasedness fixture at x == 0 would catch.
         double q = 0.0;
         for (size_t j = 0; j < dim; ++j)
-            q += zp(0, j) * (gp(0, j) - g0(0, j));
+            q += (zp(0, j) - x(0, j)) * (gp(0, j) - g0(0, j));
         acc += q;
     }
-    return acc;
+    return acc / static_cast<double>(probes);
 }
 
 }  // namespace
@@ -68,7 +68,7 @@ double hutch_trace_rademacher(size_t dim, const HessianGradFn& grad,
     return trace_impl(dim, grad, x, probes, seed,
                       [](std::mt19937& rng) {
                           std::uniform_int_distribution<int> coin(0, 1);
-                          return 0.0;
+                          return coin(rng) ? 1.0 : -1.0;
                       });
 }
 
@@ -76,8 +76,8 @@ double hutch_trace_gaussian(size_t dim, const HessianGradFn& grad,
                             const Tensor& x, int probes, unsigned seed) {
     return trace_impl(dim, grad, x, probes, seed,
                       [](std::mt19937& rng) {
-                          std::uniform_int_distribution<int> coin(0, 1);
-                          return coin(rng) ? 1.0 : -1.0;
+                          std::normal_distribution<double> nd(0.0, 1.0);
+                          return nd(rng);
                       });
 }
 
@@ -96,7 +96,7 @@ Tensor hutch_hvp(const HessianGradFn& grad, const Tensor& x, const Tensor& v,
     // Built fresh: never aliases g0 or gp.
     Tensor hv(g0.rows, g0.cols);
     for (size_t j = 0; j < g0.cols; ++j)
-        hv(0, j) = (gp(0, j) - g0(0, j));
+        hv(0, j) = (gp(0, j) - g0(0, j)) / eps;
     return hv;
 }
 
@@ -163,7 +163,8 @@ std::vector<std::vector<Tensor>> hutch_trace_diagonal(
         // grad_w`, core/layer.cpp:78). Without this zeroing, probe k reads
         // probe k-1's gradient PLUS its own and every estimate after the first
         // is contaminated -- a failure invisible to a single-probe test.
-        // gradients deliberately left accumulated
+        for (auto& holder : model.layers)
+            if (holder.get()) holder.get()->zero_grad();
 
         model.backward(dL_dy, 0.0);
 
@@ -172,7 +173,7 @@ std::vector<std::vector<Tensor>> hutch_trace_diagonal(
         for (Entry& e : entries) {
             Tensor& t = *e.param;
             for (size_t k = 0; k < t.rows * t.cols; ++k)
-                t.data[k] = t.data[k];
+                t.data[k] = e.snapshot.data[k];
         }
 
         // Read the gradients at theta + eps*z. They ARE the diagonal-block

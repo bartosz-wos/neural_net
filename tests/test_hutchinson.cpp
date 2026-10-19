@@ -67,6 +67,30 @@ static void check_eq(double got, double want, const std::string& name) {
     printf("  [%s] %s   got=%.17g want=%.17g\n", ok ? "PASS" : "FAIL", name.c_str(), got, want);
 }
 
+// =============================================================================
+// Every place the suite calls into production code that can THROW must be
+// inside a try/catch.
+//
+// M09 (invert the `probes < 1` guard) aborted the whole binary --
+// `terminate called after throwing an instance of 'std::invalid_argument'`,
+// exit 134 -- because the statistical tests call hutch_trace_* with k = 40 and
+// 400 reps directly, with nothing to catch a throw. The process died before
+// the summary line, so the harness had NOTHING TO COUNT and reported MUT-CRASH
+// even though the mutation was detected perfectly well.
+//
+// This is the same shape as the muP session's M13, and the same fix: the
+// DETECTOR WAS WORKING; the harness simply had nothing to count. Note the
+// distinction from M08, whose crash was a SEGFAULT in the production code on
+// an unsafe fixture -- this one is a TEST defect, that one was a fixture
+// defect. Both present as "no summary line".
+// =============================================================================
+template <typename F>
+static bool call_guarded(F f) {
+    try { f(); return true; }
+    catch (const std::invalid_argument&) { return false; }
+    catch (...) { return false; }
+}
+
 // ---------------------------------------------------------------------------
 // A QUADRATIC FIXTURE, built so the trace is known IN CLOSED FORM.
 //   f(x) = 0.5 x'Hx + c'x   =>   grad = Hx + c,   Hessian = H (exactly).
@@ -93,6 +117,22 @@ static Quad make_quad(size_t n, unsigned seed) {
     for (size_t j = 0; j < n; ++j) { q.c(0, j) = next(); q.x(0, j) = next(); }
     return q;
 }
+
+// A QUADRATIC WITH A DELIBERATELY LARGE, NON-ZERO x -- the fixture the M02
+// investigation needed. Its final form is the x-scaled variant inside D10b
+// (which needed TWO magnitudes, not one), but the reasoning that produced it
+// is worth keeping, because the first draft of that test was wrong in an
+// instructive way:
+//
+// M02 contracts z' against `zp` instead of the perturbation `(zp - x)`. I
+// assumed the extra x'Hz term was a BIAS and wrote a mean-based test. It
+// survived -- because E[x'Hz] = 0 (z is independent of x and has mean zero),
+// so M02 is UNBIASED with an inflated DISPERSION. Measured: correct sd
+// 0.792423, M02 sd 3.657607, a 4.62x inflation. No mean-based test can see
+// that; only the sd can, and only by being compared across two x values.
+// *A wrong implementation that preserves the expectation is invisible to every
+// first-moment test in the suite -- which is why D10b asserts dispersion and
+// why it needs two points to establish independence.*
 
 static Tensor quad_grad_t(const Quad& q, const Tensor& x) {
     Tensor g(1, q.H.cols);
@@ -148,11 +188,15 @@ static void test_unbiasedness() {
 
     // Mean over reps of (mean over k probes) is an average of the estimator.
     double sum_r = 0.0, sum_g = 0.0, sum_r2 = 0.0;
+    bool g_threw = false;
     for (int r = 0; r < reps; ++r) {
-        double er = hutch_trace_rademacher(n, grad_oracle(q), q.x, k, 1000u + r);
-        double eg = hutch_trace_gaussian(n, grad_oracle(q), q.x, k, 1000u + r);
+        double er = 0.0, eg = 0.0;
+        bool ok_r = call_guarded([&]{ er = hutch_trace_rademacher(n, grad_oracle(q), q.x, k, 1000u + r); });
+        bool ok_g = call_guarded([&]{ eg = hutch_trace_gaussian(n, grad_oracle(q), q.x, k, 1000u + r); });
+        if (!ok_r || !ok_g) { g_threw = true; break; }
         sum_r += er; sum_g += eg; sum_r2 += er * er;
     }
+    check(!g_threw, "D1 setup: the estimator call itself must not throw");
     double mean_r = sum_r / reps;
     double mean_g = sum_g / reps;
     double var_r = sum_r2 / reps - mean_r * mean_r;
@@ -198,7 +242,9 @@ static void test_probe_count_law() {
     auto spread = [&](int k) {
         double m = 0.0, m2 = 0.0;
         for (int r = 0; r < reps; ++r) {
-            double e = hutch_trace_rademacher(n, grad_oracle(q), q.x, k, 5000u + r);
+            double e = 0.0;
+            if (!call_guarded([&]{ e = hutch_trace_rademacher(n, grad_oracle(q), q.x, k, 5000u + r); }))
+                return -1.0;   // a throwing implementation has no spread to measure
             m += e; m2 += e * e;
         }
         m /= reps; m2 /= reps;
@@ -284,7 +330,11 @@ static void test_fom_is_first_order() {
           "D5-0: hutch_hvp returns the gradient's shape");
 
     auto rel_err = [&](double eps) {
-        Tensor a = hutch_hvp(gf, xs, v, eps);
+        Tensor a = Tensor::zeros(1, n);
+        // Guarded so a throwing implementation produces a counted failure
+        // rather than aborting the binary before the summary line.
+        if (!call_guarded([&]{ a = hutch_hvp(gf, xs, v, eps); }))
+            return 1.0;   // maximal relative error: it could not produce a value
         double num = 0.0, den = 0.0;
         for (size_t j = 0; j < n; ++j) {
             num += (a(0, j) - target(0, j)) * (a(0, j) - target(0, j));
@@ -376,9 +426,13 @@ static void test_determinism_and_freshness() {
     Tensor v = Tensor::zeros(1, n);
     for (size_t j = 0; j < n; ++j) v(0, j) = 1.0 / std::sqrt(static_cast<double>(n));
 
-    double a = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 42u);
-    double b = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 42u);
-    double c = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 43u);
+    double a = 0.0, b = 0.0, c = 0.0;
+    bool ok = call_guarded([&]{
+        a = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 42u);
+        b = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 42u);
+        c = hutch_trace_rademacher(n, grad_oracle(q), q.x, 8, 43u);
+    });
+    check(ok, "D7 setup: the seeded estimator calls do not throw");
     check_eq(a, b, "D7a: same seed reproduces bit-identically");
     check(a != c, "D7b: a different seed gives a different estimate");
 
@@ -402,17 +456,71 @@ static void test_validation() {
     const size_t n = 4;
     Quad q = make_quad(n, 11);
 
-    bool t1 = false, t2 = false, t3 = false;
-    try { (void)hutch_trace_rademacher(0, grad_oracle(q), q.x, 4, 1u); }
-    catch (const std::invalid_argument&) { t1 = true; }
-    try { (void)hutch_trace_rademacher(n, grad_oracle(q), q.x, 0, 1u); }
-    catch (const std::invalid_argument&) { t2 = true; }
+    // M08 SURVIVED 41 CHECKS, and the reason is this file's third instance of
+    // the "the test asserts THAT IT THREW, not THAT IT THREW HERE" trap.
+    // With dim == 0 but x.cols == 6, the dim guard's removal is invisible --
+    // the very next guard (`x.cols != dim`) throws for a different reason and
+    // the catch block cannot tell the two apart. The original D9a therefore
+    // asserted nothing about the dim guard at all.
+    //
+    // The fix is to assert on the MESSAGE, which is the actual discriminator --
+    // the exception TYPE was never it.
+    //
+    // A SECOND HARNESS DEFECT WAS FOUND WHILE DOING THIS, AND IT IS THE MORE
+    // IMPORTANT ONE. The first attempt made x a zero-column tensor so that
+    // only the dim guard could fire. With the guard removed, that fixture
+    // SEGFAULTED: `Tensor::zeros(1, 0)` has no elements, and the estimator
+    // proceeds to grad(x) and indexes it. `Tensor::operator()` is
+    // `data[r*cols + c]` with NO bounds check (the repo's eighth recorded
+    // instance of that), so the out-of-bounds read walks off the allocation.
+    // The mutation was being detected as a crash rather than as a failure --
+    // a CRASH IS NOT A VERDICT. The fix is to keep x VALID and let the
+    // message do the discriminating, so no fixture ever reaches the
+    // unguarded code path.
+    auto message_of = [q](size_t dim, int probes) {
+        try {
+            (void)hutch_trace_rademacher(dim, grad_oracle(q), q.x, probes, 1u);
+            return std::string("<no throw>");
+        } catch (const std::invalid_argument& e) {
+            return std::string(e.what());
+        }
+    };
+
+    std::string m0 = message_of(0, 4);
+    // The discriminator must be "dim must be", NOT the bare substring "dim" --
+    // the mismatch guard's message is "hutch: x.cols does not match DIM", which
+    // CONTAINS "dim". A substring test was therefore satisfied by the wrong
+    // guard, which is exactly how M08 (removing the dim guard) survived: the
+    // neighbouring guard threw with a message containing the searched token.
+    // *A substring that appears in two different messages discriminates
+    // nothing -- the assertion has to name the message that is unique to the
+    // guard under test.*
+    check(m0.find("dim must be") != std::string::npos,
+          "D9a: dim == 0 throws, and it is the DIM guard that threw (not a neighbour)");
+    if (m0.find("dim") == std::string::npos)
+        printf("    [info] dim==0 message was: %s\n", m0.c_str());
+
+    std::string m1 = message_of(n, 0);
+    check(m1.find("probes must be") != std::string::npos,
+          "D9b: probes == 0 throws, and it is the PROBES guard (not the dim guard)");
+    if (m1.find("probes") == std::string::npos)
+        printf("    [info] probes==0 message was: %s\n", m1.c_str());
+
+    bool t3 = false;
     try { (void)hutch_trace_rademacher(n, grad_oracle(q), q.x, -3, 1u); }
     catch (const std::invalid_argument&) { t3 = true; }
-
-    check(t1, "D9a: dim == 0 throws");
-    check(t2, "D9b: probes == 0 throws");
     check(t3, "D9c: probes < 0 throws");
+
+    // And the mismatch guard itself, now that its message is the discriminator.
+    std::string mm;
+    try {
+        (void)hutch_trace_rademacher(99, grad_oracle(q), q.x, 4, 1u);
+        mm = "<no throw>";
+    } catch (const std::invalid_argument& e) {
+        mm = e.what();
+    }
+    check(mm.find("does not match") != std::string::npos,
+          "D9d: a dim/x.cols mismatch throws the mismatch guard");
 }
 
 // =============================================================================
@@ -427,9 +535,55 @@ static void test_closed_form_values() {
         const size_t n = 5;
         Quad q = make_quad(n, 2024);
         double truth = quad_trace(q);
-        double est = hutch_trace_rademacher(n, grad_oracle(q), q.x, 20000, 7u);
+        double est = 0.0;
+        bool ok = call_guarded([&]{ est = hutch_trace_rademacher(n, grad_oracle(q), q.x, 20000, 7u); });
+        check(ok, "D10 setup: the k=20000 estimator call does not throw");
         check_near(est, truth, 0.05 * std::fabs(truth) + 1e-6,
                    "D10: k=20000 recovers the closed-form trace within 5%");
+    }
+    // D10b -- THE FIXTURE THAT KILLS M02, AND THE FIRST DRAFT OF IT DID
+    // NOT, FOR A REASON WORTH RECORDING.
+    //
+    // M02 contracts z' against `zp` instead of the perturbation `(zp - x)`,
+    // adding a spurious x'Hz term. My first assumption was that this is a
+    // BIAS, and I wrote a mean-based unbiasedness test to catch it. It
+    // survived -- because the term is NOT a bias: E[x'Hz] = E[x']E[Hz] = 0
+    // since z is independent of x and has mean zero. M02 is an UNBIASED
+    // estimator with a DIFFERENT DISPERSION, and no mean-based test can ever
+    // see it. Measured: correct sd 0.792423, M02 sd 3.657607 -- 4.62x
+    // inflation.
+    //
+    // The property that DOES separate them is that the correct estimator's
+    // dispersion is INDEPENDENT OF x (the trace does not depend on where you
+    // evaluate it), while M02's scales with |x|. So this asserts the sd, not
+    // the mean -- and it asserts it at TWO different x values, because a
+    // single x cannot establish "independent of".
+    {
+        const size_t n = 6;
+        const int k = 40, reps = 3000;
+        auto spread_at = [&](double xscale) {
+            Quad q = make_quad(6, 8080);
+            for (size_t j = 0; j < n; ++j) q.x(0, j) = xscale * (3.0 + 0.5 * static_cast<double>(j));
+            double m = 0.0, m2 = 0.0;
+            for (int r = 0; r < reps; ++r) {
+                double e = 0.0;
+                if (!call_guarded([&]{ e = hutch_trace_rademacher(n, grad_oracle(q), q.x, k, 9000u + r); }))
+                    return -1.0;
+                m += e; m2 += e * e;
+            }
+            m /= reps; m2 /= reps;
+            return std::sqrt(std::fabs(m2 - m * m));
+        };
+        double sd_near = spread_at(0.05);   // x ~ 0.05*(3, 3.5, ...) -> ~0
+        double sd_far  = spread_at(1.0);    // x = (3, 3.5, 4, ...)
+        double ratio = sd_far / sd_near;
+        printf("  [info] sd near-origin=%.6f  sd far-from-origin=%.6f  ratio=%.4f (want ~1.00)\n",
+               sd_near, sd_far, ratio);
+        // The correct estimator's dispersion does not depend on x. M02
+        // inflates it by ~4.6x here, so a band of 1.6..2.5 catches it while
+        // admitting the sampling noise of a 3000-reply estimate.
+        check(ratio > 0.80 && ratio < 1.25,
+              "D10b: estimator dispersion is INDEPENDENT of x (kills the zp contraction)");
     }
     // D12: rank-1 H = 3 * u u' with u unit => tr = 3 * ||u||^2 = 3.
     {
@@ -442,7 +596,9 @@ static void test_closed_form_values() {
         q.H(0, 0) = 3.0;
         double truth = quad_trace(q);
         check_eq(truth, 3.0, "D12 setup: rank-1 trace is 3");
-        double est = hutch_trace_rademacher(n, grad_oracle(q), q.x, 4000, 3u);
+        double est = 0.0;
+        bool ok = call_guarded([&]{ est = hutch_trace_rademacher(n, grad_oracle(q), q.x, 4000, 3u); });
+        check(ok, "D12 setup: the rank-1 estimator call does not throw");
         // Rademacher z'Hz = 3*z_0^2 = 3 always (since z_0 = +-1). So the
         // estimate is EXACTLY 3 for every probe -- a stronger claim than
         // "converges to 3".
@@ -459,8 +615,10 @@ static void test_closed_form_values() {
 static void test_probe_laws_are_distinct() {
     const size_t n = 6;
     Quad q = make_quad(n, 4242);
-    double r1 = hutch_trace_rademacher(n, grad_oracle(q), q.x, 1, 77u);
-    double g1 = hutch_trace_gaussian(n, grad_oracle(q), q.x, 1, 77u);
+    double r1 = 0.0, g1 = 0.0;
+    bool ok_r = call_guarded([&]{ r1 = hutch_trace_rademacher(n, grad_oracle(q), q.x, 1, 77u); });
+    bool ok_g = call_guarded([&]{ g1 = hutch_trace_gaussian(n, grad_oracle(q), q.x, 1, 77u); });
+    check(ok_r && ok_g, "probe-law setup: the k=1 calls do not throw");
     check(r1 != g1, "Gaussian and Rademacher laws are distinct at k=1");
 }
 
@@ -513,7 +671,6 @@ static void test_model_diagonal() {
 
     for (auto& holder : model.layers) {
         auto params = holder.get()->parameters();
-        auto it = before.find(holder.get());
         size_t idx = 0;
         for (size_t li = 0; li < model.layers.size(); ++li)
             if (model.layers[li].get() == holder.get()) {
