@@ -222,10 +222,17 @@ run_mutation M02 cpp \
  "plan rows scaled by 2 (marginals no longer match)"
 
 # --- the self-term coefficient, the constant the oracle got wrong ----------
-run_mutation M03 cpp "$(printf 's += (-2.0) * self;\x1fs += (-1.0) * self;')" \
- "adjoint self-term coefficient -2 -> -1 (one endpoint instead of two)"
-run_mutation M04 cpp "$(printf 's += (-2.0) * self;\x1fs += (-4.0) * self;')" \
- "adjoint self-term coefficient -2 -> -4"
+# The anchor is made UNIQUE by including the leading whitespace of the grad_y
+# site, which is indented further. The first run of this harness reported
+# MUT-NOOP for both of these because the bare line appears TWICE (once in the
+# grad_x branch, once in the grad_y branch) and apply_mutation correctly
+# REFUSED an ambiguous anchor rather than silently editing the first match.
+# A refusal is the right behaviour; a harness that edits the first match is
+# not -- and it is why the count is asserted rather than assumed.
+run_mutation M03 cpp "$(printf '            s += (-2.0) * self;\x1f            s += (-1.0) * self;')" \
+ "adjoint self-term coefficient -2 -> -1 (grad_x; one endpoint instead of two)"
+run_mutation M04 cpp "$(printf '                s += (-2.0) * self;\x1f                s += (-4.0) * self;')" \
+ "adjoint self-term coefficient -2 -> -4 (grad_y branch)"
 
 # --- the debiasing terms ---------------------------------------------------
 run_mutation M05 cpp "$(printf 'double S = v_xy - 0.5 * v_xx - 0.5 * v_yy;\x1fdouble S = v_xy;')" \
@@ -249,12 +256,16 @@ run_mutation M09 cpp "$(printf 'out(i, k) = s / mass;\x1fout(i, k) = s;')" \
 run_mutation M10 cpp \
  "$(printf 'if (q == i) continue;\x1fif (false) continue;')" \
  "self-term diagonal guard removed (C_xx[i,i]=0 so algebraically inert)"
+# The replacement must keep the braces balanced: a first draft emitted
+# `if (false)` in place of the condition, which deleted the closing brace and
+# reported MUT-BROKEN -- a BUILD verdict, not a mutation verdict, for a
+# mutation that was perfectly well formed.
 run_mutation M11 cpp \
- "$(printf 'if (C.rows != a.rows || C.cols != b.rows)\x1fif (false)\x1f')" \
- "cost/marginal shape guard removed"
+ "$(printf 'if (C.rows != a.rows || C.cols != b.rows)\x1fif (C.rows != a.rows + 1e9 || C.cols != b.rows)')" \
+ "cost/marginal shape guard neutered (braces kept balanced)"
 run_mutation M12 cpp \
- "$(printf 'if (!(std::fabs(mass) > 0.0))\x1fif (false)\x1f')" \
- "zero-mass barycentric guard removed"
+ "$(printf 'if (!(std::fabs(mass) > 0.0))\x1fif (!(std::fabs(mass) > 0.0 && mass < 1e300))')" \
+ "zero-mass barycentric guard neutered (braces kept balanced)"
 
 # --- the max-subtraction in logsumexp --------------------------------------
 run_mutation M13 cpp \
