@@ -1,3 +1,18 @@
+# [SHIPPED 2026-10-20] — see "WHAT ACTUALLY SHIPPED" at the foot of this file.
+#
+# Of the plan's 8 tasks: 1-8 all completed, with four of them producing findings
+# the plan did not predict. Those corrections are recorded IN PLACE above (S1,
+# S5, S8, S11 each carry a `CORRECTION 2026-10-20` block) rather than being
+# quietly patched, so the plan documents what it got wrong as well as what it
+# got right. Two further corrections were found only when the C++ was run
+# against the oracle's numbers, and are recorded in
+# tests/logit_processing_oracle.py next to the fixtures they invalidate.
+#
+# What this plan got right: the two-phase oracle-first order caught six defects
+# before a line of C++ existed, and the mutation harness caught six more after.
+# What it got wrong: four of its own worked examples, every one of them an
+# expectation asserted from memory rather than measured.
+#
 # Logit Processing & Decoding Strategies — Implementation Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
@@ -119,7 +134,18 @@ AutoregressiveResult autoregressive_sample(
 
 ## SEMANTICS EACH FIXTURE PINS (the traps this repo has already been bitten by)
 
-**S1. NUCLEUS `p` IS A CUMULATIVE PROBABILITY CUT, NOT A TOKEN COUNT.** Sort descending, accumulate, and keep the smallest prefix whose mass is `>= p`. Crucially the token that *crosses* the threshold is **kept**: with `p = [0.5, 0.3, 0.15, 0.05]` and `p_top = 0.8`, the prefix `0.5, 0.3` has mass `0.8` and `0.5, 0.3, 0.15` has `0.95 >= 0.8`, so **3** tokens survive, not 2. The HuggingFace reference has this exact off-by-one and it is the single most common implementation bug. Test 2 pins the exact survivor set.
+**S1. NUCLEUS `p` IS A CUMULATIVE PROBABILITY CUT, AND `>=` IS LOAD-BEARING.** Sort descending, accumulate, keep the smallest prefix whose mass is `>= p`. The token that *reaches* the threshold is kept and the loop stops.
+
+> **CORRECTION 2026-10-20, from the oracle (measured, not reasoned).** This
+> section originally read: *"with `p = [0.5, 0.3, 0.15, 0.05]` and `p_top = 0.8`,
+> the prefix `0.5, 0.3` has mass `0.8` and `0.5, 0.3, 0.15` has `0.95 >= 0.8`, so
+> **3** tokens survive, not 2."* **That is backwards.** `0.5 + 0.3` is exactly
+> `0.8`, which **satisfies** `cum >= 0.8`, so the loop stops with **2** tokens.
+> The `>=` vs `>` distinction is real — `p = 0.8` is precisely the value that
+> separates `>=:{0,1}` from `>:{0,1,2}` on this fixture (the oracle prints the
+> full sweep over `p ∈ {0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95}`, and `0.8` is
+> the *only* separating value) — but the direction of the error was stated
+> backwards. Test 2 pins `{0,1}` at `p=0.8`.
 
 **S2. `p >= 1.0` IS A NO-OP, NOT AN ERROR.** The accumulated mass reaches 1.0 only after all V tokens, so the loop must terminate without touching the last index out of range.
 
@@ -129,22 +155,52 @@ AutoregressiveResult autoregressive_sample(
 
 **S5. THE PENALTIES SIGN-FLIP ON NEGATIVE LOGITS — THIS IS THE BUG.** For `penalty > 1`:
 ```
-logit_i < 0  ->  logit_i * penalty     (more negative => more suppressed)
+logit_i < 0   ->  logit_i * penalty     (more negative => more suppressed)
 logit_i >= 0  ->  logit_i / penalty
 ```
-An implementation that always multiplies **suppresses positive tokens and promotes negative ones** — it inverts the penalty on roughly half the vocabulary. Both branches are pinned, on a fixture where the sign split is asymmetric, by Test 6. (HF applies this to `scores` and is careful about the sign; this is the reference behaviour.)
+An implementation that always multiplies **suppresses positive tokens and promotes negative ones** — it inverts the penalty on roughly half the vocabulary. Measured on `[-2.0, 4.0]` with history `[0,1]` and `penalty = 2.0`: the correct answer is `[-4.0, 2.0]`; the always-multiply bug gives `[-4.0, 8.0]` — the positive token is **promoted**.
+
+> **ORACLE CORRECTION 2026-10-20.** The first draft of this fixture was
+> `[-2.0, 4.0]` with history `[1]`, which penalises only index 1 — so the
+> "negative branch multiplies" assertion was asserting on a token that was
+> **never in the history**. `history` must name both indices for the sign split
+> to be visible at all. This is the "the discriminator was absent from the
+> fixture" trap in the mutation-testing table, and it bit a plain unit test.
+
+> **ORACLE CORRECTION 2026-10-20 (a different bug, same function).** The
+> oracle's own `repetition_penalty` first wrote `i = list(history).index(t)` —
+> which is the token's **position in the history list**, not the token id — so
+> with history `[0, 0, 1]` it wrote to indices 0 and 1 and silently modified
+> index 2, the one token *not* in the history. This is the `pair<int,int>` trap
+> from the debugging skill §4c.4, and it is worth writing down that the trap
+> reaches ORACLES too: a wrong-side-of-the-differential bug is invisible until
+> a check pins the entries that should be untouched.
 
 **S6. FREQUENCY PENALTY IS LINEAR IN THE COUNT AND IS **NOT** CLIPPED; PRESENCE IS A STEP.** `logit_i -= penalty * count_i` vs `logit_i -= penalty * [count_i > 0]`. The count comes from the *history multiset*, so a token repeated 3 times gets 3x the frequency penalty but only 1x the presence penalty.
 
-**S7. TEMPERATURE IS APPLIED TO LOGITS, NOT TO PROBABILITIES.** `logits / T` — dividing the softmax output by `T` is a different function. Test 7 pins `T -> 0+` approaching greedy and `T = 1` being the identity, which `exp(p)/T` fails.
+**S7. TEMPERATURE IS APPLIED TO LOGITS, NOT TO PROBABILITIES.** `logits / T` — dividing the softmax output by `T` is a different function. On `logits = [2, 1, 0]` at `T = 0.5`, `softmax(logits/T)[0] = 0.8668133321973347` while `softmax(probs/T)[0] = 1.3304819115496436` — the wrong version does not even sum to 1. Test 7 pins `T -> 0+` approaching greedy and `T = 1` being the identity.
 
-**S8. COMPOSITION ORDER IS PART OF THE CONTRACT.** Temperature first (it is a reparameterisation of the whole distribution), then the truncations (they are functions of the *reweighted* distribution), then the penalties. Applying top-k to un-temperature-scaled logits gives a different survivor set at `T != 1`. Test 8 pins the composed result against a hand-computed value, and Test 8b pins that `T=1` makes the chain order-independent (which is the only reason the order is a convention and not an identity).
+**S8. COMPOSITION ORDER IS PART OF THE CONTRACT, AND ONLY *TRUNCATION-ON-MASS* PROCESSORS CAN PIN IT.** Temperature first (it reparameterises the whole distribution), then the truncations (they are functions of the *reweighted* distribution), then the penalties.
 
-**S9. `-inf` MUST SURVIVE THE PIPELINE.** A truncated token is `-inf`; temperature divides it to `-inf` (fine) but a *naive* `logits * 0` penalty or an `exp` without max-subtraction turns it into `NaN`. Test 9 asserts no NaN reaches `sample_from_logits`.
+> **ORACLE CORRECTION 2026-10-20.** This section originally used **top-k** as the order discriminator, reasoning that applying top-k to un-temperature-scaled logits gives a different survivor set. **It does not, and cannot.** Dividing every logit by `T > 0` is strictly monotone, so the *ranking* is identical either way and top-k's survivor set is order-independent by construction. That is precisely why top-k is the wrong probe.
+>
+> **Top-p is the discriminator**, because its cut depends on cumulative *mass*, and temperature changes the mass. Measured on `logits = [3, 2, 1, 0]`: at `p = 0.9`, temperature-then-p keeps `{0,1}` while p-then-temperature keeps `{0,1,2}` — the wrong order admits a token carrying `0.0487` of the probability mass that the intended order admits. The composed softmax values are `0.8807970779778823` (correct order) vs `0.8668133321973347` (wrong order), so the test discriminates on a value, not only on a survivor count.
+
+**S9. `-inf` MUST SURVIVE THE PIPELINE.** A truncated token is `-inf`; temperature divides it to `-inf` (fine) but a *naive* `logits * 0` penalty or an `exp` without max-subtraction turns it into `NaN`. Measured: `masked * 0.0` yields `[0.0, nan, nan, nan]` on this fixture. Test 9 asserts no NaN reaches `sample_from_logits`.
 
 **S10. THE MAX-SUBTRACT IN `sample_from_logits` IS LOAD-BEARING.** `logits = [1000, 999]` raw: `exp(1000) = inf`, `inf / inf = NaN`, and the draw returns garbage. With max-subtraction the result is exact. Test 10.
 
-**S11. `round_to_int` USES `std::round`, WHICH IS ROUND-HALF-AWAY-FROM-ZERO — so `-2.5 -> -3`.** Not banker's rounding, not `std::nearbyint`. Test 11 pins both halves, because the repo's own TTA/metrics tests have been bitten by a wrong-rounding-mode expectation before.
+**S11. `round_to_int` USES `std::round`, WHICH IS ROUND-HALF-AWAY-FROM-ZERO — so `-2.5 -> -3`.** Not banker's rounding, not `std::nearbyint`.
+
+> **ORACLE CORRECTION 2026-10-20 — THE WRONG-LANGUAGE ROUNDING MODE.** The oracle
+> first used `np.round`, which is **ties-to-even**, and asserted half-away-from-zero.
+> They disagree: `np.round(0.5) = 0.0` but `std::round(0.5) = 1.0`;
+> `np.round(2.5) = 2.0` but `std::round(2.5) = 3.0`; `np.round(-0.5) = -0.0` but
+> `std::round(-0.5) = -1.0`. An oracle written in the wrong language with the
+> wrong rounding mode ships a C++ test whose **every** value is wrong, and the
+> resulting failure looks exactly like an implementation bug. The oracle now
+> emulates the C++ semantics with `copysign(floor(|x| + 0.5), x)` and prints the
+> numpy value as an explicit counterfactual. Test 11 pins both signs.
 
 **S12. TIE-BREAK IN TOP-K / TOP-P IS FIRST-WINS ON THE ORIGINAL ORDER.** Two equal logits must resolve to the lower original index, so the result is deterministic and order-independent of the sort algorithm. Test 3 uses a fixture with exact ties.
 
@@ -496,3 +552,114 @@ git commit -m "test(utils): mutation harness for logit_processing (11 mutations)
 - Speculative / contrastive / `typical-p` (S4 lists `apply_typical` as an optional extra — if Task 3 does not reach it, drop it and say so rather than shipping it untested).
 - `min-p`'s interaction with beam search (min-p is a truncation; applying it to the live beam is a research variant, not the paper's algorithm).
 - Any change to `pixelcnn.{h,cpp}` — the adapter lives in the test, not in the library.
+---
+
+# WHAT ACTUALLY SHIPPED
+
+**Files created**
+- `include/nn/utils/logit_processing.h` — 13 semantics documented (S1–S13), both
+  citations verified by title, and a stated out-of-scope list
+- `include/nn/utils/logit_processing.cpp` — every processor as a free function
+  over `Tensor`; `LogitProcessorChain`; `sample_from_logits`;
+  `BeamSearchDecoder` over a `ScoreFn`; `autoregressive_sample`
+- `tests/logit_processing_oracle.py` — numpy oracle, **59/59** self-checks
+- `tests/test_logit_processing.cpp` — 16 test groups, **243/243**
+- `tests/mutate_logit_processing.sh` — 21 mutations + 2 inverted-verdict inert
+  probes, **18 caught / 0 survived / 2 inert-confirmed**, ASan+UBSan CLEAN
+- `tests/test_pixelcnn_decode.cpp` — the integration, **27/27**
+
+**Files modified**
+- `include/nn/nn.h` — umbrella include (verified by a standalone
+  `-fsyntax-only` compile of `#include "nn/nn.h"`, exit 0)
+- `Makefile` — link rule, `tests:` prerequisite, `run_tests` line, for BOTH suites
+- `EXPANSION_QUEUE.md` — moved to `## Done`, plus the next session's notes
+- `docs/plans/2026-10-20_logit-processing-decoding.md` — this file
+
+**Verification, all actually run**
+
+| Gate | Result |
+|---|---|
+| `python3 tests/logit_processing_oracle.py` | exit 0, 59/59 |
+| `./build/test_logit_processing` | 243/243, three consecutive runs |
+| `./build/test_pixelcnn_decode` | 27/27, three consecutive runs |
+| `g++ -std=c++17 -Iinclude -fsyntax-only` on `nn/nn.h` | silent, exit 0 |
+| `bash tests/mutate_logit_processing.sh` | 18 caught / 0 survived / 2 inert; last line `POST-HARNESS: tree restored, rebuilt, and GREEN.` |
+| ASan+UBSan on the pristine tree | CLEAN |
+| `make run_tests` | 253 suites, **one** failure — `test_neural_ode`, verified pre-existing by stashing every local change and rebuilding on clean master (exit 1 there too) |
+
+## THE PLAN WAS WRONG FOUR TIMES, AND EVERY TIME IT WAS AN EXPECTATION ASSERTED FROM MEMORY
+
+1. **S1**: claimed `p=0.8` on `[0.5, 0.3, 0.15, 0.05]` keeps 3 tokens. It keeps
+   2 — `0.5 + 0.3 == 0.8` satisfies `cum >= 0.8`.
+2. **S5**: the fixture named only one history index, so the "negative branch
+   multiplies" assertion was asserting on a token never penalised.
+3. **S8**: claimed top-k pins the composition order. It cannot — temperature is
+   monotone, so top-k's survivor set is order-independent by construction.
+4. **S11**: used `np.round`, which is ties-to-even, to derive values for
+   `std::round`, which is half-away-from-zero.
+
+Plus two found only when the C++ ran against the oracle's numbers:
+
+5. **The one-ulp trap.** `log([0.5, 0.3, 0.15, 0.05])` is not a valid nucleus
+   boundary fixture: `softmax(log(0.3)) = 0.29999999999999993`, so the
+   cumulative mass is `0.79999999999999993 < 0.8` and a **correct**
+   implementation returns `{0,1,2}`. Replaced with dyadic probabilities
+   `[0.5, 0.25, 0.125, 0.125]`, which are exactly representable.
+6. **The S8 fixture needed a flattening temperature.** At `T = 0.5` both orders
+   keep the same single token, so the discriminator was vacuous. `T = 2.0`
+   separates them.
+
+**The reusable rule, and it is the same shape as three earlier sessions in this
+repo:** a fixture whose discriminating value is only correct to within a
+rounding error does not discriminate anything, and an assertion that a correct
+*and* an incorrect implementation both satisfy — an inequality, or a check on a
+fixture that does not contain the boundary — is not a test of the thing under
+test. Both traps produce a green suite and a wrong library.
+
+## WHAT THE HARNESS FOUND IN THE HARNESS
+
+Building the harness from `tests/mutate_sinkhorn.sh` re-surfaced four of this
+repo's own harness bugs, which is the strongest argument yet for copying a
+harness rather than re-deriving one:
+
+1. `mutate_sinkhorn.sh` **never restores after a successful mutation** — it
+   relies on the next mutation's `replace` overwriting the previous one, which
+   holds only while every mutation touches the same file. Here that produced two
+   bogus `MUT-NOOP` verdicts against anchors that exist exactly once.
+2. A `*` inside a double-quoted `$(printf ...)` is **glob-expanded by the shell**
+   into a file listing, so the anchor became `x < 0.0 = x = Makefile tests
+   tools penalty : ...` and matched nothing.
+3. `if (false)` as a guard **replacement** deletes the closing brace and reports
+   `MUT-BROKEN` — a build verdict for a well-formed mutation.
+4. A duplicated mutation id ran twice and polluted the verdict table.
+
+Three of the first run's survivors were **real coverage gaps**, each now killed
+by a test rather than explained away:
+
+- the chain-order checks compared two **hand-composed calls**, which says nothing
+  about what `LogitProcessorChain` does — a right-to-left chain passed all of them;
+- dividing by `len` and by `len + 1` are **both monotone in length**, so the two
+  normalisers agree on similar hypotheses; a brute-force sweep located the
+  separating region (a short hypothesis with a competitive raw log-probability);
+- `n_finite(T=2) >= n_finite(T=1)` is an **inequality**, which holds whether or
+  not the temperature is honoured at all.
+
+Two mutations are **genuinely inert**, measured rather than assumed, and are now
+scored by a function that inverts the verdict so a future refactor that makes
+them matter fails loudly:
+
+- `-inf / T == -inf` in IEEE-754 for every finite `T > 0`, so the explicit `-inf`
+  guard in `apply_temperature` is documentation, not computation;
+- at `k == V` the `k > v` mutant skips the early return, but the write-back loop
+  below it still restores every index.
+
+## A REAL PROPERTY OF PIXELCNN, RECORDED SO NOBODY "FIXES" IT
+
+With an empty canvas, **pixel 0's logits are exactly constant** — all eight are
+`-0.003792`, so the entropy is `log(8) = 2.079442` at every temperature. The
+type-A mask blocks the centre of the first conv, so every position sees the same
+empty context. That is correct: with no context there is no distribution to
+sharpen. An earlier draft of that test read pixel 0 and concluded temperature was
+broken, which would have sent someone to remove the mask. Tests 4f/4g now pin the
+property explicitly and test 4 uses a non-empty prefix at pixel 2, where the
+distribution is real (entropy 1.755 / 2.057 / 2.078 at T = 0.2 / 1 / 5).
