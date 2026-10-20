@@ -5,6 +5,152 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+# [DONE 2026-10-20] LOGIT PROCESSING + DECODING SHIPPED. 243/243 unit checks
+#     + 27/27 PixelCNN integration, 18 mutations caught / 0 survived / 2
+#     measured-inert, ASan+UBSan CLEAN on the pristine tree. Do not re-pop.
+<!-- 2026-10-20: logit processing + decoding SHIPPED (see ## Done). The list is
+     drained a TENTH time.
+
+     THE PICK CAME FROM AN ABSENCE MEASURED IN THE REPO, and the absence was
+     total:
+
+         grep -rinE 'nucleus|top.?p\b|top_p_sampl|temperature_sampl|typical.?sampl
+                     |min.?p\b|repetition.?penal|beam.?search' include/
+         -> **0 HITS** in the whole tree.
+
+     And a wider sweep for the concept under other names found only FALSES --
+     `up_sample_`/`down_sample_` conv members in ddpm.h, `conv_transpose` in
+     consistency.h, "inverse pass (for sampling)" in coupling_layer.h, "greedy
+     OT assignment" in flow_matching.h (the min-cost-assignment coupling), and a
+     WGAN gradient-penalty rng_. **This is the most valuable single line in
+     this file: eight layers ship that produce samples, and NOTHING shipped that
+     decided WHICH sample to take.**
+
+     AND IT IS NOT REDUNDANT. `layers/generative/pixelcnn.h:205` says in the
+     repo's own words: "For training with cross-entropy we expose logits and
+     let the caller apply softmax. The output is the raw logits." PixelCNN
+     models a CATEGORICAL distribution over `n_vals` and nothing in the repo
+     turned those logits into a token -- `grep -n 'sample\|generate'
+     pixelcnn.cpp` returns NOTHING. VQ-VAE's codebook is a second discrete-output
+     model with the same missing decoder. The DISCRETE half of generative/ had
+     no inference path at all.
+
+     CITATIONS verified BY TITLE (the arXiv API is unreachable from the dev
+     host -- `curl` returned an empty body with exit 0 for a control query that
+     must return results), so both came from title searches whose result sets
+     echoed the titles verbatim:
+       - Holtzman et al., "The Curious Case of Neural Text Degeneration",
+         ICLR 2020, arXiv:1904.09751. Nucleus (top-p), min-p, "unreliable tail".
+       - Fan, Lewis, Dauphin, "Hierarchical Neural Story Generation", ACL 2018,
+         arXiv:1805.04833. Top-k (fairseq's `--sampling-topk`).
+     **No arXiv ID is asserted for typical-p, beam length penalty, or the
+     repetition/frequency/presence penalties** -- the last are folklore by
+     mechanism name, and asserting an unverified ID is the exact failure this
+     file has committed nine times.
+
+     ---------------------------------------------------------------------------
+     WHAT THE ORACLE CAUGHT, WHICH IS THE PART WORTH KEEPING. The numpy oracle
+     ran BEFORE any C++ existed and caught SIX defects, FIVE OF THEM IN THE
+     ORACLE ITSELF. Two only surfaced when the C++ was run against the oracle's
+     numbers rather than reasoned about:
+
+       1. `list(history).index(t)` is the token's POSITION IN THE HISTORY, not
+          the token id -- the `pair<int,int>` trap from the debugging skill,
+          reaching an ORACLE. Invisible until a check pinned the entries that
+          should have been untouched.
+       2. np.round is TIES-TO-EVEN and std::round is HALF-AWAY-FROM-ZERO. An
+          oracle in the wrong language with the wrong rounding mode ships a C++
+          test whose every value is wrong, and the failure looks exactly like an
+          implementation bug.
+       3. The S1 example was backwards: 0.5+0.3 == 0.8 SATISFIES `cum >= 0.8`,
+          so 2 tokens survive, not 3.
+
+       4. THE BIG ONE, AND THE MOST REUSABLE FINDING IN THIS FILE:
+          `log([0.5, 0.3, 0.15, 0.05])` at `p = 0.8` is NOT a valid nucleus
+          boundary fixture, because the implementation softmaxes the LOGITS and
+          `softmax(log(x))` is not x -- 0.3 round-trips to 0.29999999999999993,
+          ONE ULP LOW. The cumulative mass is 0.79999999999999993 < 0.8, `>=`
+          fails, and a CORRECT implementation returns {0,1,2} where the oracle
+          said {0,1}. That reads exactly like an off-by-one in the nucleus.
+
+          **A fixture whose discriminating value is only correct to within a
+          rounding error does not discriminate anything. The boundary must be
+          EXACTLY representable in binary floating point, so it means the same
+          thing on both sides of any round-trip. DYADIC probabilities (0.5,
+          0.25, 0.125) are.** This is the third time in this repo's history
+          that "the fixture, not the training loop" turned out to hold the bug
+          (after the adversarial 2*eps >= gap case) -- and the first time the
+          fixture was wrong by ONE ULP rather than by a wrong factor.
+
+       5. Top-k CANNOT pin a composition order, because dividing by T > 0 is
+          monotone and its survivor set is therefore order-independent BY
+          CONSTRUCTION. Top-p can, because its cut depends on cumulative MASS.
+          But only with a FLATTENING temperature: at T = 0.5 the head collapses
+          so far that both orders keep one token and the checks ship vacuous.
+
+     ---------------------------------------------------------------------------
+     THE MUTATION HARNESS FOUND FOUR OF THIS REPO'S OWN HARNESS BUGS AGAIN,
+     WHICH IS THE ARGUMENT FOR COPYING A HARNESS RATHER THAN RE-DERIVING ONE:
+
+       - `tests/mutate_sinkhorn.sh` NEVER RESTORES AFTER A SUCCESSFUL
+         MUTATION. It relies on the next mutation's `replace` overwriting the
+         previous one, which holds only while every mutation touches the same
+         file. Cost here: two mutations reported MUT-NOOP against anchors that
+         provably exist exactly once.
+       - A `*` inside a double-quoted `$(printf ...)` is GLOB-EXPANDED by the
+         shell into a FILE LISTING, so the anchor silently became
+         `x < 0.0 = x = Makefile tests tools penalty : ...` and matched nothing.
+       - `if (false)` in place of a guard CONDITION deletes the closing brace and
+         reports MUT-BROKEN -- a BUILD verdict for a well-formed mutation.
+       - A duplicated mutation id ran twice and polluted the verdict table.
+
+     And THREE of the survivors in the first run were REAL COVERAGE GAPS, each
+     now killed by a test rather than explained away:
+
+       - The chain-order tests compared two HAND-COMPOSED calls, which says
+         nothing about what `LogitProcessorChain` does. A chain folding
+         right-to-left passed all of them.
+       - Dividing by `len` and by `len + 1` are BOTH monotone in length, so the
+         two normalisers agree on similar hypotheses; it takes a SHORT
+         hypothesis with a competitive raw log-probability to separate them.
+       - `n_finite(T=2) >= n_finite(T=1)` is an INEQUALITY, which holds whether
+         or not the temperature is honoured at all. It was testing a number, not
+         the behaviour.
+
+     TWO MUTATIONS ARE GENUINELY INERT, measured rather than assumed, and are
+     scored by a function that INVERTS the verdict so a future refactor that
+     makes them matter fails loudly:
+       - `-inf / T == -inf` in IEEE-754 for every finite T > 0, so the explicit
+         -inf guard in `apply_temperature` is documentation, not computation.
+       - At `k == V` the `k > v` mutant skips the early return, but the
+         write-back loop below it still restores every index.
+
+     ---------------------------------------------------------------------------
+     A REAL PROPERTY OF THE PIXELCNN ARCHITECTURE, recorded so nobody "fixes"
+     it: with an empty canvas, PIXEL 0'S LOGITS ARE EXACTLY CONSTANT. The type-A
+     mask blocks the centre of the first conv, so every position sees the same
+     empty context -- measured, all eight logits are -0.003792 and the entropy
+     is log(8) = 2.079442 at T = 0.2, 1 and 5 alike. Correct, not a bug: with no
+     context there is no distribution to sharpen. An earlier draft of that test
+     read pixel 0 and concluded temperature was broken.
+
+     VERIFIED ABSENT, re-measure before taking:
+       - `grep -rinE 'weight.?standard|power.?norm|lipschitz|differenti
+                      able.?sort|sort.?sinc' include/`
+         -> **0 hits**. Weight standardisation / Lipschitz normalisation is the
+         cheapest remaining direction: model-free, needs only the existing
+         per-layer parameter lists, and composes with spectral_norm.h which
+         constrains the SPECTRAL NORM but not the scale.
+       - `grep -rinE 'nystrom|low.?rank.?appro|amortized.*attention|linear.*attn'`
+         -> check before taking; `attention/linear_attention.h` may already
+         cover the kernel-feature-map side, and `mup.h` ships rank-collapse
+         DIAGNOSTICS.
+
+     DO NOT re-pop: decoding / logit processing (shipped today). Remember that
+     `sampling` matches `up_sample_`, `down_sample_`, "inverse pass (for
+     sampling)" and "greedy OT assignment"; and `min_p` matches a `min()` in
+     randomized_smoothing.h. PRINT THE MATCHING LINES, not the filenames. -->
+
 <!-- 2026-10-19 (later): Hutchinson trace estimation SHIPPED (see ## Done). The
      list is drained a NINTH time.
 
@@ -533,6 +679,14 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+- **Logit processing + decoding strategies** (Holtzman, Buys, Du, Forbes, Choi, "The Curious Case of Neural Text Degeneration", ICLR 2020, **arXiv:1904.09751** -- nucleus/top-p and min-p; Fan, Lewis, Dauphin, "Hierarchical Neural Story Generation", ACL 2018, **arXiv:1805.04833** -- top-k; **both verified 2026-10-20 BY TITLE**, the arXiv API being unreachable from the dev host, and **no ID is asserted** for typical-p, beam length penalty or the repetition/frequency/presence penalties) -- **THE QUEUE'S TENTH DRAINED LIST, AND THE PICK CAME FROM THE TOTALEST ABSENCE YET: `grep -rinE 'nucleus|top.?p\b|temperature_sampl|min.?p\b|repetition.?penal|beam.?search' include/` -> 0 HITS in the whole tree.** Implemented in `include/nn/utils/logit_processing.{h,cpp}` as model-free free functions over `Tensor`: `softmax` (max-subtract kept explicit), `apply_temperature` (on LOGITS, S7), `apply_top_k` (first-wins ties, S3/S12), `apply_top_p` (the `>=` boundary, S1/S2), `apply_min_p` (relative to p_max not the median, S4), the repetition/frequency/presence penalties (the SIGN SPLIT, S5/S6), `apply_epsilon` and `apply_round_to_int` (std::round, half-away-from-zero, S11), `LogitProcessorChain` (left to right, S8), the categorical `sample_from_logits` (S10), `BeamSearchDecoder` over a caller-supplied `ScoreFn` (length penalty applied ONLY when ranking finished hypotheses; **eod is not eos**), and `autoregressive_sample`. **243/243 unit checks + 27/27 PixelCNN integration, deterministic across 3 runs; 18 mutations caught / 0 survived / 2 measured-inert; ASan+UBSan CLEAN on the pristine tree.** Plan: `docs/plans/2026-10-20_logit-processing-decoding.md`.
+
+  **NOT REDUNDANT, and the queue's rule forced the measurement:** `layers/generative/pixelcnn.h:205` says in the repo's own words *"For training with cross-entropy we expose logits and let the caller apply softmax. The output is the raw logits"*, and `grep -n 'sample\|generate' pixelcnn.cpp` returns NOTHING -- so PixelCNN, a categorical model over `n_vals`, shipped with no decoder, and VQ-VAE's codebook is a second discrete-output model in the same state. **Eight layers ship that produce samples; nothing shipped that decided WHICH sample to take.**
+
+  **THE NUMPY ORACLE CAUGHT SIX DEFECTS BEFORE ANY C++ EXISTED, FIVE OF THEM IN THE ORACLE ITSELF.** (1) `list(history).index(t)` is the token's POSITION IN THE HISTORY LIST, not the token id -- the `pair<int,int>` trap, in an oracle. (2) np.round is TIES-TO-EVEN and std::round is HALF-AWAY-FROM-ZERO. (3) The plan's S1 example was backwards: `0.5+0.3 == 0.8` SATISFIES `cum >= 0.8`, so 2 tokens survive, not 3. (4) **THE MOST REUSABLE FINDING IN THIS FILE:** `log([0.5,0.3,0.15,0.05])` at p=0.8 is NOT a valid boundary fixture, because `softmax(log(x))` is not x -- 0.3 round-trips to 0.29999999999999993, ONE ULP LOW, the cumulative mass misses 0.8, and a CORRECT implementation returns {0,1,2}. **A fixture whose discriminating value is only correct to within a rounding error does not discriminate anything; the boundary must be EXACTLY representable. DYADIC probabilities are.** (5) Top-k CANNOT pin a composition order at all (temperature is monotone), and top-p only discriminates under a FLATTENING temperature -- at T=0.5 the head collapses and the checks ship vacuous.
+
+  **THE HARNESS RE-FOUND FOUR OF THIS REPO'S OWN HARNESS BUGS** -- the sinkhorn harness never restores after a successful mutation (so two mutations reported MUT-NOOP against anchors that exist exactly once); a `*` inside `"$(printf ...)"` is glob-expanded into a file listing; `if (false)` as a guard replacement deletes a closing brace and reports MUT-BROKEN; a duplicated id ran twice. **Three of the first run's survivors were REAL COVERAGE GAPS, each now killed by a test**: the chain-order checks compared hand-composed calls (a right-to-left chain passed them all); dividing by `len` and `len+1` are both monotone so the length-penalty mutants survived until a short high-log-prob hypothesis separated them; and `n_finite(T=2) >= n_finite(T=1)` is an INEQUALITY that holds whether or not the temperature is honoured at all.
+
 - **Entropic optimal transport (Sinkhorn-Knopp) with its point-space adjoint** (Cuturi, "Sinkhorn Distances: Lightspeed Computation of Optimal Transportation Distances", **arXiv:1306.0895**, NIPS 2013; Feydy, Sejourne, Vialard, Amari, Trouve, Peyre, "Interpolating between Optimal Transport and MMD using Sinkhorn Divergences", **arXiv:1810.08278**; Genevay et al., "Learning Generative Models with Sinkhorn Divergences", **arXiv:1706.00292** -- **all three verified 2026-10-20 by `ti:` TITLE query against the arXiv API, none typed from memory**, which is the tenth wrong-ID defence this file has needed. Chizat et al., unbalanced OT, **arXiv:1910.12958**, is recorded in the header as explicitly OUT OF SCOPE so it is not silently reinvented) -- **THE DOCS-GAP GREP'S THIRD CONSECUTIVE HIT, and the queue's only remaining candidate.** Measured absent: `grep -rinE 'sinkhorn|optimal.transport|brenier|entropic' include/` -> **0 hits**, and `grep -rinE 'transport.plan|coupling|barycentric|hungarian' include/` -> only RealNVP's `affine_coupling.h` and schedule-free's "sequence coupling", i.e. NOTHING computes a transport plan or a barycentric projection. Implemented in `include/nn/utils/sinkhorn.{h,cpp}`: `sinkhorn_log` (log-domain plan + duals + convergence report), `ot_eps`, `sinkhorn_divergence`, `sinkhorn_sqdist`, `sinkhorn_point_gradient`, `barycentric_projection`, `plan_marginal_error`, and the `SinkhornLoss` adapter. **Model-free by construction -- every core is a free function over Tensor, so the whole file is testable with no Model, no optimizer and no network**, the same shape `utils/hutchinson.h` and `utils/mup.h` were built with. **87/87 checks green.**
 
   **NOT REDUNDANT, and the queue's standing rule forced the measurement rather than an argument:** the repo's only transportation work is `layers/generative/wgan_gp.h`, a critic GRADIENT PENALTY on the critic's INPUT -- an adversarial distance estimated by a learned network. OT is model-free, needs no critic, converges to the TRUE transport cost as eps->0, and returns the PLAN, which is an object no other function in the repo produces. `utils/mmd_loss.{h,cpp}` is a different object again: a kernel two-sample statistic with no plan and no geometry, which is exactly why the two eps-limits of this file are different limits.
