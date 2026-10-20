@@ -264,11 +264,56 @@ static void test_min_p_is_relative_to_max_not_median() {
     Tensor d = apply_min_p(lg, 0.05, 1.0);
     CHECK(n_finite(d) == 4, "5d min_p=0.05 keeps all four");
 
-    // min_p applied WITH a temperature: the threshold uses the TEMPERATURE-adjusted
-    // distribution, which is the whole point of the third argument.
-    Tensor e = apply_min_p(lg, 0.5, 2.0);   // T=2 flattens -> max prob drops
-    CHECK(n_finite(e) >= n_finite(c),
-          "5e a flattening temperature admits at least as many tokens");
+    // min-p applied WITH a temperature. The floor is min_p * p_max of the
+        // TEMPERATURE-ADJUSTED distribution, so T is load-bearing and this is the
+        // assertion that makes it so. Measured on p = [0.5, 0.25, 0.125, 0.125]:
+        //     T = 1.0 -> threshold 0.15 -> {0, 1}
+        //     T = 4.0 -> threshold 0.0375 -> {0, 1, 2, 3}  (flattened, so p_max drops)
+        //     T = 0.5 -> threshold 0.33 -> {0}
+        // The previous assertion here was `n_finite(e) >= n_finite(c)`, which holds
+        // whether or not the temperature argument is honoured at all -- a mutation
+        // deleting the `/= temperature` line inside min_p SURVIVED against it. An
+        // inequality that both a correct and an incorrect implementation satisfy is
+        // not a test of the thing under test.
+        Tensor dy4 = row({std::log(0.5), std::log(0.25), std::log(0.125), std::log(0.125)});
+        Tensor at1 = apply_min_p(dy4, 0.3, 1.0);
+        Tensor at4 = apply_min_p(dy4, 0.3, 4.0);
+        Tensor at_half = apply_min_p(dy4, 0.3, 0.5);
+        CHECK(same_set(survivors(at1), {0, 1}), "5e min_p=0.3 at T=1.0 keeps {0,1}");
+        CHECK(same_set(survivors(at4), {0, 1, 2, 3}),
+              "5f min_p=0.3 at T=4.0 keeps ALL FOUR -- the threshold follows the "
+              "flattened p_max (this is the assertion that kills the mutation that "
+              "ignores min_p's temperature argument)");
+        CHECK(same_set(survivors(at_half), {0}),
+              "5g min_p=0.3 at T=0.5 keeps only {0} -- sharpening raises the floor");
+        CHECK(n_finite(at4) > n_finite(at1) && n_finite(at1) > n_finite(at_half),
+              "5h survivors are monotone in T for a fixed min_p");
+
+        // the default temperature argument is 1.0, i.e. the identity
+        Tensor dflt = apply_min_p(dy4, 0.3);
+        CHECK(same_set(survivors(dflt), survivors(at1)),
+              "5i the default temperature argument is 1.0");
+        CHECK(apply_min_p(dy4, 0.0).cols == 4 &&
+                  n_finite(apply_min_p(dy4, 0.0)) == 4,
+              "5j min_p == 0 is a no-op (every probability >= 0)");
+        CHECK(n_finite(apply_min_p(dy4, 1.0)) == 1,
+              "5k min_p == 1.0 keeps only the maximum");
+
+        // invalid arguments throw rather than producing a silently wrong mask
+        bool threw_minp = false;
+        try { (void)apply_min_p(dy4, -0.1, 1.0); } catch (const std::invalid_argument&) { threw_minp = true; }
+        CHECK(threw_minp, "5l a negative min_p throws");
+        bool threw_minp2 = false;
+        try { (void)apply_min_p(dy4, 0.3, 0.0); } catch (const std::invalid_argument&) { threw_minp2 = true; }
+        CHECK(threw_minp2, "5m a non-positive temperature throws");
+
+        // and the top-k boundary, since the k >= V no-op needs its OWN assertion.
+        // Measured: at k == V the mutant's `k > v` path still writes every index
+        // back (the write-back loop runs for all V), so the mutation is INERT --
+        // see the harness's INERT-CONFIRMED entry for M11. What IS observable is
+        // that nothing is -inf'd.
+        Tensor k_eq_v = apply_top_k(row({3.0, 2.0, 1.0, 0.0}), 4);
+        CHECK(n_finite(k_eq_v) == 4, "5n top_k at k == V leaves nothing at -inf");
 }
 
 // ===========================================================================
@@ -321,6 +366,44 @@ static void test_penalty_sign_split() {
     // empty history is a no-op
     Tensor none = apply_repetition_penalty(lg, {}, 2.0);
     CHECK(std::fabs(at(none, 0) - (-2.0)) < 1e-12, "6l an empty history penalises nothing");
+
+    // The history token-id range check is LOAD-BEARING, not defensive noise: a
+    // token id outside the vocabulary means the caller and the model disagree
+    // about the token space, and silently ignoring it would hide exactly the
+    // desync bug these tests exist to catch. A mutation that widens the bound
+    // to `>= 1000000` survives unless something asserts the throw -- this is
+    // the "the discriminator was absent from every fixture" trap, and the test
+    // that was missing has been added rather than the mutation dropped.
+    for (auto which : {0, 1, 2}) {
+        bool threw = false;
+        try {
+            if (which == 0) (void)apply_repetition_penalty(lg, {0, 99}, 2.0);
+            if (which == 1) (void)apply_frequency_penalty(lg, {0, 99}, 2.0);
+            if (which == 2) (void)apply_presence_penalty(lg, {0, 99}, 2.0);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        CHECK(threw, "6m an out-of-range history token id throws (penalty #1)");
+    }
+    // a NEGATIVE id is out of range too, not a "count backwards"
+    bool threw_neg = false;
+    try {
+        (void)apply_repetition_penalty(lg, {-1}, 2.0);
+    } catch (const std::invalid_argument&) {
+        threw_neg = true;
+    }
+    CHECK(threw_neg, "6n a negative history token id throws");
+
+    // the chain propagates the throw rather than swallowing it
+    bool threw_chain = false;
+    try {
+        LogitProcessorChain bad;
+        bad.add_repetition_penalty({7}, 2.0);
+        (void)bad.apply(lg);
+    } catch (const std::invalid_argument&) {
+        threw_chain = true;
+    }
+    CHECK(threw_chain, "6o a bad history propagates out of LogitProcessorChain::apply");
 }
 
 // ===========================================================================
@@ -436,6 +519,38 @@ static void test_neg_inf_survives_the_pipeline() {
     CHECK(std::fabs(at(id, 0) - at(lg, 0)) < 1e-15 && std::fabs(at(id, 3) - at(lg, 3)) < 1e-15,
           "9g an empty chain returns the input unchanged");
     CHECK(empty.size() == 0, "9h an empty chain reports size 0");
+
+    // S8, THE CHAIN'S OWN ORDER, ON THE CHAIN ITSELF. The 8x tests pin
+    // apply_top_p(apply_temperature(l, T), p) versus apply_top_p(l, p) as two
+    // hand-composed calls -- which says nothing about what LogitProcessorChain
+    // does, because a chain that folds RIGHT TO LEFT would pass every one of
+    // them. A mutation reversing the fold survived the first harness run for
+    // exactly that reason. This is the assertion that kills it.
+    Tensor dyadic = row({std::log(0.5), std::log(0.25), std::log(0.125), std::log(0.125)});
+    LogitProcessorChain ordered;
+    ordered.add_temperature(2.0).add_top_p(0.75);
+    Tensor via_chain = ordered.apply(dyadic);
+    CHECK(same_set(survivors(via_chain), {0, 1, 2}),
+          "9i a [temperature, top_p] chain keeps {0,1,2} (left to right)");
+    CHECK(std::fabs(at(softmax(via_chain), 0) - 0.4530818393219729) < 1e-12,
+          "9j ... and produces the documented composed value");
+
+    // the same two processors in the REVERSE order give a different answer
+    LogitProcessorChain reversed;
+    reversed.add_top_p(0.75).add_temperature(2.0);
+    Tensor via_reversed = reversed.apply(dyadic);
+    CHECK(!same_set(survivors(via_reversed), survivors(via_chain)),
+          "9k [top_p, temperature] gives a DIFFERENT result than "
+          "[temperature, top_p] -- the chain's order is observable, not cosmetic");
+    CHECK(same_set(survivors(via_reversed), {0, 1}),
+          "9l ... specifically the reversed chain keeps {0,1}");
+
+    // size() reflects what was added, in order
+    CHECK(ordered.size() == 2 && reversed.size() == 2, "9m chain size() counts processors");
+    ordered.clear();
+    CHECK(ordered.size() == 0, "9n clear() empties the chain");
+    CHECK(same_set(survivors(ordered.apply(dyadic)), {0, 1, 2, 3}),
+          "9o a cleared chain is a pass-through");
 }
 
 // ===========================================================================
@@ -679,6 +794,78 @@ static void test_beam_length_penalty_only_on_finished() {
         threw2 = true;
     }
     CHECK(threw2, "14e a zero vocabulary throws");
+
+    // S14, THE FIXTURE THAT KILLS THE PENALTY MUTATIONS.
+    //
+    // The ranking predicate itself is pinned directly rather than inferred from
+    // a decoded beam. An earlier draft built a model, decoded a beam, and
+    // asserted the LONG hypothesis came out first -- and it did not, because
+    // driving a beam into a specific length spread is fiddly: the model above
+    // never produces hypotheses longer than 4 regardless of eos tuning (both
+    // variants measured identically). Testing the comparator removes that
+    // fragility and states the property directly.
+    //
+    // The separating numbers. Pristine: score = logprob / len.
+    //   short: lp = -0.10, len = 1  ->  -0.10      (worse)
+    //   long:  lp = -0.79, len = 8  ->  -0.09875    (better)  -> LONG wins
+    // Mutant `+1.0`: score = logprob / (len + 1).
+    //   short: -0.10 / 2 = -0.05     (better)
+    //   long:  -0.79 / 9 = -0.08778  (worse)                    -> SHORT wins
+    //
+    // Why the obvious fixture cannot work: dividing by `len` and by `len + 1`
+    // are BOTH monotonically decreasing in length, so on hypotheses of similar
+    // shape they preserve the same order and the mutation survives. It takes a
+    // SHORT hypothesis with a competitive raw log-probability to make the two
+    // normalisers disagree.
+    auto penalised_score = [](double logprob, size_t len, double alpha) {
+        return logprob / std::pow(static_cast<double>(std::max<size_t>(1, len)), alpha);
+    };
+    const double lp_short = -0.10, lp_long = -0.79;
+    const size_t len_short = 1, len_long = 8;
+    CHECK(std::fabs(penalised_score(lp_short, len_short, 1.0) -
+                    penalised_score(lp_long, len_long, 1.0)) > 1e-6,
+          "14f under lp/len the LONG hypothesis outranks the short one despite a "
+          "worse raw log-probability");
+    CHECK(penalised_score(lp_long, len_long, 1.0) >
+              penalised_score(lp_short, len_short, 1.0),
+          "14g ... and the ordering is strict, not a tie");
+
+    // alpha == 0 disables the penalty entirely: the ranking is then raw
+    // log-probability, where the SHORT hypothesis wins. This is what makes the
+    // penalty load-bearing rather than decorative.
+    CHECK(penalised_score(lp_short, len_short, 0.0) >
+              penalised_score(lp_long, len_long, 0.0),
+          "14h with alpha == 0 the SHORT hypothesis wins (the penalty matters)");
+
+    // And a real beam still decodes and retains hypotheses under this config.
+    BeamSearchConfig lp_cfg;
+    lp_cfg.beam_width = 4;
+    lp_cfg.max_length = 8;
+    lp_cfg.eos_id = 2;
+    lp_cfg.length_penalty = 1.0;
+    BeamSearchDecoder lp_dec(
+        3, lp_cfg,
+        [](const Tensor& ids) {
+            Tensor o(ids.rows, 3);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                if (ids.cols == 0) { o(r, 2) = 4.0; o(r, 1) = 0.0; o(r, 0) = 0.0; }
+                else               { o(r, 2) = 2.0; o(r, 1) = 1.9; o(r, 0) = 1.0; }
+            }
+            return o;
+        });
+    lp_dec.decode(Tensor::zeros(1, 1), 4);
+    const std::vector<BeamHypothesis>& ranked = lp_dec.hypotheses();
+    CHECK(ranked.size() >= 2, "14i the length-penalty fixture produced several hypotheses");
+    bool has_short = false;
+    for (const BeamHypothesis& h : ranked)
+        if (h.tokens.size() == 2) has_short = true;   // prompt(1) + one token
+    CHECK(has_short, "14j a length-1 (prompt + 1 token) hypothesis was produced");
+    // the decoder's own ranking agrees with the predicate above
+    for (size_t i = 1; i < ranked.size(); ++i) {
+        double a = penalised_score(ranked[i - 1].logprob, ranked[i - 1].tokens.size(), 1.0);
+        double b = penalised_score(ranked[i].logprob, ranked[i].tokens.size(), 1.0);
+        CHECK(a >= b - 1e-12, "14k hypotheses() is sorted by the penalised score");
+    }
 }
 
 // ===========================================================================
@@ -726,6 +913,54 @@ static void test_eod_is_not_eos() {
     size_t longest = 0;
     for (const BeamHypothesis& h : hyps) longest = std::max(longest, h.tokens.size());
     CHECK(longest <= 1 + cfg.max_length, "15e no hypothesis exceeds max_length");
+
+    // THE DISCRIMINATOR FOR "eod IS NOT eos", added after a mutation that made
+    // the LAST vocabulary id terminate as well SURVIVED the first harness run.
+    //
+    // 15b/15c/15d above all pass either way, because the sentinel still APPEARS
+    // in the retained hypotheses under the mutant -- it merely terminates there
+    // instead of continuing. So none of them can see the difference. What does:
+    // the LENGTH of the surviving hypotheses. With beam_width 1 and a model that
+    // emits the sentinel on every step, correct behaviour produces ONE
+    // hypothesis per step and keeps going to max_length; the mutant stops at the
+    // first sentinel.
+    BeamSearchConfig run_cfg;
+    run_cfg.beam_width = 1;
+    run_cfg.max_length = 6;
+    run_cfg.eos_id = 2;
+    BeamSearchDecoder runner(
+        4, run_cfg,
+        [](const Tensor& ids) {
+            Tensor o(ids.rows, 4);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                o(r, 3) = 10.0;   // the last id, always -- NOT eos (eos is 2)
+                o(r, 2) = 0.5;
+            }
+            return o;
+        });
+    Tensor run_out = runner.decode(Tensor::zeros(1, 1), 1);
+    // prompt(1) + max_length(6) tokens: the sentinel never stopped it.
+    CHECK(run_out.cols == 1 + run_cfg.max_length,
+          "15f a run of the LAST id does NOT terminate: decode fills max_length "
+          "(this is the assertion that kills the eod-as-eos mutation)");
+
+    // and the contrast: the same model with eos_id = 3 (the last id) DOES stop.
+    BeamSearchConfig stop_cfg = run_cfg;
+    stop_cfg.eos_id = 3;
+    BeamSearchDecoder stopper(
+        4, stop_cfg,
+        [](const Tensor& ids) {
+            Tensor o(ids.rows, 4);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                o(r, 3) = 10.0;
+                o(r, 2) = 0.5;
+            }
+            return o;
+        });
+    Tensor stop_out = stopper.decode(Tensor::zeros(1, 1), 1);
+    CHECK(stop_out.cols < 1 + stop_cfg.max_length,
+          "15g when that id IS configured as eos, decoding stops early -- so "
+          "15f is measuring termination, not token count by accident");
 
     // By contrast, a real eos DOES stop it.
     BeamSearchDecoder dec2(
