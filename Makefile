@@ -269,6 +269,9 @@ $(BUILD_DIR)/test_hutchinson: $(LIB_OBJS) $(BUILD_DIR)/test_hutchinson.o
 $(BUILD_DIR)/test_sinkhorn: $(LIB_OBJS) $(BUILD_DIR)/test_sinkhorn.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_logit_processing: $(LIB_OBJS) $(BUILD_DIR)/test_logit_processing.o
+	$(CXX) $^ -o $@
+
 # Print the fully-expanded link set, one object per line. Exists because
 # `LIB_OBJS` is a RECURSIVE make variable (`:=` over a `$(LIB_SRCS:...)`
 # substitution reference), so its literal text in the Makefile contains no `.o`
