@@ -86,6 +86,7 @@
 #include "utils/curriculum.h"
 #include "utils/lr_multiplier.h"
 #include "utils/hutchinson.h"
+#include "utils/sinkhorn.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
 #include "utils/training_history.h"
