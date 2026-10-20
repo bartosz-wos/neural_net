@@ -75,3 +75,4 @@ tests/test_gin_debug*.cpp
 .ccache/
 .run_tests_failed
 build/mutation/
+__pycache__/
