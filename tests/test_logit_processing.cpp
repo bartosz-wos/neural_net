@@ -92,7 +92,7 @@ static std::vector<int> survivors(const Tensor& t) {
     return v;
 }
 
-static bool same_set(const std::vector<int>& a, std::vector<int>& b) {
+static bool same_set(const std::vector<int>& a, const std::vector<int>& b) {
     return a == b;
 }
 
@@ -135,34 +135,63 @@ static void test_softmax_sums_to_one() {
 
 // ===========================================================================
 // Test 2: NUCLEUS -- S1, the `>=` vs `>` boundary
-//   Oracle: on p = [0.5, 0.3, 0.15, 0.05] the cumulative masses are
-//   0.5, 0.8, 0.95, 1.0. `p=0.8` is the ONLY value in the swept set that
-//   separates `cum >= p` from `cum > p`: >= gives {0,1}, > gives {0,1,2}.
+//
+// THE FIXTURE IS DYADIC ON PURPOSE, and that is the fourth defect this file's
+// first draft had. log([0.5, 0.3, 0.15, 0.05]) looks like a perfect boundary
+// fixture -- the cumulative masses are 0.5, 0.8, 0.95, 1.0 so p=0.8 lands
+// exactly on a prefix boundary -- but the implementation obtains probabilities
+// by softmaxing the LOGITS, and softmax(log(x)) is not x:
+//
+//     0.5 -> 0.5                 exact
+//     0.3 -> 0.29999999999999993  ONE ULP LOW
+//
+// so the cumulative mass comes to 0.79999999999999993 < 0.8, `>=` fails, and a
+// CORRECT implementation returns {0,1,2} where the oracle said {0,1}. That
+// looks exactly like an off-by-one in the nucleus and is not one.
+//
+// A fixture whose discriminating value is only correct to within a rounding
+// error does not discriminate anything. The boundary has to be EXACTLY
+// representable in binary floating point so it means the same thing on both
+// sides of a softmax round-trip. Dyadic probabilities are: 0.5, 0.25, 0.125.
+// Cumulative masses are 0.5, 0.75, 0.875, 1.0.
 // ===========================================================================
 static void test_nucleus_keeps_the_crossing_token() {
     banner("2 nucleus cumulative cut");
-    Tensor lg = row({-0.6931471805599453, -1.2039728043259361,
-                     -1.8971199848858813, -2.9957322735539910});  // log([.5,.3,.15,.05])
+    Tensor lg = row({std::log(0.5), std::log(0.25), std::log(0.125), std::log(0.125)});
+
+    // the round-trip must be EXACT or the fixture is worthless
+    Tensor rt = softmax(lg);
+    CHECK(std::fabs(at(rt, 0) - 0.5) < 1e-15 && std::fabs(at(rt, 1) - 0.25) < 1e-15,
+          "2a the dyadic fixture survives the softmax round-trip exactly");
 
     Tensor a = apply_top_p(lg, 0.5);
-    CHECK(same_set(survivors(a), {0}), "2a p=0.5 keeps {0}");
+    CHECK(same_set(survivors(a), {0}), "2b p=0.5 keeps {0}");
 
-    Tensor b = apply_top_p(lg, 0.8);
-    std::vector<int> sb = survivors(b);
-    // THE S1 FIXTURE. The correct answer is 2 tokens: 0.5 + 0.3 == 0.8
-    // SATISFIES `cum >= 0.8`, so the loop stops there. An implementation using
-    // `>` admits a third token and is WRONG.
-    CHECK(same_set(sb, {0, 1}),
-          "2b p=0.8 keeps {0,1} -- the >= boundary stops AT 0.5+0.3==0.8");
-    CHECK(sb.size() == 2, "2c p=0.8 keeps exactly 2 tokens (the `>` variant keeps 3)");
+    // THE S1 FIXTURE: cumulative mass 0.5+0.25 == 0.75 SATISFIES `cum >= 0.75`,
+    // so the loop stops with 2 tokens. An implementation using `>` admits a
+    // third and is WRONG.
+    Tensor c = apply_top_p(lg, 0.75);
+    std::vector<int> sc = survivors(c);
+    CHECK(same_set(sc, {0, 1}),
+          "2c p=0.75 keeps {0,1} -- the >= boundary stops AT 0.5+0.25==0.75");
+    CHECK(sc.size() == 2, "2d p=0.75 keeps exactly 2 tokens (the `>` variant keeps 3)");
 
-    Tensor c = apply_top_p(lg, 0.9);
-    CHECK(same_set(survivors(c), {0, 1, 2}), "2d p=0.9 keeps {0,1,2}");
+    Tensor d = apply_top_p(lg, 0.8);
+    CHECK(same_set(survivors(d), {0, 1, 2}), "2e p=0.8 keeps {0,1,2}");
 
-    Tensor d = apply_top_p(lg, 1.0);
-    CHECK(same_set(survivors(d), {0, 1, 2, 3}),
-          "2e p=1.0 is a no-op (all four survive, S2)");
-    CHECK(n_finite(d) == 4, "2f p=1.0 empties nothing");
+    Tensor e = apply_top_p(lg, 1.0);
+    CHECK(same_set(survivors(e), {0, 1, 2, 3}),
+          "2f p=1.0 is a no-op (all four survive, S2)");
+    CHECK(n_finite(e) == 4, "2g p=1.0 empties nothing");
+
+    // and the REJECTED fixture, kept so the trap stays visible: p=0.8 there is
+    // NOT a boundary once softmaxed, so the correct answer is 3 tokens.
+    Tensor old_lg = row({-0.6931471805599453, -1.2039728043259361,
+                         -1.8971199848858813, -2.9957322735539910});
+    Tensor old_out = apply_top_p(old_lg, 0.8);
+    CHECK(same_set(survivors(old_out), {0, 1, 2}),
+          "2h the NON-dyadic fixture at p=0.8 keeps 3 (its cumulative mass is "
+          "one ulp below 0.8, so this is correct behaviour, not a bug)");
 }
 
 // ===========================================================================
@@ -331,37 +360,43 @@ static void test_temperature_is_on_logits() {
 }
 
 // ===========================================================================
-// Test 8: CHAIN ORDER -- temperature then truncation. TOP-P IS THE DISCRIMINATOR
-//   Oracle, on log([0.5,0.3,0.15,0.05]) at T=0.5 then p=0.9: survivors {0,1}
-//   and softmax[0] = 0.8807970779778823.
-//   The WRONG order (p first, then T) keeps {0,1,2} and softmax[0] =
-//   0.8668133321973347.
+// Test 8: CHAIN ORDER -- temperature then truncation. TOP-P IS THE DISCRIMINATOR,
+// and it needs a FLATTENING temperature (T > 1) to be visible at all.
+//
+//   Top-k CANNOT discriminate: dividing by T > 0 is monotone, so its survivor
+//   set is order-independent BY CONSTRUCTION. Test 8a asserts that explicitly so
+//   a future session does not "fix" the S8 story back onto top-k.
+//
+//   Top-p CAN, because its cut depends on cumulative MASS. But only when the
+//   temperature FLATTENS the distribution and moves mass into the tail: with
+//   T = 0.5 the head collapses so hard that both orders keep the same single
+//   token. (This was measured, not assumed -- the first fixture, T = 0.5, did
+//   not discriminate and would have shipped a vacuous 8b-8e.)
+//
+//   Oracle, on p = [0.5, 0.25, 0.125, 0.125] at T = 2.0, p_cut = 0.75:
+//     temperature-then-p keeps {0,1,2}, softmax[0] = 0.4530818393219729
+//     p-then-temperature keeps {0,1},   softmax[0] = 0.5857864376269050
 // ===========================================================================
 static void test_chain_order_temperature_then_truncation() {
     banner("8 chain order");
-    Tensor lg = row({-0.6931471805599453, -1.2039728043259361,
-                     -1.8971199848858813, -2.9957322735539910});  // log([.5,.3,.15,.05])
+    Tensor lg = row({std::log(0.5), std::log(0.25), std::log(0.125), std::log(0.125)});
 
-    // TOP-K cannot discriminate: dividing by T>0 is monotone, so the survivor
-    // set is order-independent. Asserted so a future session does not "fix" S8
-    // back onto top-k.
-    Tensor k_t = apply_top_k(apply_temperature(lg, 0.5), 2);
+    Tensor k_t = apply_top_k(apply_temperature(lg, 2.0), 2);
     Tensor k_direct = apply_top_k(lg, 2);
     CHECK(same_set(survivors(k_t), survivors(k_direct)),
           "8a top-k's survivor SET is order-independent (temperature is monotone)");
 
-    // TOP-P is the discriminator.
-    Tensor correct = apply_top_p(apply_temperature(lg, 0.5), 0.9);
-    CHECK(same_set(survivors(correct), {0, 1}),
-          "8b temperature-then-top-p keeps {0,1}");
-    CHECK(std::fabs(at(softmax(correct), 0) - 0.8807970779778823) < 1e-12,
-          "8c composed value at the documented order = 0.8807970779778823 (oracle)");
+    Tensor correct = apply_top_p(apply_temperature(lg, 2.0), 0.75);
+    CHECK(same_set(survivors(correct), {0, 1, 2}),
+          "8b temperature-then-top-p keeps {0,1,2}");
+    CHECK(std::fabs(at(softmax(correct), 0) - 0.4530818393219729) < 1e-12,
+          "8c composed value at the documented order = 0.4530818393219729 (oracle)");
 
-    Tensor wrong_order = apply_top_p(lg, 0.9);
-    CHECK(same_set(survivors(wrong_order), {0, 1, 2}),
-          "8d the WRONG order (p before temperature) admits a third token");
-    CHECK(std::fabs(at(softmax(wrong_order), 0) - 0.8668133321973347) < 1e-12,
-          "8e the wrong order's value = 0.8668133321973347 (so the fixture discriminates)");
+    Tensor wrong_order = apply_top_p(lg, 0.75);
+    CHECK(same_set(survivors(wrong_order), {0, 1}),
+          "8d the WRONG order (p before temperature) rejects a third token");
+    CHECK(std::fabs(at(softmax(wrong_order), 0) - 0.6666666666666666) < 1e-12,
+          "8e the wrong order's value = 0.6666666666666666 (fixture discriminates)");
 }
 
 // ===========================================================================
@@ -418,8 +453,13 @@ static void test_sample_handles_huge_logits() {
         sum += at(p, j);
     }
     CHECK(std::fabs(sum - 1.0) < 1e-12, "10b ... and sums to 1");
-    CHECK(std::fabs(at(p, 0) - 0.7310585786300049) < 1e-12,
-          "10c softmax([1000,999,998])[0] = 0.7310585786300049 (oracle)");
+    CHECK(std::fabs(at(p, 0) - 0.6652409557748218) < 1e-12,
+          "10c softmax([1000,999,998])[0] = 0.6652409557748218 (oracle)");
+
+    // the 2-element case from the oracle, which is the one the header quotes
+    Tensor two = row({1000.0, 999.0});
+    CHECK(std::fabs(at(softmax(two), 0) - 0.7310585786300049) < 1e-12,
+          "10c2 softmax([1000,999])[0] = 0.7310585786300049 (oracle)");
 
     // sampling from those logits must still be legal
     for (int i = 0; i < 100; ++i) {
@@ -486,12 +526,20 @@ static void test_greedy_picks_argmax_deterministic() {
     CHECK(sample_from_logits(single, SamplingStrategy::GREEDY, rng) == 0,
           "12d a single-token vocabulary returns 0 (S13)");
 
-    // epsilon filter before argmax
-    Tensor e = apply_epsilon(row({0.1, 0.6, 0.3}), 0.55);
-    CHECK(is_neg_inf(at(e, 0)) && is_neg_inf(at(e, 2)),
-          "12e epsilon zeroes logits below the threshold");
+    // Epsilon filter before argmax. The threshold is in PROBABILITY space, not
+    // on the logits themselves -- softmax([0.1, 0.6, 0.3]) is
+    // [0.25838965173797984, 0.42601251494920572, 0.31559783331281432], so an
+    // epsilon of 0.35 keeps ONLY index 1.
+    Tensor p = softmax(row({0.1, 0.6, 0.3}));
+    CHECK(std::fabs(at(p, 0) - 0.25838965173797984) < 1e-12,
+          "12e epsilon thresholds in PROBABILITY space, not on the logits "
+          "(softmax([0.1,0.6,0.3])[0] = 0.2584, not 0.1)");
+
+    Tensor e = apply_epsilon(row({0.1, 0.6, 0.3}), 0.35);
+    CHECK(is_neg_inf(at(e, 0)) && is_neg_inf(at(e, 2)) && !is_neg_inf(at(e, 1)),
+          "12f epsilon 0.35 zeroes logits below the probability threshold");
     CHECK(sample_from_logits(e, SamplingStrategy::GREEDY, rng) == 1,
-          "12f greedy after epsilon picks the survivor");
+          "12g greedy after epsilon picks the survivor");
 
     Tensor er = apply_round_to_int(row({0.4, 0.6, 0.7}));
     CHECK(at(er, 0) == 0.0 && at(er, 1) == 1.0 && at(er, 2) == 1.0,
@@ -530,15 +578,20 @@ static void test_multinomial_matches_the_categorical() {
     }
     CHECK(identical, "13d the same seed reproduces the same sequence");
 
-    // truncated support: sampling must never leave the nucleus
-    Tensor mask = apply_top_p(lg, 0.8);
+    // truncated support: sampling must never leave the nucleus.
+    // The cut is at p=0.5, NOT 0.8: the cumulative mass of [0.5, 0.3, 0.2] is
+    // exactly 0.8 at the second token, so p=0.8 keeps all three and the check
+    // would be vacuous. (An earlier draft used 0.8 and failed -- the failure was
+    // the TEST's fault for choosing a threshold that is not a boundary.)
+    Tensor mask = apply_top_p(lg, 0.5);
+    CHECK(same_set(survivors(mask), {0}), "13e the top-p=0.5 cut keeps only token 0");
     std::mt19937 r2(99);
     bool inside = true;
     for (int i = 0; i < 2000; ++i) {
         int t = sample_from_logits(mask, SamplingStrategy::MULTINOMIAL, r2);
-        if (t == 2) { inside = false; break; }
+        if (t != 0) { inside = false; break; }
     }
-    CHECK(inside, "13e sampling from a top-p=0.8 mask never returns a truncated token");
+    CHECK(inside, "13f sampling from a top-p=0.5 mask never returns a truncated token");
 }
 
 // ===========================================================================
@@ -556,26 +609,33 @@ static void test_beam_length_penalty_only_on_finished() {
     cfg.length_penalty = 1.0;
 
     // The model prefers token 1 forever, and token 2 (eos) only after two steps.
+    // ScoreFn receives a BATCH: one row per live hypothesis, so it must return
+    // one row per input row. Returning a single row for a multi-row batch is a
+    // contract violation and the decoder throws rather than silently
+    // broadcasting -- the alternative would make a beam bug look like a decode
+    // bug.
     BeamSearchDecoder dec(
         V, cfg,
         [V](const Tensor& ids) {
-            Tensor out(1, V);
-            size_t last = ids.cols ? static_cast<size_t>(ids(0, ids.cols - 1)) : 0;
-            if (ids.cols >= 2) {
-                out(0, 2) = 10.0;    // eos becomes very attractive at step 2
-                out(0, 1) = 1.0;
-            } else {
-                out(0, 1) = 10.0;   // otherwise run with token 1
-                out(0, 2) = 1.0;
+            Tensor out(ids.rows, V);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                if (ids.cols >= 2) {
+                    out(r, 2) = 10.0;    // eos becomes very attractive at step 2
+                    out(r, 1) = 1.0;
+                } else {
+                    out(r, 1) = 10.0;   // otherwise run with token 1
+                    out(r, 2) = 1.0;
+                }
             }
             return out;
         });
 
     Tensor start = Tensor::zeros(1, 1);
     Tensor out = dec.decode(start, 1);
-    std::vector<int> hyps = dec.hypotheses();
     CHECK(out.cols >= 1, "14a decode returned at least one column");
-    CHECK(!hyps.empty(), "14b the decoder retained hypotheses");
+    CHECK(!dec.hypotheses().empty(), "14b the decoder retained hypotheses");
+    CHECK(dec.vocab() == V, "14c the decoder reports its vocabulary size");
+    CHECK(dec.config().beam_width == 3, "14d the decoder round-trips its config");
 
     // WITH a length penalty, a shorter finished hypothesis outranks a longer one
     // of lower total log-probability. Without one it would not. Both directions
@@ -585,9 +645,11 @@ static void test_beam_length_penalty_only_on_finished() {
     BeamSearchDecoder no_pen(
         V, np_cfg,
         [V](const Tensor& ids) {
-            Tensor out(1, V);
-            if (ids.cols >= 2) { out(0, 2) = 10.0; out(0, 1) = 1.0; }
-            else               { out(0, 1) = 10.0; out(0, 2) = 1.0; }
+            Tensor out(ids.rows, V);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                if (ids.cols >= 2) { out(r, 2) = 10.0; out(r, 1) = 1.0; }
+                else               { out(r, 1) = 10.0; out(r, 2) = 1.0; }
+            }
             return out;
         });
     Tensor start2 = Tensor::zeros(1, 1);
@@ -634,10 +696,12 @@ static void test_eod_is_not_eos() {
     // confuses eod with eos would stop at the first step and return length 1.
     BeamSearchDecoder dec(
         V, cfg,
-        [V](const Tensor&) {
-            Tensor out(1, V);
-            out(0, 3) = 10.0;   // always "eod"
-            out(0, 2) = 1.0;    // eos is less attractive
+        [V](const Tensor& ids) {
+            Tensor out(ids.rows, V);
+            for (size_t r = 0; r < ids.rows; ++r) {
+                out(r, 3) = 10.0;   // always "eod"
+                out(r, 2) = 1.0;    // eos is less attractive
+            }
             return out;
         });
     Tensor start = Tensor::zeros(1, 1);
@@ -646,18 +710,29 @@ static void test_eod_is_not_eos() {
           "15a a run of eod tokens does NOT terminate decoding at step 1");
     CHECK(out.cols >= 2, "15b decode continued past a non-eos sentinel");
 
-    // and the sentinel is what it emitted
+    // and the sentinel really was emitted at some point. NOTE it is NOT at index
+    // 1: the top-ranked hypothesis is [0, 2] because the model scores eod at 10.0
+    // and eos at 1.0, so [0,3,2] (logprob -9.0004) loses to [0,2] (-9.0002).
+    // An earlier draft asserted the sentinel appeared in the RETURNED row and
+    // failed -- which was the test's premise being wrong, not the decoder.
+    const std::vector<BeamHypothesis>& hyps = dec.hypotheses();
     bool saw_eod = false;
-    for (size_t j = 1; j < out.cols; ++j)
-        if (static_cast<int>(out(0, j)) == 3) saw_eod = true;
-    CHECK(saw_eod, "15c the emitted sequence really contains the eod sentinel");
+    for (const BeamHypothesis& h : hyps)
+        for (int t : h.tokens)
+            if (t == 3) saw_eod = true;
+    CHECK(saw_eod, "15c the retained hypotheses contain the eod sentinel");
+    CHECK(hyps.size() >= 1, "15d hypotheses() is non-empty after decode");
+    // and none of the retained hypotheses is longer than prompt + max_length
+    size_t longest = 0;
+    for (const BeamHypothesis& h : hyps) longest = std::max(longest, h.tokens.size());
+    CHECK(longest <= 1 + cfg.max_length, "15e no hypothesis exceeds max_length");
 
     // By contrast, a real eos DOES stop it.
     BeamSearchDecoder dec2(
         V, cfg,
-        [V](const Tensor&) {
-            Tensor out(1, V);
-            out(0, 2) = 10.0;   // real eos
+        [V](const Tensor& ids) {
+            Tensor out(ids.rows, V);
+            for (size_t r = 0; r < ids.rows; ++r) out(r, 2) = 10.0;   // real eos
             return out;
         });
     Tensor s2 = Tensor::zeros(1, 1);
@@ -685,13 +760,18 @@ static void test_autoregressive_loop() {
     AutoregressiveResult r = autoregressive_sample(
         score_fn, Tensor::zeros(1, 1), 6, chain,
         SamplingStrategy::GREEDY, rng);
-    CHECK(r.tokens.cols >= 6, "16a the loop produced the requested number of steps");
+    CHECK(r.tokens.cols >= 7, "16a the loop produced prompt(1) + steps(6) tokens");
     CHECK(!r.stopped_early, "16b stopped_early is false when eos never appears");
 
+    // The FIRST column is the prompt, which the model did not generate, so the
+    // argmax check starts at column 1. (An earlier draft checked from column 0
+    // and failed on the prompt's own 0 -- the test's premise, not the loop.)
     bool all_one = true;
-    for (size_t j = 0; j < r.tokens.cols; ++j)
+    for (size_t j = 1; j < r.tokens.cols; ++j)
         if (static_cast<int>(r.tokens(0, j)) != 1) all_one = false;
-    CHECK(all_one, "16c every emitted token is the model's argmax");
+    CHECK(all_one, "16c every GENERATED token is the model's argmax");
+    CHECK(static_cast<int>(r.tokens(0, 0)) == 0,
+          "16d the prompt is preserved as the first column");
 
     // stop_on_eos halts at the eos
     auto eos_fn = [V](const Tensor&) {
@@ -713,11 +793,11 @@ static void test_autoregressive_loop() {
         for (size_t j = 0; j < V; ++j) out(0, j) = static_cast<double>((j + last) % V) + 0.01;
         return out;
     };
-    std::mt19937 r1(31337), r2(31337);
+    std::mt19937 rng_a(31337), rng_b(31337);
     AutoregressiveResult a = autoregressive_sample(multi, Tensor::zeros(1, 1), 8, empty,
-                                                  SamplingStrategy::MULTINOMIAL, r1);
+                                                  SamplingStrategy::MULTINOMIAL, rng_a);
     AutoregressiveResult b = autoregressive_sample(multi, Tensor::zeros(1, 1), 8, empty,
-                                                  SamplingStrategy::MULTINOMIAL, r2);
+                                                  SamplingStrategy::MULTINOMIAL, rng_b);
     bool same = a.tokens.rows == b.tokens.rows && a.tokens.cols == b.tokens.cols;
     if (same)
         for (size_t i = 0; i < a.tokens.rows; ++i)

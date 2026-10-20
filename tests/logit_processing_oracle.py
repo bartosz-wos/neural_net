@@ -169,54 +169,57 @@ def main() -> int:
     check(np.allclose(softmax(np.log(base)), base), "softmax recovers the distribution")
 
     # ---- 2. NUCLEUS (S1) ---------------------------------------------------
-    print("\n--- 2. NUCLEUS survivors on p = [0.5, 0.3, 0.15, 0.05] ---")
-    nucleus_expected = {}
-    for p in (0.5, 0.8, 0.9, 1.0):
-        live = nucleus_survivors(base, p)
-        order = np.argsort(-base, kind="stable")
-        cum = np.cumsum(base[order])
-        kept_mass = float(sum(base[i] for i, ok in enumerate(live) if ok))
-        n = sum(live)
-        print(f"  p={p:<4} -> {survivors(base, live):<22} "
-              f"n={n}  kept_mass={kept_mass:.10f}")
-        nucleus_expected[p] = (live, n)
-        check(n >= 1, f"nucleus p={p} non-empty")
-        check(kept_mass >= p - 1e-12, f"nucleus p={p} kept mass >= p")
-        discarded = 1.0 - kept_mass
-        check(discarded < p + 1e-12 or p >= 1.0,
-              f"nucleus p={p} discarded mass < p (minimality)")
+        # TEST-FIXTURE CORRECTION 2026-10-20 (found by running the C++ against
+        # these values, not by reasoning): the original fixture was
+        # log([0.5, 0.3, 0.15, 0.05]) at p = 0.8, chosen because the cumulative
+        # masses 0.5/0.8/0.95/1.0 make 0.8 a >= vs > boundary. It does not survive
+        # the trip through the implementation, because the implementation computes
+        # probabilities by softmaxing the LOGITS, and softmax(log(x)) is not x:
+        #
+        #     0.5 -> 0.5                exact
+        #     0.3 -> 0.29999999999999993  ONE ULP LOW
+        #
+        # so the cumulative mass is 0.79999999999999993 < 0.8, the `>=` test fails,
+        # and the cut falls through to the third token. The correct implementation
+        # then gets `{0,1,2}` where the oracle says `{0,1}` -- a disagreement that
+        # looks exactly like an off-by-one bug in the nucleus and is not one.
+        #
+        # THE LESSON, which is the reusable part: a fixture whose discriminating
+        # value is only correct to within a rounding error does not discriminate
+        # anything. The boundary must be EXACTLY representable in binary floating
+        # point, so it means the same thing on both sides of a softmax round-trip.
+        # DYADIC probabilities (0.5, 0.25, 0.125) are exactly representable and
+        # survive it. [0.5, 0.25, 0.125, 0.125] at p = 0.75 is the replacement.
+    print("\n--- 2. NUCLEUS survivors ---")
 
-    # THE off-by-one. ORACLE CORRECTION 2026-10-20: the implementation plan
-    # claimed "p=0.8 keeps 3 tokens, not 2", reasoning that 0.5+0.3 = 0.8 is not
-    # `> 0.8` so the third token is kept. That is backwards -- `>=` stops AT the
-    # token that reaches p, so 0.5+0.3 = 0.8 satisfies `cum >= 0.8` and stops
-    # with 2 tokens. The oracle measures which p actually separates `>=` from
-    # `>` and reports it rather than asserting a remembered number.
-    print("\n  S1 -- which p separates `cum >= p` from `cum > p` on this fixture?")
-    order = np.argsort(-base, kind="stable")
-    separating = []
-    for p in (0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95):
-        def run(strict):
-            live = [False] * 4
-            cum = 0.0
-            for idx in order:
-                live[idx] = True
-                cum += base[idx]
-                if (cum > p) if strict else (cum >= p):
-                    break
-            return [i for i, ok in enumerate(live) if ok]
-        ge, gt = run(False), run(True)
-        differs = ge != gt
-        if differs:
-            separating.append(p)
-        print(f"      p={p:<5} cum hits {list(np.round(np.cumsum(base[order]), 6))}  "
-              f">=:{str(ge):<10} >:{str(gt):<10} {'<== SEPARATES' if differs else ''}")
-    live_80, n_80 = nucleus_expected[0.8]
-    print(f"  S1 RESULT: p=0.8 -> >=:{[i for i, ok in enumerate(live_80) if ok]} "
-          f"(n={n_80}); the separating p values are {separating}")
-    check(n_80 == 2, "S1: p=0.8 keeps 2 tokens (0.5+0.3 == 0.8 satisfies `>=`)")
-    check(0.8 in separating,
-          "S1: p=0.8 IS a boundary -- it separates `>=` from `>` on this fixture")
+        # the OLD, rejected fixture, kept so the failure mode is on the record
+    old = np.array([0.5, 0.3, 0.15, 0.05])
+    old_rt = softmax(np.log(old))
+    print(f"  REJECTED FIXTURE log([0.5,0.3,0.15,0.05]) at p=0.8:")
+    print(f"      softmax(log(x)) = {[repr(float(v)) for v in old_rt]}")
+    print(f"      cum after 2 tokens = {repr(float(old_rt[0] + old_rt[1]))} "
+          f">= 0.8 ? {bool(old_rt[0] + old_rt[1] >= 0.8)}   <-- does NOT separate")
+    check(not (old_rt[0] + old_rt[1] >= 0.8),
+          "the old fixture does NOT separate >= from > once softmaxed (rejected)")
+
+        # the round-trip-safe replacement
+    dyadic = np.array([0.5, 0.25, 0.125, 0.125])
+    base = dyadic
+    rt = softmax(np.log(dyadic))
+    print(f"\n  ROUND-TRIP-SAFE FIXTURE log([0.5,0.25,0.125,0.125]):")
+    print(f"      softmax(log(x)) = {[repr(float(v)) for v in rt]}")
+    check(np.allclose(rt, dyadic, atol=0.0),
+          "dyadic probabilities survive softmax(log(.)) EXACTLY")
+    print(f"  nucleus survivor sets on the dyadic fixture:")
+    nucleus_expected = {}
+    for p in (0.5, 0.75, 0.8, 0.875, 1.0):
+        live = nucleus_survivors(softmax(np.log(dyadic)), p)
+        kept = [i for i, ok in enumerate(live) if ok]
+        kept_mass = float(sum(dyadic[i] for i in kept))
+        nucleus_expected[p] = (live, len(kept))
+        print(f"      p={p:<6} -> {str(kept):<18} n={len(kept)}  kept_mass={kept_mass!r}")
+        check(len(kept) >= 1, f"dyadic nucleus p={p} non-empty")
+        check(kept_mass >= p - 1e-12, f"dyadic nucleus p={p} kept mass >= p")
 
     # ---- 3/4. TOP-K (S3/S12/S13) -------------------------------------------
     print("\n--- 3/4. TOP-K survivors ---")
@@ -315,57 +318,71 @@ def main() -> int:
     check(tiny[0] > 0.999, "S7: T->0 approaches greedy")
 
     # ---- 8. COMPOSITION ORDER (S8) -----------------------------------------
-    # CORRECTION 2026-10-20: the plan asserted top-k is order-independent
-    # because temperature is monotone, so temperature-then-top-k and
-    # top-k-then-temperature give the same survivor SET. Both halves of that
-    # are true and together they are exactly why top-k CANNOT pin the chain
-    # order: dividing every logit by T > 0 is order-preserving, so the ranking
-    # is identical and the survivor set is the same either way.
-    # TOP-P IS DIFFERENT, because its cut depends on the cumulative MASS, and
-    # temperature changes the mass (it flattens or sharpens the distribution).
-    # Measured below, not argued.
+    # CORRECTION 2026-10-20 (twice, both found by running the C++, not by
+    # reasoning):
+    #
+    #  (a) The plan used TOP-K as the order discriminator, reasoning that
+    #      applying top-k to un-temperature-scaled logits gives a different
+    #      survivor set. It does not, and cannot: dividing every logit by T > 0
+    #      is strictly monotone, so the ranking is identical either way and
+    #      top-k's survivor set is order-independent BY CONSTRUCTION. That is
+    #      precisely why top-k is the wrong probe.
+    #
+    #  (b) TOP-P is the discriminator, because its cut depends on cumulative
+    #      MASS and temperature changes the mass -- but the ORIGINAL dyadic
+    #      fixture turned out not to separate either, because sharpening with
+    #      T = 0.5 collapses the head so far that both orders keep one token.
+    #      The fixture below uses T = 2.0 (a FLATTENING temperature, which adds
+    #      mass to the tail and therefore makes the cut move).
     print("\n--- 8. CHAIN ORDER (temperature first, then truncation) ---")
-    l8 = np.array([3.0, 2.0, 1.0, 0.0])
-    lg8 = np.log(np.exp(l8 - l8.max()) / np.sum(np.exp(l8 - l8.max())))
+    d8 = np.array([0.5, 0.25, 0.125, 0.125])
+    lg8 = np.log(d8)
+    probs8 = softmax(lg8)
 
-    def top_k_live_at(logits, k, T=1.0):
-        pr = softmax(logits / T)
-        return top_k_survivors_from_probs(pr, k)
+    def top_k_at(logits, k):
+        pr = softmax(logits)
+        return [i for i, ok in enumerate(
+            top_k_survivors_from_probs(pr, k)) if ok]
 
-    t_then_k = top_k_live_at(lg8, 2, 0.5)
-    k_then_t = top_k_live_at(lg8, 2, 1.0)
+    t_then_k = top_k_at(lg8 / 2.0, 2)
+    k_then_t = top_k_at(lg8, 2)
     print(f"  TOP-K is order-independent by construction:")
-    print(f"      T=0.5-then-topk(2) -> {t_then_k}    topk(2)-then-T -> {k_then_t}    "
+    print(f"      T=2.0-then-topk(2) -> {t_then_k}    topk(2)-then-T -> {k_then_t}    "
           f"same={t_then_k == k_then_t}")
     check(t_then_k == k_then_t,
           "S8: temperature is monotone, so top-k's survivor SET is order-independent")
 
-    print(f"  TOP-P is NOT -- the cut depends on cumulative MASS:")
-    disagreements = []
-    for p in (0.8, 0.9, 0.95):
-        a = nucleus_survivors(softmax(lg8 / 0.5), p)      # T first, then p
-        b = nucleus_survivors(softmax(lg8), p)            # p first, then T
-        a_idx = [i for i, ok in enumerate(a) if ok]
-        b_idx = [i for i, ok in enumerate(b) if ok]
-        if a_idx != b_idx:
-            disagreements.append(p)
-        print(f"      p={p:<5} T=0.5-then-p -> {str(a_idx):<10} p-then-T -> "
-              f"{str(b_idx):<10} {'<== DISAGREE' if a_idx != b_idx else ''}")
-    check(bool(disagreements),
-          "S8: top-p's survivor SET IS order-dependent, so the chain order is load-bearing")
+    T8, P8 = 2.0, 0.75
+    print(f"  TOP-P is NOT -- the cut depends on cumulative MASS. Fixture "
+          f"p={[float(x) for x in d8]}, T={T8}, p_cut={P8}:")
 
-    # the values the C++ test will pin, at the documented order (T first, then p)
-    print(f"\n  The composed VALUES the C++ test pins (order: temperature, then top-p 0.9):")
-    chained = softmax(masked(lg8 / 0.5, nucleus_survivors(softmax(lg8 / 0.5), 0.9)))
-    wrong_order = softmax(masked(lg8 / 0.5, nucleus_survivors(softmax(lg8), 0.9)))
-    print(f"      T=0.5 then top-p 0.9  -> softmax = {[float(x) for x in chained]}")
-    print(f"      top-p 0.9 then T=0.5  -> softmax = {[float(x) for x in wrong_order]}")
-    check(abs(float(chained[0]) - 0.8807970779778823) < 1e-12,
+    # The documented order, as the C++ expresses it:
+    #     apply_top_p( apply_temperature(logits, T), p )   then softmax
+    correct_live = nucleus_survivors(softmax(lg8 / T8), P8)
+    correct_keep = [i for i, ok in enumerate(correct_live) if ok]
+    correct_val = softmax(np.where(correct_live, lg8 / T8, -np.inf))
+
+    # The wrong order, as the C++ expresses it:
+    #     apply_top_p( logits, p )                        then softmax
+    # NOTE the masked values are the UNTAMPERED logits here, because no
+    # temperature was applied at all on this branch. An earlier draft of this
+    # oracle divided by T after masking, which describes no composition the
+    # library can express -- the two branches must differ in ORDER, not in an
+    # extra temperature applied at the end.
+    wrong_live = nucleus_survivors(softmax(lg8), P8)
+    wrong_keep = [i for i, ok in enumerate(wrong_live) if ok]
+    wrong_val = softmax(np.where(wrong_live, lg8, -np.inf))
+
+    print(f"      T-then-p keeps {correct_keep}  softmax[0] = {float(correct_val[0])!r}")
+    print(f"      p-then-T keeps {wrong_keep}  softmax[0] = {float(wrong_val[0])!r}")
+    check(correct_keep != wrong_keep,
+          "S8: top-p's survivor SET IS order-dependent, so the order is load-bearing")
+    check(abs(float(correct_val[0]) - 0.4530818393219729) < 1e-12,
           "S8: composed value at the documented order is pinned")
-    check(abs(float(wrong_order[0]) - 0.8668133321973347) < 1e-12,
+    check(abs(float(wrong_val[0]) - 0.6666666666666666) < 1e-12,
           "S8: the WRONG order gives a different value (so the test discriminates)")
-    check(len([i for i, ok in enumerate(nucleus_survivors(softmax(lg8), 0.9)) if ok]) == 3,
-          "S8: at T=1 the p=0.9 cut keeps 3 tokens; after T=0.5 it keeps 2")
+    check(same_set_ok(correct_keep, [0, 1, 2]), "S8: T-then-p keeps {0,1,2}")
+    check(same_set_ok(wrong_keep, [0, 1]), "S8: p-then-T keeps {0,1}")
 
     # ---- 9. -INF SURVIVES (S9) ---------------------------------------------
     print("\n--- 9. -inf SURVIVAL ---")
@@ -450,6 +467,11 @@ def main() -> int:
 
 def masked(logits, live):
     return np.array([l if ok else NEG_INF for l, ok in zip(logits, live)])
+
+
+def same_set_ok(a, b) -> bool:
+    """Survivor sets are produced in ascending order by construction."""
+    return list(a) == list(b)
 
 
 def top_k_live(logits, k):
