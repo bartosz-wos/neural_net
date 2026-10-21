@@ -48,6 +48,7 @@
 #include "optimizers/lookahead.h"
 #include "utils/grid_search.h"
 #include "utils/tokenizer.h"
+#include "utils/bpe_tokenizer.h"
 #include "utils/gradient_check.h"
 #include "utils/numerical_stability.h"
 #include "utils/timing_benchmark.h"
