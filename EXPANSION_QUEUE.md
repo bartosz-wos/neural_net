@@ -4,6 +4,194 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-22] WEIGHT STANDARDIZATION SHIPPED. 94/94 + oracle 42/42,
+#     14 mutations caught / 0 survived / 0 harness defects, ASan+UBSan CLEAN.
+#     Do not re-pop.
+<!-- 2026-10-22: Weight Standardization SHIPPED (see ## Done). The list is
+     drained a TWELFTH time.
+
+     THE PICK CAME FROM THE 2026-10-20 ENTRY'S "VERIFIED ABSENT" LIST, and the
+     DOCS-GAP GREP RAN FIRST as this file's own rule requires:
+
+         grep -rinE 'not entitled|out of scope|deliberately not|is not exposed
+                     |for now we do not|this repo does not|no hook' include/nn
+                     --include=*.h
+     -> 19 hits, all already accounted for in shipped headers. No new hit this
+        time, which is itself worth recording: the docs-gap grep's hit rate has
+        fallen from three consecutive to zero, because each of those three was
+        a file THIS QUEUE had just written. Its yield decays as the file it
+        reads gets fixed. The verified-absent list was the honest fallback.
+
+         grep -rinE 'weight.?standard|ws_norm|lipschitz|learnable_lip
+                     |gain.?schedul' include/ tests/
+     -> ONE hit, and it is the NAME of a test in test_spectral_norm.cpp
+        (`test_end_to_end_lipschitz`). No implementation exists in ~250 layers.
+
+     NOT REDUNDANT, and the queue's standing rule forced the measurement rather
+     than the argument. The two mechanisms that share its neighbourhood do
+     different things, and both headers now say so:
+       - `weight_norm.h` keeps a LEARNABLE LENGTH g_i, does NOT center, is not
+         even a `Layer`, and has no adjoint. The WS paper's Eq. 10 "removes the
+         learnable weight length g".
+       - `spectral_norm.h` constrains the SPECTRAL NORM OF THE WHOLE MATRIX by
+         power iteration. WS bounds each CHANNEL separately and EXACTLY.
+     Different quantities, and the second is what composes with the first.
+
+     -----------------------------------------------------------------------
+     THREE WRONG arXiv IDS, AND ONE OF THEM IS THE ID THE QUEUE ALREADY HAD.
+
+     The canonical citation for "WS for robustness" is CVPR 2020's "Weight
+     Standardization for Adversarial Robustness". **It is NOT LOCATABLE FROM THIS
+     HOST**: an arXiv `ti:` title query returns totalResults=0, OpenAlex
+     `title.search` returns 0, and openaccess.thecvf.com serves a 2641-byte
+     block page at HTTP 200. No identifier is claimed for it.
+
+     The id that is real and verified is **arXiv:1903.10520**, Qiao, Wang, Liu,
+     Shen, Yuille, "Micro-Batch Training with Batch-Channel Normalization and
+     Weight Standardization" -- verified by scraping the abs page's
+     citation_title/citation_author meta tags, all five authors matching in
+     order. **THIS IS THE TWELFTH WRONG ID THIS FILE HAS PRODUCED, AND IT IS THE
+     MOST DANGEROUS ONE YET, because it is the id a memory-typed citation
+     produces**: "WS + robustness" leads straight to 1903.10520 and the number
+     is right while the paper is the WRONG ONE. A wrong id that is a plausible
+     neighbour is harder to catch than an obviously-wrong one, and it took an
+     abs-page meta-tag scrape to catch it rather than a title search.
+
+     Two more, both guessed as Lipschitz-constrained-NN papers and both wrong:
+     1805.09555 = "Phase Retrieval via Polytope Optimization"; 1804.08868 =
+     "Rational proofs for quantum computing". The REAL Lipschitz citation,
+     verified by abs-page meta AND by `ti:` title query, is **arXiv:2202.08345**,
+     Liu, Williams, Jacobson, Fidler, Litany, "Learning Smooth Neural Functions
+     via Lipschitz Regularization".
+
+     THE LESSON, AND IT IS THE SAME ONE NINE TIMES OVER: **search by TITLE,
+     then confirm with the abs page's `citation_title` meta tag.** A title query
+     alone is not enough here -- the CVPR paper has NO arXiv record, so "no
+     results" is the correct answer and the temptation is to substitute a
+     neighbouring paper that DOES have one. Substitution is what this file does
+     wrong.
+
+     -----------------------------------------------------------------------
+     THE ORACLE CAUGHT THREE DEFECTS BEFORE ANY C++ EXISTED, AND THE FIRST ONE
+     IS A FALSE MATHEMATICAL CLAIM THAT READS COMPLETELY REASONABLE.
+
+     **THE LIPSCHITZ BOUND IS NOT ONE THING, AND THE OBVIOUS ONE IS FALSE.**
+     The first draft asserted `||W_hat||_op <= sqrt(K)`. The oracle MEASURED
+     `3.715543100006` against a "bound" of `2.0` for a 6x4 random matrix. There
+     are two true statements about two DIFFERENT quantities:
+       (a) PER-ELEMENT (the paper's actual argument): each output is `w_c . x`
+           with `||w_c||_2 == sqrt(K)` EXACTLY, so `|w_c . x| <= sqrt(K)||x||` by
+           Cauchy-Schwarz. K = in_channels.
+       (b) WHOLE-MATRIX: `||W_hat||_op <= ||W_hat||_F == sqrt(O*K)`, the
+           Frobenius bound, O = out_channels.
+     The measured op norm sits strictly BETWEEN the two, which is exactly why
+     the false one "looked plausible" -- 3.72 looks like it could be under 4.90.
+     **A bound that is violated by the quantity it purports to bound, by a
+     factor of 1.86, reads as a typo rather than as a wrong derivation**, and it
+     survived a first draft of the oracle because nothing else in the file
+     contradicted it. The suite now asserts (a), asserts (b), AND asserts that
+     the false one is actually VIOLATED, so nobody re-adds it.
+
+     The other two: (1) `check(isfinite(...).all(), "expected NO")` -- a check
+     whose NAME said it expected failure while its ASSERTION demanded success, so
+     it could never pass; (2) a pinned literal 0.6324555320336759 (= sqrt(0.4))
+     where the rule gives -sqrt(3/2) = -1.224744871391589, i.e. a hand-arithmetic
+     slip with the right shape and the wrong value -- this repo's ninth
+     hand-computed-expected-value slip, caught by recomputing from the rule.
+
+     -----------------------------------------------------------------------
+     TWO REAL C++ BUGS, BOTH FOUND BY ASKING FOR A PROPERTY RATHER THAN A
+     VALUE.
+
+     **THE WRAPPER DOUBLE-COUNTS ITS OWN ACCUMULATION.** `Dense::backward`
+     ACCUMULATES (`grad_weights += grad_w`, core/layer.cpp). The first wrapper
+     applied the adjoint to the ACCUMULATED buffer, so the second backward pass
+     converted `2g` and added it to a buffer already holding the adjoint of `g`:
+     3x instead of 2x. The adjoint is linear in g, which is exactly why the
+     arithmetic is so clean. **A single-backward test passes either way** -- the
+     S15 two-backward check is the only thing that can see it, and it was
+     written because `core/layer.cpp` was read before the wrapper was written.
+     Fix: snapshot the buffer before the call, convert the INCREMENT.
+
+     `update_weights` also originally called `inner_->update_weights(lr)` AFTER
+     applying its own raw update, which for a Dense applies a SECOND update on
+     the standardized tensor and silently doubles the step. Caught by reading the
+     same source file a second time.
+
+     THREE TEST BUGS, ALL FOUND BY RUNNING THE CODE, IMPLEMENTATION RIGHT EVERY
+     TIME (the TDD skill's "the test is not automatically right" row, the 33rd-35th
+     time in this repo):
+       - **`== sqrt(K)` EXACTLY was unachievable in IEEE-754.** The probe that
+         settled it was NUMPY: numpy's own `np.linalg.norm` on the same fixture
+         is off by up to **4.441e-16** (1-2 ULP) on 3 of 5 rows. No implementation
+         can satisfy `==` here; the assertion was asserting a falsehood about
+         floating point. This is the repo's THIRD "the fixture is wrong, not the
+         code" finding, after the adversarial `2*eps >= gap` case and the
+         top-p one-ULP case -- and like the top-p one it is wrong by ROUNDING,
+         not by a factor.
+       - **The distinct-message check asserted a falsehood.** Two guard entries
+         were written to reach the same guard (one fixture was a valid 3x3/3x3
+         call that cannot throw), and the pairwise "these messages must differ"
+         check then failed against a CORRECT implementation. The lesson is the
+         one the sinkhorn header already records: a distinctness check must be
+         between two DIFFERENT guards, not two ways of reaching the same one.
+       - **`post - pre == +lr * grad`** for a gradient-DESCENT step. The probe
+         showed `got = 0.064011384295593776`, `want = -0.064011384295593804` --
+         magnitudes identical to 1 ULP, sign inverted. **A clean sign inversion
+         with 1-ULP magnitudes is the fingerprint of a TEST bug**: a real
+         implementation error is large and shape-dependent, not exact-and-
+         negated (systematic-debugging 4c).
+
+     -----------------------------------------------------------------------
+     THREE HARNESS DEFECTS, THE EIGHTEENTH THROUGH TWENTIETH INSTANCES OF THIS
+     CLASS IN THIS REPO.
+
+     1. **`perl -0pi -e "s/\Q$from\E/$to/"` DIED ON C++.** The anchors are full of
+        `/` -- `std::sqrt(n * var / (s * s));` -- and perl read the first `/` as
+        the s/// delimiter and exited with "Unknown regexp modifier". **SIX of
+        fourteen mutations never applied.** The harness reported them
+        HARNESS-DEFECT rather than as verdicts, because the before/after md5
+        checksum caught the no-op -- so the guard designed for exactly this case
+        is what prevented six false "SURVIVED" verdicts. The fix is a Python
+        editor with `str.count`/`str.replace`, which has no delimiter concept.
+     2. **`grep -c -F` COUNTS MATCHING LINES, NOT MATCHES.** The two-line
+        uniqueness pre-check reported `anchor count = 2` for a single occurrence
+        and rejected a well-formed mutation. The count must come from the same
+        engine that performs the edit, or the two disagree.
+     3. **The naive form of the "mutated object must not be in its own link set"
+        guard is WRONG for a NEW file.** `LIB_OBJS` LEGITIMATELY CONTAINS
+        `build/utils/weight_std.o` -- that is the TU being mutated -- so the
+        guard as first written aborted the whole harness. Excluding it would
+        also break the link. The correct form compiles the mutated TU
+        separately and swaps it in for the library object. **A guard copied from
+        a sibling harness can be right in principle and wrong in this repo,
+        which is why this file now records that the guard's ASSUMPTION, not just
+        its absence, has to be re-measured per new file.**
+     4. **M04 CRASHED AT EXIT 134 AND THAT WAS NOT A VERDICT.** Dropping `eps`
+        from the denominator makes the zero-variance guard fire on the
+        constant-row fixture, whose probe ran OUTSIDE a try/catch, so the
+        exception escaped `main` and there was no summary line to count. Fixed
+        at the TOP level so every throwing call is covered, and M04 now reports
+        CAUGHT. *Re-running a suspicious BROKEN/CRASH in isolation before
+        believing it is what proved this was the test's fault and not the
+        harness's -- rc=134 reproduced with the harness nowhere in the picture.*
+
+     -----------------------------------------------------------------------
+     THE ORACLE PROVED THE SUITE'S ADJOINT CHECKS WERE NOT VACUOUS BEFORE THE
+     ADJOINT WAS WRITTEN. Three wrong variants -- `mean(g*u)` for `mean(g*x_hat)`
+     (a clean 1/s), the `1/s` prefactor inside the parenthesis, and the SAMPLE
+     variance -- are each asserted to DIFFER from the correct chain. A
+     grad-check that passes three of four candidates is still a useful test,
+     but only if you have measured that the fourth candidate fails; the oracle
+     does exactly that, so "rel < 1e-6" means something.
+
+     STILL UNBUILT, verified absent BY CONTENT this session:
+       - `grep -rinE 'nystrom|low.?rank.?appro|amortized.*attention' include/`
+         -> `attention/nystrom_attention.o` EXISTS (seen in the link set), so
+         the kernel side is covered. Measure before taking.
+       - `weight.?standard` and `learnable.?lip` are now CLOSED. Do not re-pop.
+     -->
+
 
 # [DONE 2026-10-21] BPE SUBWORD TOKENIZER SHIPPED. 45/45 + 13/13, oracle green,
 #     4 mutations caught / 0 survived / 1 measured-inert, ASan+UBSan CLEAN, zero
@@ -778,6 +966,22 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Weight Standardization (WS) + its exact adjoint + per-channel Lipschitz diagnostics** (Qiao, Wang, Liu, Shen, Yuille, "Micro-Batch Training with Batch-Channel Normalization and Weight Standardization", **arXiv:1903.10520** -- verified 2026-10-22 by scraping the abs page's `citation_title`/`citation_author` meta tags, all five authors matching in order; **Eq. 10 read from the paper's own ar5iv HTML**, not from memory. Lipschitz machinery: Liu, Williams, Jacobson, Fidler, Litany, "Learning Smooth Neural Functions via Lipschitz Regularization", **arXiv:2202.08345**, verified by abs-page meta AND a `ti:` title query. **"Weight Standardization for Adversarial Robustness" (CVPR 2020) is NOT LOCATABLE from this host -- 0 arXiv `ti:` results, 0 OpenAlex, CVF serving a 2641-byte block page at HTTP 200 -- so NO identifier is claimed for it**) -- **THE QUEUE'S TWELFTH DRAINED LIST.** `grep -rinE 'weight.?standard|ws_norm|lipschitz|learnable_lip|gain.?schedul' include/ tests/` -> **ONE hit, the NAME of a test in `test_spectral_norm.cpp`**, and no implementation in ~250 layers and 44 utility files. Implemented in `include/nn/utils/weight_std.{h,cpp}`: `ws_standardize` (non-mutating), `ws_standardize_` (in place), `ws_standardize_backward` (the exact adjoint), `ws_channel_lipschitz` / `ws_channel_lipschitz_of` / `ws_mean_channel_lipschitz`, and the `WeightStandardization` wrapper. **Model-free by construction -- every core is a free function over `Tensor`, so the whole transform and its adjoint are testable with no `Model`, no optimizer and no network**, the shape `hutchinson.h`, `sinkhorn.h` and `mup.h` shipped with. **94/94 checks + 42/42 oracle, 14 mutations caught / 0 survived / 0 broken / 0 noop, deterministic across 3 runs, ASan+UBSan CLEAN at `-O1 -g`, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.** Plan: `docs/plans/2026-10-22_weight-standardization.md`, commit `a935ebb`.
+
+  **THE TWELFTH WRONG arXiv ID IS THE MOST DANGEROUS ONE YET, BECAUSE IT IS THE ID A MEMORY-TYPED CITATION PRODUCES.** A search for "WS for adversarial robustness" leads straight to **1903.10520**, and that number is REAL and the paper is the **WRONG ONE** -- it is the micro-batch/BCN paper. A wrong ID that is a plausible neighbour is much harder to catch than an obviously-wrong one: `grep` finds it, the number type-checks, and only an abs-page `citation_title` scrape reveals the mismatch. Two more guessed Lipschitz IDs were wrong the same way (**1805.09555** = "Phase Retrieval via Polytope Optimization", **1804.08868** = "Rational proofs for quantum computing").
+
+  **THE ORACLE CAUGHT THREE DEFECTS BEFORE ANY C++ EXISTED, AND THE FIRST IS A FALSE MATHEMATICAL CLAIM THAT READS ENTIRELY REASONABLY. THE LIPSCHITZ BOUND IS NOT ONE THING AND THE OBVIOUS ONE IS FALSE.** The first draft asserted `||W_hat||_op <= sqrt(K)`; the oracle **MEASURED `3.715543100006` against a "bound" of `2.0`** on a 6x4. Two true statements exist, about two DIFFERENT quantities: **(a) PER-ELEMENT** -- each output is `w_c . x` with `||w_c||_2 == sqrt(K)` EXACTLY, so `|w_c . x| <= sqrt(K)||x||` by Cauchy-Schwarz (K = in_channels, this is the paper's actual argument); **(b) WHOLE-MATRIX** -- `||W_hat||_op <= ||W_hat||_F == sqrt(O*K)` (O = out_channels). The measured norm sits strictly between them, which is exactly why the false bound "looked plausible" -- 3.72 is comfortably under 4.90 but nowhere near 2.0. **A bound violated by 1.86x reads as a typo, not a wrong derivation**, and it survived a whole first draft because nothing else contradicted it. The suite now asserts (a), asserts (b), AND asserts the false one is genuinely VIOLATED so it is never re-added. Two further oracle defects: a check whose *name* said "expected NO" while its *assertion* demanded success (could never pass), and a pinned literal that was `sqrt(0.4)` where the rule gives `-sqrt(3/2)` -- a hand-arithmetic slip with the right shape and the wrong value.
+
+  **TWO REAL C++ BUGS, BOTH FOUND BY ASKING FOR A PROPERTY RATHER THAN A VALUE. THE WRAPPER DOUBLE-COUNTS ITS OWN ACCUMULATION.** `Dense::backward` ACCUMULATES (`grad_weights += grad_w`); the first wrapper converted the **accumulated** buffer, so the second backward pass turned `2g` into `3x` instead of `2x`. Because the adjoint is **linear** in g, the error is exactly a clean multiple -- and **a single-backward test passes either way**, so the two-backward S15 check is the only thing that can see it. It was written only because `core/layer.cpp` had been read before the wrapper was. Second: `update_weights` also called `inner_->update_weights(lr)`, applying a **second** update on the standardized tensor and silently doubling the step.
+
+  **THREE TEST BUGS, ALL FOUND BY RUNNING THE CODE WITH THE IMPLEMENTATION RIGHT EVERY TIME (the TDD skill's "the test is not automatically right" row, the 33rd-35th instance here).** (1) **`== sqrt(K)` EXACTLY IS UNACHIEVABLE IN IEEE-754**, and the probe that settled it was **numpy**: numpy's own `np.linalg.norm` on the same fixture is off by up to **4.441e-16** (1-2 ULP) on 3 of 5 rows. The assertion was asserting a falsehood about floating point. **This is the repo's THIRD "the fixture is wrong, not the code" finding** -- after the adversarial `2*eps >= gap` case and the top-p one-ULP case -- and like the top-p one it is wrong by ROUNDING, not by a factor. (2) The distinct-message check **asserted a falsehood**: two guard entries reached the SAME guard, so requiring their messages to differ failed against a correct implementation. *A distinctness check must compare two DIFFERENT guards, not two ways of reaching the same one.* (3) `post - pre == +lr*grad` for a DESCENT step; the probe read `got = 0.064011384295593776` vs `want = -0.064011384295593804` -- **magnitudes identical to 1 ULP, sign inverted, which is the fingerprint of a test bug**: a real error is large and shape-dependent, never exact-and-negated.
+
+  **FOUR HARNESS DEFECTS, THE EIGHTEENTH THROUGH TWENTY-FIRST INSTANCES OF THIS CLASS.** (1) **`perl -0pi -e "s/.../.../"` DIED ON C++**: the anchors are full of `/`, perl read the first one as the delimiter and exited with "Unknown regexp modifier", so **SIX OF FOURTEEN MUTATIONS NEVER APPLIED**. The before/after md5 checksum caught all six and reported HARNESS-DEFECT rather than six false "SURVIVED" verdicts -- **the guard designed for exactly this case is the only reason this run was not a lie.** (2) **`grep -c -F` COUNTS MATCHING LINES, NOT MATCHES**, so a two-line anchor read `count = 2` for a single occurrence and rejected a valid mutation; the count must come from the same engine that performs the edit. (3) **The naive "mutated object must not be in its own link set" guard is WRONG for a NEW file** -- `LIB_OBJS` legitimately CONTAINS the TU being mutated, so the guard aborted the whole harness, and excluding it would break the link; the correct form compiles the mutated TU separately and swaps it in. **A guard copied from a sibling harness can be right in principle and wrong in THIS repo: the guard's ASSUMPTION, not just its absence, must be re-measured per file.** (4) **M04 CRASHED AT EXIT 134 AND THAT WAS NOT A VERDICT** -- dropping `eps` from the denominator makes the zero-variance guard fire on a constant-row probe that ran outside a try/catch, so no summary line was printed and there was nothing to count. Fixed at the top level so every throwing call is covered. *Re-running the suspicious CRASH in isolation before believing it is what proved the fault was the test's and not the harness's: rc=134 reproduced with the harness nowhere in the picture.*
+
+  **THE ORACLE PROVED THE ADJOINT CHECKS WERE NOT VACUOUS BEFORE THE ADJOINT EXISTED**: three wrong variants -- `mean(g*u)` for `mean(g*x_hat)` (a clean `1/s`), the `1/s` prefactor moved inside the parenthesis, and the SAMPLE variance `1/(K-1)` -- are each asserted to DIFFER from the correct chain, so a passing `rel < 1e-6` means the check can actually discriminate.
+
+  **SIX SEMANTICS PINNED, each a natural mistake.** **D1** the variance is POPULATION (`1/K`), never sample -- a sample std gives `||w_hat||_2 == sqrt(K/(K-1))` and every "unit variance" claim passes with the wrong divisor. **D2** `eps` goes INSIDE the sqrt, discriminated by DIRECTION rather than magnitude (at eps=1e-3 on a length-3 row the two differ by ~2.5e-4, which a 1e-2 tolerance swallows; rounding cannot flip a direction). **D3** per-channel means per ROW -- invisible on a square fixture set, which is why the suite carries 5x3, 4x7 and 6x4 on purpose. **D4** no affine transformation (the paper is explicit: a downstream BN/GN would confound the scale). **D5** the wrapper leaves the inner layer holding the RAW weights so the transform does not compound across steps, and `update_weights` applies exactly `-lr*grad` with the descent sign. **D6** every guard message is distinct and non-trivial, and a zero-variance row at `eps == 0` **THROWS** rather than returning a plausible-looking garbage tensor -- this repo's recurring `1/0` trap, sixth recorded instance.
 
 - **BPE subword tokenizer** (Sennrich, Haddow & Birch, "Neural Machine Translation of Rare Words with Subword Units", ACL 2016 Vol. 1 Long Papers, pp. 1715-1725; ACL Anthology `P16-1162`, arXiv:1508.07909 — verified by title search this session, no other citation asserted) — implemented in `include/nn/utils/bpe_tokenizer.{h,cpp}`. **Byte-level** alphabet: ids 0..255 are the 256 raw bytes, merge rank `i` → id `256+i`, words separated by a reserved **boundary id** `= vocab_size()`. Lines up with the byte-native generative layers already shipped (`pixelcnn.h`, `mambabyte.h`), and makes the id stream exactly invertible: `encode(decode(ids)) == ids`, no tolerance, no replacement chars. No `unk` token — with a complete byte alphabet OOV is impossible by construction. Roundtrip contract is `decode(encode(t)) == bpe_canonicalize(t)`, NOT `== t`, because whitespace runs collapse and ends are stripped (GPT-2's documented behaviour). **45/45** focused checks + **13/13** for the repaired legacy tokenizer; every expected id copied from `tests/bpe_oracle.py`, a numpy oracle written and run BEFORE any C++ existed. That oracle caught **seven** defects in itself and changed the spec once: the paper's `</w>` marker does NOT preserve word boundaries (it rides on the final byte, so a word whose last symbol stays a leaf loses its boundary — measured `encode("a b c") -> [97,98,99] -> "abc"`), hence the explicit boundary id and the marker demoted to training-only. The load-bearing oracle defect was that merging merge-sites **right-to-left is a different algorithm**, not an optimisation (BPE merges are non-overlapping and left-to-right; the two orders pick different alignments on "aaaa"). Three oracle defects were in the *checking* code and all three rejected a correct implementation. **Three real C++ bugs**, each found by instrumenting the leaf rather than reasoning: merge surfaces stored with one marker policy and looked up under another; `PairKey` keyed on `(id_a, id_b)` alone, which collapses the distinct merges "he" and "he</w>" into one key (silent — `merges()` still looked right, `encode()` found nothing); and the marker counted twice, yielding "the</w></w>". **Mutations: 4 caught / 0 survived / 1 measured-inert.** M4 (worst-rank-first encode) was a real coverage gap the first suite missed — found by a 1950-case sweep (406 differing corpora; smallest "aaa aba aaa aba"), now killed by a fixture. M2 survived and is inert for a structural reason (its `marked` equality is implied by the counting pass), while its *parent* — dropping `marked` from `PairKey`, the actual bug — differs on 1437/3000 cases; scored by an inverted-verdict probe so a stale "inert" claim fails loudly. Registered in `include/nn/nn.h` (umbrella verified standalone with `-fsyntax-only`; `bpe_tokenizer.cpp` auto-joins via the `LIB_SRCS` wildcard — confirmed with `make print-lib-objs` → 310 objects) and in the Makefile (build rules, `tests:` prerequisites, `run_tests` lines). ASan+UBSan CLEAN. Full `make run_tests`: **zero regressions**, the only failure is the long-documented pre-existing `test_neural_ode`. Plan: `docs/plans/2026-10-21_bpe-subword-tokenizer.md`.
 
