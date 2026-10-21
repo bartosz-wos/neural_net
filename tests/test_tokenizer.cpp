@@ -118,7 +118,13 @@ int main() {
         std::string one = t.decode(t.encode("there world"));
         CHECK(two == one, "3a runs of whitespace collapse to a single space");
         std::string lead = t.decode(t.encode("   hello"));
-        CHECK(lead == " ", "3b leading whitespace yields exactly one space");
+        // Measured: encode("   hello") = [257] -> "hello". Leading whitespace is
+        // DROPPED outright, not turned into a leading space: the encode loop only
+        // pushes eos_id when it closes a NON-EMPTY word, so a run that precedes any
+        // word emits nothing. (My first version of this test asserted " " and
+        // failed against a correct implementation -- a leading space would mean an
+        // empty word had been closed.)
+        CHECK(lead == "hello", "3b leading whitespace is dropped, not made a space");
     }
 
     // ---------------------------------------------------------------- 4
