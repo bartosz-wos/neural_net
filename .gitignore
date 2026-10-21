@@ -1,5 +1,7 @@
 build/
 *.o
+__pycache__/
+*.pyc
 *.nn
 *.pdf
 *.log
