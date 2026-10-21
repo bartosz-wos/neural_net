@@ -87,6 +87,7 @@
 #include "utils/curriculum.h"
 #include "utils/lr_multiplier.h"
 #include "utils/hutchinson.h"
+#include "utils/weight_std.h"
 #include "utils/sinkhorn.h"
 #include "utils/logit_processing.h"
 #include "utils/model_ema.h"
