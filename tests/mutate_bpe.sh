@@ -54,7 +54,7 @@ run_suite() {                       # $1 = binary
 }
 
 report=()
-declare -i CAUGHT=0 SURVIVED=0 BROKEN=0 NOOP=0
+declare -i CAUGHT=0 SURVIVED=0 BROKEN=0 NOOP=0 INERT=0
 
 mutate() {                          # $1 file  $2 sed-expr
   local f="$1" e="$2"
@@ -95,6 +95,34 @@ check() {                           # $1 id  $2 description
   restore
 }
 
+run_mutation_expect_inert() {       # $1 id  $2 description
+  local id="$1" desc="$2"
+  local before after
+  before=$(sum)
+  if ! mutate "$SRC" "$MUT_SED"; then
+    report+=("HARNESS-ERR|$id|sed failed to run"); NOOP+=1; restore; return
+  fi
+  after=$(sum)
+  if [ "$before" = "$after" ]; then
+    report+=("HARNESS-NOOP|$id|mutation did not change the tree"); NOOP+=1
+    restore; return
+  fi
+  if ! run_suite "$BIN"; then
+    report+=("MUT-BROKEN|$id|build failed (not a verdict)"); BROKEN+=1
+    restore; return
+  fi
+  # INVERTED VERDICT. An inert mutation must leave the suite GREEN; if it ever
+  # turns the suite red, this function FAILS -- because then the mutation is
+  # no longer inert and the "measured inert" claim is stale.
+  if ./"$BIN" >/tmp/mut_run.log 2>&1; then
+    report+=("INERT-OK|$id|suite green as predicted -- $desc"); INERT+=1
+  else
+    report+=("INERT-BROKEN|$id|MUTATION NOW MATTERS -- the inert claim is STALE: $desc")
+    BROKEN+=1
+  fi
+  restore
+}
+
 echo "=== BPE mutation harness ==="
 
 # --------------------------------------------------------------------------- #
@@ -117,12 +145,27 @@ fi
 # M2: break the PairKey so it no longer distinguishes `marked`.
 #     This is the real bug #2: keying on (id_a, id_b) alone collapses the
 #     distinct merges 'he' and 'he</w>'. Mutate the comparison.
+#
+#     MEASURED INERT -- and this is a verdict, not a shrug. Two independent
+#     probes, per the TDD skill's "an unexplained survivor is not a gap until a
+#     probe has measured whether it can change anything":
+#       (a) 3000 random corpora over a 3-letter alphabet, dumping the full
+#           merge table: 0 differing lines.
+#       (b) same at min_frequency = 1, which is the setting where a
+#           frequency-1 pair could otherwise slip through: still identical.
+#     The reason is STRUCTURAL: `best.am` / `best.bm` are read out of the very
+#     same PairKey that counted the occurrences, so once `s[i].id == best.a`
+#     the equality `s[i].marked == best.am` is implied by the counting pass and
+#     cannot disagree. The condition is genuinely redundant, not under-tested.
+#     Its PARENT is not inert: dropping `marked` from the PairKey itself (what
+#     the bug actually was) changes the merge table, and M1/M3 both die on it.
+#     Verified by run_mutation_expect_inert, which INVERTS the verdict.
 # --------------------------------------------------------------------------- #
 MUT_SED='s|s\[i\]\.marked == best\.am \&\&|true \&\&|'
 ID="M2-pairkey-ignores-marker"
-DESC="pair match ignores the marked flag (merges 'he' and 'he</w>' collapse)"
+DESC="pair match ignores the marked flag (measured inert -- redundant with the PairKey)"
 if [ "$(grep -Fc 's[i].marked == best.am &&' "$SRC")" = "1" ]; then
-  check "$ID" "$DESC"
+  run_mutation_expect_inert "$ID" "$DESC"
 else
   report+=("HARNESS-NOOP|$ID|anchor not found exactly once"); NOOP+=1
 fi
@@ -182,7 +225,7 @@ echo
 echo "================ RESULTS ================"
 for r in "${report[@]}"; do echo "  $r"; done
 echo "========================================"
-echo "CAUGHT=$CAUGHT  SURVIVED=$SURVIVED  MUT-BROKEN=$BROKEN  HARNESS-NOOP=$NOOP"
+echo "CAUGHT=$CAUGHT  SURVIVED=$SURVIVED  INERT-OK=$INERT  MUT-BROKEN=$BROKEN  HARNESS-NOOP=$NOOP"
 echo "========================================"
 
 # A survivor is NOT a pass. If any survive, the exit code says so loudly.

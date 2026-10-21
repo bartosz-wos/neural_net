@@ -299,6 +299,37 @@ int main() {
         CHECK(fx.size() == 1 && fx[0] == 259, "10f 'fox' is the single id 259");
     }
 
+    // --------------------------------------------------------------- 11
+    // GREEDY ORDER IS OBSERVABLE, and this corpus is the one that proves it.
+    //
+    // Found by SEARCH, not by guessing: a 1950-case sweep over short 2-letter
+    // corpora comparing the lowest-rank-first encoder against a
+    // highest-rank-first mutant produced 406 differing cases. This is the
+    // smallest. Corpus "aaa aba aaa aba" learns
+    //     rank 0: id 256 = "aa"     rank 2: id 258 = "aaa</w>"
+    //     rank 1: id 257 = "ab"     rank 3: id 259 = "aba</w>"
+    // and the probe "aba aaaaba aaa" applies merges at COMPETING ranks, so
+    // picking the wrong one changes the stream:
+    //     lowest-rank-first  -> [259, 260, 256, 256, 98, 97, 260, 258]
+    //     highest-rank-first -> [259, 260, 256,  97, 259, 260, 258]
+    // (verified by building both). The expected value is copied from
+    // tests/bpe_oracle.py, not hand-derived.
+    {
+        BPETokenizer b(30);
+        b.train("aaa aba aaa aba");
+        CHECK(b.num_merges() == 4, "11a the competing-rank corpus learns 4 merges");
+        std::vector<int> want = {259, 260, 256, 256, 98, 97, 260, 258};
+        std::vector<int> got = b.encode("aba aaaaba aaa");
+        if (got != want)
+            cout << "      got " << vec(got) << " want " << vec(want) << endl;
+        CHECK(got == want, "11b encode applies merges in LOWEST-rank-first order");
+        // The single-word probes pin the individual merge ids the same way.
+        CHECK(b.encode("aba") == std::vector<int>({259}), "11c 'aba' -> [259]");
+        CHECK(b.encode("aaa") == std::vector<int>({258}), "11d 'aaa' -> [258]");
+        CHECK(b.encode("aaaaba") == std::vector<int>({256, 256, 98, 97}),
+              "11e 'aaaaba' -> [256, 256, 98, 97] (aa fires at rank 0 twice)");
+    }
+
     cout << "\n=== Summary: " << passed << "/" << total << " passed ===" << endl;
     return passed == total ? 0 : 1;
 }
