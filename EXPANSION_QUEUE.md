@@ -5,6 +5,105 @@ After completing an item, move it to the "Done" section.
 
 ## Ideas
 
+# [DONE 2026-10-21] BPE SUBWORD TOKENIZER SHIPPED. 45/45 + 13/13, oracle green,
+#     4 mutations caught / 0 survived / 1 measured-inert, ASan+UBSan CLEAN, zero
+#     regressions. Also FIXED a measured id collision in the legacy Tokenizer.
+#     Do not re-pop.
+<!-- 2026-10-21: BPE subword tokenizer SHIPPED (see ## Done). The list is
+     drained an ELEVENTH time.
+
+     THE PICK CAME FROM THE DOCS-GAP GREP'S NEIGHBOUR: `utils/tokenizer.h` is
+     the ONLY tokenizer in the repo, it is a plain word-level one, and
+
+         grep -rn 'tokenizer' Makefile          -> NOT IN MAKEFILE
+         ls tests/ | grep -i token              -> NO TEST EXISTS
+         git log --oneline -- include/nn/utils/tokenizer.h
+                                              -> 1d8336a (initial commit)
+
+     A public symbol in nn.h (line 50), untouched since the initial commit, with
+     ZERO test coverage. That is what the absence measure turned up, and running
+     a probe against it immediately produced a real bug.
+
+     AND THE CONCEPT WAS MEASURED ABSENT, not merely missing:
+
+         grep -rinE 'bpe|byte.?pair|subword|sentencepiece|unigram|merge_rank
+                     |bytes_to_unicode|wordpiece' include/ --include=*.h
+         -> only `vocab_size` FALSE POSITIVES. ZERO hits on the concept.
+
+     AND NOT REDUNDANT with last session's logit_processing.h: that header chose
+     WHICH token to emit (`std::vector<int> tokens`, `Tensor decode(start_ids)`);
+     nothing in the repo maps ids <-> text. pixelcnn.h exposes raw logits,
+     mambabyte.h consumes raw bytes, embedding.h wants a vocab_size. The last
+     stage of the discrete-generative pipeline was missing.
+
+     ---------------------------------------------------------------------------
+     THE BUG THE PROBE FOUND IN 30 SECONDS, IN CODE NOBODY HAD TESTED:
+
+         eos_id()           = 256
+         encode("hello")[0] = 256      <-- first learned word, SAME id
+         COLLISION: YES
+         encode("hello world") = [256, 256, 257]  -> decode = "  world"
+
+     `next_id` started at 256 and `eos_id_` was 256, and `decode` maps 256 to a
+     space, so THE MOST FREQUENT WORD IN THE CORPUS WAS UNRECOVERABLE. Learned
+     ids now start at 257. One line. It survived since the initial commit
+     because the file had no test at all.
+
+     ---------------------------------------------------------------------------
+     THE ORACLE CAUGHT SEVEN DEFECTS BEFORE ANY C++ EXISTED. Six were in the
+     oracle; ONE CHANGED THE SPEC, and that is the finding worth keeping:
+
+     THE PAPER'S '</w>' MARKER DOES NOT PRESERVE WORD BOUNDARIES. The marker
+     rides on the final byte, so if that symbol never gets merged it stays a
+     leaf and encode emits the bare byte -- boundary gone. Measured:
+         encode("a b c") -> [97, 98, 99]  ->  decode "abc"
+     and it is NOT only single-char words: ANY word whose last symbol survives
+     as a leaf loses its boundary. The design now carries an explicit RESERVED
+     BOUNDARY ID (= vocab_size()) and the marker is training-only.
+
+     The load-bearing defect was O7, and it is a class worth naming: splicing
+     merge sites RIGHT-TO-LEFT (so indices stay valid) is not an optimisation,
+     it is A DIFFERENT ALGORITHM. BPE merges are non-overlapping and
+     LEFT-TO-RIGHT:
+         left-to-right  "aaaa" + (a,a) -> ['aa','a','a</w>'] -> ['aa','aa</w>']
+         right-to-left                -> ['a','aa','a</w>'], 1 merge LOST
+     Different alignments, different counts next round, the two trainers
+     diverged on every corpus with a repeated character. My FIRST fix made it
+     WORSE (2 -> 5 failures) because I "corrected" an index that was already
+     right. And THREE defects (O5, O6, that first attempt) were bugs in the
+     CHECKING code that all rejected a CORRECT implementation -- a third repo
+     instance of the "the fixture, not the code" family.
+
+     THE SAME BUG REAPPEARED IN C++, AND THE FIX IS THE SAME LESSON: `PairKey`
+     keyed on (id_a, id_b) alone, but the same (h,e) pair is the merge "he"
+     mid-word and "he</w>" at word-end. Keying on ids collapses two DISTINCT
+     merges. Silent: merges() still looked right, encode() found nothing. Fixed
+     by keying on (id, marked) tuples -- i.e. the oracle's symbol representation
+     all along. Third try also double-counted the marker ("the</w></w>').
+
+     ---------------------------------------------------------------------------
+     MUTATIONS: 4 caught / 0 survived / 1 MEASURED INERT (inverted probe).
+     M4 (encode worst-rank-first) was a REAL GAP the first suite missed: a
+     1950-case sweep found 406 differing corpora, smallest is "aaa aba aaa aba"
+     where merges compete at ranks 0/2. Killed by a new fixture. M2 survived
+     and is inert for a STRUCTURAL reason (best.am comes from the same key that
+     counted), while its PARENT -- dropping 'marked' from PairKey, the actual
+     bug -- differs on 1437/3000 cases, verified.
+
+     CITATION verified by title search: Sennrich, Haddow & Birch, "Neural
+     Machine Translation of Rare Words with Subword Units", ACL 2016 Vol. 1
+     Long Papers, pp. 1715-1725 (ACL Anthology P16-1162, arXiv:1508.07909).
+     No other citation is asserted.
+
+     VERIFIED ABSENT, re-measure before taking:
+       - `grep -rinE 'ngram|kenlm|good.?turing|heaps.?law|subword.?reg' include/`
+         -> check before taking.
+       - The queue's standing note: `sampling` matches `up_sample_`,
+         `down_sample_`, "inverse pass (for sampling)"; `min_p` matches a
+         `min()` in randomized_smoothing.h. PRINT THE MATCHING LINES. -->
+
+     PRIOR ENTRY (do not re-pop): logit processing + decoding SHIPPED
+     2026-10-20. -->
 # [DONE 2026-10-20] LOGIT PROCESSING + DECODING SHIPPED. 243/243 unit checks
 #     + 27/27 PixelCNN integration, 18 mutations caught / 0 survived / 2
 #     measured-inert, ASan+UBSan CLEAN on the pristine tree. Do not re-pop.
@@ -679,6 +778,10 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **BPE subword tokenizer** (Sennrich, Haddow & Birch, "Neural Machine Translation of Rare Words with Subword Units", ACL 2016 Vol. 1 Long Papers, pp. 1715-1725; ACL Anthology `P16-1162`, arXiv:1508.07909 — verified by title search this session, no other citation asserted) — implemented in `include/nn/utils/bpe_tokenizer.{h,cpp}`. **Byte-level** alphabet: ids 0..255 are the 256 raw bytes, merge rank `i` → id `256+i`, words separated by a reserved **boundary id** `= vocab_size()`. Lines up with the byte-native generative layers already shipped (`pixelcnn.h`, `mambabyte.h`), and makes the id stream exactly invertible: `encode(decode(ids)) == ids`, no tolerance, no replacement chars. No `unk` token — with a complete byte alphabet OOV is impossible by construction. Roundtrip contract is `decode(encode(t)) == bpe_canonicalize(t)`, NOT `== t`, because whitespace runs collapse and ends are stripped (GPT-2's documented behaviour). **45/45** focused checks + **13/13** for the repaired legacy tokenizer; every expected id copied from `tests/bpe_oracle.py`, a numpy oracle written and run BEFORE any C++ existed. That oracle caught **seven** defects in itself and changed the spec once: the paper's `</w>` marker does NOT preserve word boundaries (it rides on the final byte, so a word whose last symbol stays a leaf loses its boundary — measured `encode("a b c") -> [97,98,99] -> "abc"`), hence the explicit boundary id and the marker demoted to training-only. The load-bearing oracle defect was that merging merge-sites **right-to-left is a different algorithm**, not an optimisation (BPE merges are non-overlapping and left-to-right; the two orders pick different alignments on "aaaa"). Three oracle defects were in the *checking* code and all three rejected a correct implementation. **Three real C++ bugs**, each found by instrumenting the leaf rather than reasoning: merge surfaces stored with one marker policy and looked up under another; `PairKey` keyed on `(id_a, id_b)` alone, which collapses the distinct merges "he" and "he</w>" into one key (silent — `merges()` still looked right, `encode()` found nothing); and the marker counted twice, yielding "the</w></w>". **Mutations: 4 caught / 0 survived / 1 measured-inert.** M4 (worst-rank-first encode) was a real coverage gap the first suite missed — found by a 1950-case sweep (406 differing corpora; smallest "aaa aba aaa aba"), now killed by a fixture. M2 survived and is inert for a structural reason (its `marked` equality is implied by the counting pass), while its *parent* — dropping `marked` from `PairKey`, the actual bug — differs on 1437/3000 cases; scored by an inverted-verdict probe so a stale "inert" claim fails loudly. Registered in `include/nn/nn.h` (umbrella verified standalone with `-fsyntax-only`; `bpe_tokenizer.cpp` auto-joins via the `LIB_SRCS` wildcard — confirmed with `make print-lib-objs` → 310 objects) and in the Makefile (build rules, `tests:` prerequisites, `run_tests` lines). ASan+UBSan CLEAN. Full `make run_tests`: **zero regressions**, the only failure is the long-documented pre-existing `test_neural_ode`. Plan: `docs/plans/2026-10-21_bpe-subword-tokenizer.md`.
+
+- **Bug fix: word-level `Tokenizer` id collision** — `include/nn/utils/tokenizer.h` was untouched since the initial commit `1d8336a` and had **no test at all**, which is why this survived: `next_id` started at 256 while `eos_id_` was also 256, and `decode()` maps 256 to a space, so **the most frequent word in the corpus was unrecoverable**. Measured before the fix: `eos_id()=256`, `encode("hello")[0]=256`, `encode("hello world")=[256,256,257]` decoding to `"  world"`. Learned ids now start at 257. Added `tests/test_tokenizer.cpp` (**13/13**), which pins the collision regression, the documented whitespace behaviour, and the fact that `unk_id()` returns byte NUL and is **not** an unknown-token marker (a caller writing `id == unk_id()` to detect unknowns is wrong). The legacy symbol and its API are preserved; only the id allocation changed.
 - **Logit processing + decoding strategies** (Holtzman, Buys, Du, Forbes, Choi, "The Curious Case of Neural Text Degeneration", ICLR 2020, **arXiv:1904.09751** -- nucleus/top-p and min-p; Fan, Lewis, Dauphin, "Hierarchical Neural Story Generation", ACL 2018, **arXiv:1805.04833** -- top-k; **both verified 2026-10-20 BY TITLE**, the arXiv API being unreachable from the dev host, and **no ID is asserted** for typical-p, beam length penalty or the repetition/frequency/presence penalties) -- **THE QUEUE'S TENTH DRAINED LIST, AND THE PICK CAME FROM THE TOTALEST ABSENCE YET: `grep -rinE 'nucleus|top.?p\b|temperature_sampl|min.?p\b|repetition.?penal|beam.?search' include/` -> 0 HITS in the whole tree.** Implemented in `include/nn/utils/logit_processing.{h,cpp}` as model-free free functions over `Tensor`: `softmax` (max-subtract kept explicit), `apply_temperature` (on LOGITS, S7), `apply_top_k` (first-wins ties, S3/S12), `apply_top_p` (the `>=` boundary, S1/S2), `apply_min_p` (relative to p_max not the median, S4), the repetition/frequency/presence penalties (the SIGN SPLIT, S5/S6), `apply_epsilon` and `apply_round_to_int` (std::round, half-away-from-zero, S11), `LogitProcessorChain` (left to right, S8), the categorical `sample_from_logits` (S10), `BeamSearchDecoder` over a caller-supplied `ScoreFn` (length penalty applied ONLY when ranking finished hypotheses; **eod is not eos**), and `autoregressive_sample`. **243/243 unit checks + 27/27 PixelCNN integration, deterministic across 3 runs; 18 mutations caught / 0 survived / 2 measured-inert; ASan+UBSan CLEAN on the pristine tree.** Plan: `docs/plans/2026-10-20_logit-processing-decoding.md`.
 
   **NOT REDUNDANT, and the queue's rule forced the measurement:** `layers/generative/pixelcnn.h:205` says in the repo's own words *"For training with cross-entropy we expose logits and let the caller apply softmax. The output is the raw logits"*, and `grep -n 'sample\|generate' pixelcnn.cpp` returns NOTHING -- so PixelCNN, a categorical model over `n_vals`, shipped with no decoder, and VQ-VAE's codebook is a second discrete-output model in the same state. **Eight layers ship that produce samples; nothing shipped that decided WHICH sample to take.**

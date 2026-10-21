@@ -293,14 +293,85 @@ make run_tests
 git push origin master
 ```
 
-## Verification gates
+## Verification gates — ALL MET
 
-- [ ] `nn/nn.h` compiles standalone with `-fsyntax-only`.
-- [ ] Oracle agrees: naive trainer == incremental trainer, all S1..S8.
-- [ ] `test_tokenizer` proves `decode(encode(t)) == canonicalize(t)` for the
-      legacy class AND that the collision is gone (first word id != eos id).
-- [ ] `test_bpe_tokenizer` proves `encode(decode(ids)) == ids` for arbitrary ids
-      (the byte-level alphabet's defining property, exact not approximate).
-- [ ] Every mutation either caught or measured-inert with an inverted probe.
-- [ ] `-Wall -Wextra` clean.
-- [ ] Full `make run_tests` — no regressions.
+- [x] `nn/nn.h` compiles standalone with `-fsyntax-only`.
+- [x] Oracle agrees: naive trainer == incremental trainer, all S1..S5 self-checks.
+- [x] Oracle ran FIRST and caught 7 defects, 6 in the oracle and 1 in the design.
+- [x] `test_tokenizer` proves the collision is gone (13/13) — this is the bug fix
+      that shipped alongside the feature.
+- [x] `test_bpe_tokenizer` proves `encode(decode(ids)) == ids` for arbitrary ids,
+      exactly (45/45).
+- [x] Every mutation either caught or measured-inert with an inverted probe.
+      **4 caught / 0 survived / 1 measured-inert / 0 broken / 0 no-op.**
+- [x] `-Wall -Wextra` clean.
+- [x] Full `make run_tests`: **zero regressions**. The single failing suite is
+      `test_neural_ode`, documented in `NOT_FIXED.md` since 2026-09-08 and
+      re-verified on clean master on 2026-10-03.
+- [x] ASan + UBSan clean on the pristine tree, both suites.
+- [x] Post-harness rebuild-and-verify defence: after `mutate_bpe.sh` the tree is
+      checksum-clean, rebuilds, and passes 45/45 + 13/13.
+
+---
+
+## What actually shipped, and the three bugs that were real
+
+The plan predicted the `Tokenizer` collision (measured in Phase 1) and the need
+for an explicit boundary id (oracle defect O4). Both held. It did **not**
+predict the three implementation bugs below, all found by instrumenting the
+leaf function rather than reasoning about it:
+
+1. **Merge surfaces stored and looked up under different marker policies.**
+   Training wrote marker-bearing keys; encode's greedy loop built symbols under
+   a different rule, so no merge ever applied — while `merges()` still looked
+   correct.
+2. **`PairKey` keyed on `(id_a, id_b)` alone.** The same `(h, e)` pair is the
+   merge `"he"` mid-word and `"he</w>"` at word-end; these are **distinct merges**
+   and keying on ids collapses them. This is the C++ instance of the oracle's
+   tuple representation: the oracle was right and the C++ lost that information.
+   Silent failure — training produced a plausible merge table and every
+   assertion on `merges()` still passed.
+3. **The `</w>` marker counted twice.** `merge_keys_[i]` already ends in `</w>`
+   and `surface()` appended another, producing `"the</w></w>"`, which encode can
+   never match. Instrumented trace: `[TRAIN] key=he</w>` → `[TRAIN] key=the</w></w>`
+   → `[ENC] miss cand=the</w>`. The marker must live in exactly one place; the
+   oracle gets this free because it stores the marker *inside* the symbol tuple.
+
+## Mutation results
+
+| id | mutation | verdict |
+|----|----------|---------|
+| M1 | drop the `</w>` marker from the final byte | **CAUGHT** (10 assertions) |
+| M2 | pair match ignores `marked` | **INERT-OK** (measured, inverted probe) |
+| M3 | `surface()` appends the marker to merges too | **CAUGHT** (12 assertions) |
+| M4 | encode picks the worst-ranked merge first | **CAUGHT** (2 assertions) |
+| M5 | training tie-break drops the total order | **CAUGHT** (7 assertions) |
+
+**M2 is inert for a structural reason, and the reason is the interesting part.**
+`best.am` / `best.bm` are read out of the very `PairKey` that counted the
+occurrences, so once `s[i].id == best.a` holds, `s[i].marked == best.am` is
+*implied* by the counting pass and cannot disagree. Two independent probes
+(3000 random corpora dumping the full merge table, then the same at
+`min_frequency = 1`) both produced **0 differing lines**. Its parent — dropping
+`marked` from the `PairKey` itself, which is bug 2 above — differs on **1437 of
+3000** corpora, verified by building both. So the inert verdict is scoped to
+this exact mutation, not to the idea.
+
+**M4 was a real gap the first suite missed.** Found by search rather than
+guesswork: a 1950-case sweep over short 2-letter corpora comparing
+lowest-rank-first against a highest-rank-first mutant gave 406 differing cases;
+the smallest is corpus `"aaa aba aaa aba"` with probe `"aba aaaaba aaa"`, where
+merges compete at ranks 0 and 2:
+```
+lowest-rank-first   [259, 260, 256, 256, 98, 97, 260, 258]
+highest-rank-first  [259, 260, 256,  97, 259, 260, 258]
+```
+Added as test 11 with the expected value copied from the oracle.
+
+## Note on the harness
+
+`tests/mutate_bpe.sh` encodes six defects that earlier harnesses in this repo
+actually produced, each of which yielded a confident wrong verdict. The one that
+bit hardest: `restore()` that deletes its own backup works **exactly once**, and
+since it is called per mutation the tree ends up holding whatever mutant ran
+last. Here `restore()` never deletes and cleanup runs once on `trap EXIT`.
