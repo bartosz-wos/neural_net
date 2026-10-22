@@ -277,15 +277,29 @@ run_one M12 \
                 growth_v_.push_back(static_cast<double>(unigram_.size()));
             }'
 
-# ---- M13: Heaps fits V(n) = K*n^beta in the LOG-log space ----------------
-# The un-log-log fit of a power law is a different curve, and a synthetic
-# power law must fit with R^2 == 1 only in log-log space.
+# ---- M13: the Heaps fit drops the beta*mx term of the intercept -----------
+# THE FIRST DRAFT OF THIS MUTATION WAS A HARNESS DEFECT, AND THE KIND THAT
+# PRODUCES A FALSE VERDICT: it wrote `if (false) log_k = 0.0;`, but `log_k`
+# is declared `const`, so the build FAILED with "assignment of read-only
+# variable" and the harness reported MUT-BROKEN. A BUILD ERROR IS NOT A
+# MUTATION VERDICT -- it says nothing about whether the suite covers the
+# behaviour. The mutation now changes the FITTED INTERCEPT instead of
+# trying to write to a const.
 run_one M13 \
   '    const double beta = num / den;
     const double log_k = my - beta * mx;' \
   '    const double beta = num / den;
-    const double log_k = my - beta * mx;
-    if (false) log_k = 0.0;'
+    const double log_k = my;'
+
+# ---- M13b: the Heaps fit uses a hard-coded K = 1 --------------------------
+# A second, INDEPENDENT probe of the same behaviour that does not touch a
+# const: the fitted K is multiplied by 2. The synthetic power law must then
+# recover K = 2 rather than 1.
+run_one M13b \
+  '    fit.beta = beta;
+    fit.k = std::exp(log_k);' \
+  '    fit.beta = beta;
+    fit.k = std::exp(log_k) * 2.0;'
 
 # ---- M14: the Good-Turing discounted count loses the (r+1) factor --------
 run_one M14 \

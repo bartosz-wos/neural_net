@@ -4,6 +4,145 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-22] STATISTICAL N-GRAM LANGUAGE MODEL SHIPPED. 100/100 +
+#     oracle 85/85, 18 mutations caught / 0 survived / 0 broken, ASan+UBSan
+#     CLEAN, zero new full-suite failures. Do not re-pop.
+<!-- 2026-10-22: statistical n-gram language model SHIPPED (see ## Done). The
+     list is drained a THIRTEENTH time.
+
+     THE PICK CAME FROM THE 2026-10-20 ENTRY'S OWN "VERIFIED ABSENT" LIST,
+     and the DOCS-GAP GREP RAN FIRST as this file's own rule requires:
+
+         grep -rinE 'not entitled|out of scope|deliberately not|is not exposed
+                     |for now we do not|this repo does not|no hook' include/nn
+                     --include=*.h
+     -> 19 hits, all already accounted for in shipped headers. No new hit this
+        time, for the third run running. Its yield has now fallen from three
+        consecutive to zero, because each of those three was a file THIS
+        QUEUE had just written.
+
+         grep -rinE 'ngram|n-gram|backoff|jelinek|stupid.?backoff|good.?turing
+                     |heaps|kenlm|kneser|katz|bigram|trigram|unigram'
+                     include/ tests/
+     -> **0 CONTENT HITS**, with MATCHING LINES printed rather than filenames.
+        The idea was ALREADY on this file's own VERIFIED-ABSENT list (the
+        2026-10-20 entry: "`grep -rinE 'ngram|kenlm|good.?turing|heaps.?law
+        |subword.?reg' include/` -> check before taking"), so it was re-
+        measured on 2026-10-22 and confirmed at 0 before anything was written.
+
+     NOT REDUNDANT, and the measurement again forced the argument rather than
+     the other way round. The repo's own tokenizers map text <-> ids and stop
+     there; `utils/logit_processing.h` reshapes a NEURAL NETWORK's logits into
+     a distribution; `utils/losses.h` is cross-entropy against logits. Nothing
+     in the repo produced a STATISTICAL language model, and nothing produced a
+     PERPLEXITY for a token sequence.
+
+     ---------------------------------------------------------------------------
+     THE ORACLE CAUGHT SIX DEFECTS IN ITSELF, AND THE FIRST TWO MADE THE
+     NORMALIZATION CHECKS VACUOUS -- which is the dangerous kind, because a
+     vacuous check PASSES.
+
+     **A KEY-SHAPE BUG TURNED EVERY CONTEXT INTO AN UNSEEN ONE.** The context
+     was looked up as `CTX2[(h,)]` -- a double-wrapped tuple -- so every
+     context looked unseen, every distribution degenerated to the unigram,
+     and the unigram ALSO SUMS TO ONE. The normalization check therefore
+     passed while measuring nothing. The fix was typed accessors that state
+     the key shape once. **EVERY normalization case now asserts the context
+     is SEEN FIRST** (`c(h) > 0`), because a normalization check over a
+     degenerate distribution measures nothing -- and a check that cannot fail
+     is the worst kind of test.
+
+     **AN INT KEY INTO A TUPLE-KEYED COUNTER.** `UNIGRAM[W2I['the']]` was
+     always 0, so the "the continuation count differs from the raw count"
+     check compared 0.1579 against 0.0 and passed for the wrong reason.
+
+     **A HAND-ARITHMETIC SLIP, AND THE IMPLEMENTATION WAS RIGHT.** The
+     absolute-discounting closed form used `c(the)/N = 6/25` where it needed
+     `c(quick)/N = 2/25`. This repo's ninth-or-so such slip; the closed form
+     is now spelled out in the test rather than pasted, so the next reader
+     can see WHICH word each factor belongs to.
+
+     **AN UNREACHABLE THRESHOLD.** `R^2 > 0.99` on a 25-token corpus was not
+     merely unmet but **provably unreachable**: the best possible power-law
+     fit to the corpus growth curve scores R^2 = 0.9888, because the curve has
+     PLATEAUS and is not a power law. A threshold that no correct
+     implementation can meet is a test bug, not a strictness upgrade. The
+     threshold is now 0.95, and the property that actually proves the fit
+     machinery is that a **SYNTHETIC** power law fits with R^2 == 1 EXACTLY.
+
+     **THE OOV CLASS WAS MISSING FROM THE UNSEEN SET**, so the Witten-Bell
+     distribution lost the OOV share of the reserved mass and the
+     normalization check asserted a false equality.
+
+     **A WRONG NLTK DENOMINATOR.** NLTK's non-interpolated value is
+     `(c3 - D) / c(BIGRAM context) = (2 - 0.75)/2 = 0.625`, not `/c(the) = 6`.
+     The oracle now asserts the measured value AND asserts that the wrong
+     denominator is not the right one.
+
+     ---------------------------------------------------------------------------
+     TWO REAL C++ BUGS, BOTH ABOUT WHICH SLICE OF THE CONTEXT IS KEPT.
+
+     **THE BACKOFF TOOK THE PREFIX OF THE CONTEXT INSTEAD OF THE SUFFIX.**
+     `h = (h1, h2)` must back off to `h' = (h2)` -- a language model's context
+     is a SUFFIX of the history. The first implementation took `(h1)`, which
+     for the fixture's context `(the,cat)` evaluates `cat` where the spec
+     says `the`. **A prefix and a suffix are the same SHAPE and the same
+     LENGTH, so no type check or size check can see the difference** -- only
+     a pinned value can.
+
+     **THE GROWTH CURVE RECORDED ONLY THE NEW TYPES** (15 points) instead of a
+     point per token (25 points). The curve then had no plateaus, and Heaps'
+     law was fitted to a DIFFERENT CURVE -- one with a strictly increasing V,
+     which is a visibly different object.
+
+     ---------------------------------------------------------------------------
+     ONE REAL COVERAGE GAP, FOUND BY THE MUTATION HARNESS, NOT BY THE SUITE.
+
+     The "retraining replaces, not accumulates" test checked `num_bigrams()`,
+     which is the number of **distinct keys** -- and accumulating into the
+     same map does not change the number of distinct keys. So the mutation
+     "retraining accumulates" **SURVIVED**, and the suite was green the whole
+     time. The fix asserts the **COUNTS** (`bigram_count`, `unigram_count`,
+     `trigram_count`), which is what doubles. *A test that only checks the
+     shape of a table cannot see a table whose values grew* -- and the
+     repo's mutation harness exists precisely to find that class of gap,
+     because the suite is by construction unable to report it.
+
+     ---------------------------------------------------------------------------
+     ONE HARNESS DEFECT, OF THE CLASS THAT PRODUCES FALSE VERDICTS.
+
+     The first M13 wrote `if (false) log_k = 0.0;`, but `log_k` is declared
+     `const`, so the build FAILED with "assignment of read-only variable" and
+     the harness reported MUT-BROKEN. **A BUILD ERROR IS NOT A MUTATION
+     VERDICT** -- it says nothing about whether the suite covers the
+     behaviour, and reporting it as one scores a defect as a coverage claim.
+     The mutation was rewritten to change the fitted intercept instead. This is
+     the twenty-second instance of this class in this repo.
+
+     ---------------------------------------------------------------------------
+     THE THREE CITATIONS ARE ALL PRE-arXiv, SO NO arXiv ID IS ASSERTED.
+
+     Kneser & Ney, Eurospeech 1995, 125-135. Witten & Bell, IEE Proc-B
+     138(4), 1991, 375-380. Chen & Goodman, COLING-99, 291-304. **This file
+     has produced twelve wrong arXiv IDs and every one was a
+     plausible-looking neighbour of the right paper**, so a bare
+     "arXiv:XXXX.XXXXX" here would have been the thirteenth. The Witten-Bell
+     unigram was cross-checked against NLTK's `WittenBellProbDist` (a
+     MAINTAINED reference implementation) to floating point, and the
+     Kneser-Ney VARIANT DIFFERENCE was measured rather than argued: NLTK
+     implements the NON-INTERPOLATED form, and on this fixture the two differ
+     by 0.2418 on p(the-quick-brown). The variant is pinned, not accidental.
+
+     STILL UNBUILT, verified absent BY CONTENT this session:
+       - `grep -rinE 'jelinek|mercer|stupid.?backoff|katz' include/` -> 0 hits.
+         The remaining members of the same smoothing family. They are a
+         mechanical extension of the same three helpers.
+       - `grep -rinE 'nystrom|low.?rank.?appro|amortized.*attention' include/`
+         -> `attention/nystrom_attention.o` EXISTS (seen in the link set), so
+         the kernel side is covered. Measure before taking.
+       - `weight.?standard` and `learnable.?lip` are CLOSED. Do not re-pop.
+     -->
+
 # [DONE 2026-10-22] WEIGHT STANDARDIZATION SHIPPED. 94/94 + oracle 42/42,
 #     14 mutations caught / 0 survived / 0 harness defects, ASan+UBSan CLEAN.
 #     Do not re-pop.
@@ -966,6 +1105,8 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Statistical n-gram language model** (Kneser & Ney, "Three methods for the construction of language models for large scale text retrieval", Eurospeech 1995, 125-135; Witten & Bell, "The statistical basis of predictive word association", IEE Proc-B 138(4), 1991, 375-380; Chen & Goodman, "An empirical study of smoothing techniques for language modeling", COLING-99, 291-304 -- **all three PRE-arXiv, so NO arXiv ID is asserted**) — implemented in `include/nn/utils/ngram_lm.{h,cpp}`. A count-based n-gram LM over **integer token ids** (so it composes directly with this repo's own `utils/tokenizer.h` and `utils/bpe_tokenizer.h`), with **three smoothing schemes** over the same count tables: **Kneser-Ney** (the INTERPOLATED variant), **Witten-Bell** (reserved-mass, renormalized over the unseen set), and **absolute discounting with interpolation**; plus **Heaps' law** (`V(n) = K n^beta`, fitted by least squares in log-log space) and **Good-Turing** (`P_0 = N_1/N`, discounted count `c*_r = (r+1) N_{r+1}/N_r`). The API is `NGramLM(max_order, discount, vocab_size_hint)`, `train(corpus)`, `kn_prob` / `wb_prob` / `ad_prob` (with 1- and 2-token context overloads), `sequence_logprob`, `corpus_perplexity`, `heaps_fit`, `good_turing_p0` / `_discounted_count` / `_probability`, plus the count accessors (`unigram_count`, `bigram_count`, `trigram_count`, `context_type_count`, `continuation_count`). **The gap was measured, not assumed**: `grep -rinE 'ngram|n-gram|backoff|jelinek|stupid.?backoff|good.?turing|heaps|kenlm|kneser|katz|bigram|trigram|unigram' include/ tests/` returns **0 content hits** (matching lines printed, not filenames), and the idea was already on the queue's own VERIFIED-ABSENT list. It is NOT redundant with the tokenizers (text <-> ids, no probabilities), with `logit_processing` (reshapes a NEURAL NETWORK's logits) or with `losses.h` (cross-entropy against logits): nothing in the repo produced a STATISTICAL language model or a **perplexity** for a token sequence. **100/100 checks pass** (deterministic over three runs) + **oracle 85/85**; **18/18 mutations caught, 0 survived, 0 broken**; **ASan+UBSan CLEAN**; umbrella header compiles standalone; **zero new full-suite failures** (the aggregate run's only failure is the `test_neural_ode` entry already deferred in `NOT_FIXED.md`, identical to the pre-change baseline). **THE ORACLE CAUGHT SIX DEFECTS IN ITSELF**, the first two of which made the normalization checks **VACUOUS**: a double-wrapped tuple key made every context look unseen, so every distribution degenerated to the unigram -- which ALSO sums to one -- and the check passed while measuring nothing (every normalization case now asserts the context is SEEN first); an int key into a tuple-keyed counter made a "differs from the raw count" check compare 0.1579 against 0.0; a hand-arithmetic slip used `c(the)/N` where the closed form needed `c(quick)/N` (the implementation was right, the literal was wrong); an `R^2 > 0.99` threshold that was **provably unreachable** on a 25-token corpus (the best possible power-law fit scores 0.9888, so the threshold was a test bug, and the property that actually proves the fit machinery is that a SYNTHETIC power law fits with `R^2 == 1` exactly); a missing OOV class in the unseen set; and a wrong NLTK denominator (`(c3 - D)/c(BIGRAM context)`, not `/c(the)`). **TWO REAL C++ BUGS, BOTH ABOUT WHICH SLICE OF THE CONTEXT IS KEPT**: the backoff took the PREFIX of the context instead of the SUFFIX (a language model's context is a suffix of the history -- and a prefix and a suffix are the same shape and length, so no type or size check can see the difference), and the growth curve recorded only the new types instead of a point per token, so Heaps' law was fitted to a different curve. **ONE REAL COVERAGE GAP, FOUND BY THE MUTATION HARNESS AND INVISIBLE TO THE SUITE**: the "retraining replaces, not accumulates" test checked `num_bigrams()`, the number of **distinct keys**, and accumulating into the same map does not change the number of distinct keys -- so the "retraining accumulates" mutation SURVIVED a green suite; the test now asserts the **counts**, which is what doubles. **ONE HARNESS DEFECT** (the twenty-second of its class here): the first M13 assigned to a `const`, so the build failed and the harness reported MUT-BROKEN -- a build error is not a mutation verdict. The Witten-Bell unigram was cross-checked against **NLTK's `WittenBellProbDist`** to floating point, and the Kneser-Ney **variant difference** was measured rather than argued: NLTK implements the NON-INTERPOLATED form and the two differ by **0.2418** on the fixture's p(the-quick-brown), so the variant is pinned rather than accidental. Plan: `docs/plans/2026-10-22_ngram-language-model.md`. Registered in `include/nn/nn.h` (verified by a standalone `-fsyntax-only` compile of `#include "nn/nn.h"`) and in the Makefile (`build/test_ngram_lm` rule, `tests:` deps entry, `=== Running test_ngram_lm ===` echo in `run_tests`). Jelinek-Mercer, stupid backoff and Katz are named in the header as the smoothing variants deliberately NOT implemented.
 
 - **Weight Standardization (WS) + its exact adjoint + per-channel Lipschitz diagnostics** (Qiao, Wang, Liu, Shen, Yuille, "Micro-Batch Training with Batch-Channel Normalization and Weight Standardization", **arXiv:1903.10520** -- verified 2026-10-22 by scraping the abs page's `citation_title`/`citation_author` meta tags, all five authors matching in order; **Eq. 10 read from the paper's own ar5iv HTML**, not from memory. Lipschitz machinery: Liu, Williams, Jacobson, Fidler, Litany, "Learning Smooth Neural Functions via Lipschitz Regularization", **arXiv:2202.08345**, verified by abs-page meta AND a `ti:` title query. **"Weight Standardization for Adversarial Robustness" (CVPR 2020) is NOT LOCATABLE from this host -- 0 arXiv `ti:` results, 0 OpenAlex, CVF serving a 2641-byte block page at HTTP 200 -- so NO identifier is claimed for it**) -- **THE QUEUE'S TWELFTH DRAINED LIST.** `grep -rinE 'weight.?standard|ws_norm|lipschitz|learnable_lip|gain.?schedul' include/ tests/` -> **ONE hit, the NAME of a test in `test_spectral_norm.cpp`**, and no implementation in ~250 layers and 44 utility files. Implemented in `include/nn/utils/weight_std.{h,cpp}`: `ws_standardize` (non-mutating), `ws_standardize_` (in place), `ws_standardize_backward` (the exact adjoint), `ws_channel_lipschitz` / `ws_channel_lipschitz_of` / `ws_mean_channel_lipschitz`, and the `WeightStandardization` wrapper. **Model-free by construction -- every core is a free function over `Tensor`, so the whole transform and its adjoint are testable with no `Model`, no optimizer and no network**, the shape `hutchinson.h`, `sinkhorn.h` and `mup.h` shipped with. **94/94 checks + 42/42 oracle, 14 mutations caught / 0 survived / 0 broken / 0 noop, deterministic across 3 runs, ASan+UBSan CLEAN at `-O1 -g`, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone.** Plan: `docs/plans/2026-10-22_weight-standardization.md`, commit `a935ebb`.
 

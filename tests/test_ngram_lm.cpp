@@ -518,11 +518,25 @@ int main() {
         c.train(sents);
         CHECK(c.num_tokens() == 25, "15b retraining replaces, not accumulates (tokens = 25)");
         CHECK(c.num_bigrams() == 19, "15c retraining replaces the bigram table too");
+        // THE DISCRIMINATING ASSERTION. `num_bigrams()` is the number of
+        // DISTINCT KEYS, and accumulating into the same map does not change
+        // the number of distinct keys -- so 15c above cannot see the
+        // accumulation at all. The COUNTS are what double, and the first
+        // draft of this test never checked them, which is exactly why the
+        // "retraining accumulates" mutation SURVIVED the first harness run.
+        // A test that only checks the shape of a table cannot see a table
+        // whose values grew.
+        CHECK(c.bigram_count(kThe, kQuick) == 2,
+              "15d retraining does not DOUBLE the bigram counts");
+        CHECK(c.unigram_count(kThe) == 6,
+              "15e retraining does not DOUBLE the unigram counts");
+        CHECK(c.trigram_count(kThe, kQuick, kBrown) == 2,
+              "15f retraining does not DOUBLE the trigram counts");
         // an UNTRAined model still answers, with a uniform distribution
         NGramLM untrained(3, 0.75);
-        CHECK(untrained.kn_prob(0) >= 0.0, "15d an untrained LM answers without throwing");
+        CHECK(untrained.kn_prob(0) >= 0.0, "15g an untrained LM answers without throwing");
         CHECK(untrained.corpus_perplexity(sents, 0.75) >= 1.0,
-              "15e an untrained LM's perplexity is at least 1");
+              "15h an untrained LM's perplexity is at least 1");
     }
 
     cout << "\n=== Summary: " << passed << " passed, " << (total - passed) << " failed ===" << endl;
