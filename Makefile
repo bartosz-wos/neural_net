@@ -227,6 +227,9 @@ $(BUILD_DIR)/test_metrics: $(LIB_OBJS) $(BUILD_DIR)/test_metrics.o
 $(BUILD_DIR)/test_bpe_tokenizer: $(LIB_OBJS) $(BUILD_DIR)/test_bpe_tokenizer.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_ngram_lm: $(LIB_OBJS) $(BUILD_DIR)/test_ngram_lm.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_tokenizer: $(LIB_OBJS) $(BUILD_DIR)/test_tokenizer.o
 	$(CXX) $^ -o $@
 
@@ -889,7 +892,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_randomized_smoothing $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_layer_scale $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_weight_std $(BUILD_DIR)/test_bpe_tokenizer $(BUILD_DIR)/test_tokenizer $(BUILD_DIR)/test_pixelcnn_decode $(BUILD_DIR)/test_logit_processing $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_ptq $(BUILD_DIR)/test_mup $(BUILD_DIR)/test_curriculum $(BUILD_DIR)/test_lr_multiplier $(BUILD_DIR)/test_hutchinson $(BUILD_DIR)/test_sinkhorn $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_ortho_penalty $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
+$(BUILD_DIR)/test_weight_std $(BUILD_DIR)/test_ngram_lm $(BUILD_DIR)/test_bpe_tokenizer $(BUILD_DIR)/test_tokenizer $(BUILD_DIR)/test_pixelcnn_decode $(BUILD_DIR)/test_logit_processing $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_ptq $(BUILD_DIR)/test_mup $(BUILD_DIR)/test_curriculum $(BUILD_DIR)/test_lr_multiplier $(BUILD_DIR)/test_hutchinson $(BUILD_DIR)/test_sinkhorn $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_ortho_penalty $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -1034,6 +1037,7 @@ run_tests: tests
 	@echo "=== Running test_contrastive_losses ==="; if ./$(BUILD_DIR)/test_contrastive_losses; then :; else echo "test_contrastive_losses" >> .run_tests_failed; fi
 	@echo "=== Running test_siglip_loss ==="; if ./$(BUILD_DIR)/test_siglip_loss; then :; else echo "test_siglip_loss" >> .run_tests_failed; fi
 	@echo "=== Running test_bpe_tokenizer ==="; if ./$(BUILD_DIR)/test_bpe_tokenizer; then :; else echo "test_bpe_tokenizer" >> .run_tests_failed; fi
+	@echo "=== Running test_ngram_lm ==="; if ./$(BUILD_DIR)/test_ngram_lm; then :; else echo "test_ngram_lm" >> .run_tests_failed; fi
 	@echo "=== Running test_tokenizer ==="; if ./$(BUILD_DIR)/test_tokenizer; then :; else echo "test_tokenizer" >> .run_tests_failed; fi
 	@echo "=== Running test_metrics ==="; if ./$(BUILD_DIR)/test_metrics; then :; else echo "test_metrics" >> .run_tests_failed; fi
 	@echo "=== Running test_calibration_diagnostics ==="; if ./$(BUILD_DIR)/test_calibration_diagnostics; then :; else echo "test_calibration_diagnostics" >> .run_tests_failed; fi
