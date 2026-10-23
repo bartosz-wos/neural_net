@@ -285,7 +285,7 @@ run_mutation_expect_inert() {  # $1=id $2=file tag $3=spec $4=description
 echo "=== MUTATIONS ==="
 run_mutation M01 cpp \
  "$(printf 'if (cum >= p_threshold) break;\x1fif (cum > p_threshold) break;')" \
- "nucleus `>=` -> `>` (the off-by-one; admits one token too many)"
+ "nucleus uses a STRICT inequality -- the off-by-one; admits one token too many"
 
 # --- S5: the repetition-penalty sign split. THE other headline mutation. ----
 # Two of these, one per branch, because deleting one branch is a different bug
@@ -406,8 +406,14 @@ run_mutation M19 cpp \
  "softmax divides by the wrong quantity"
 
 # --- top-p accumulates the PROBABILITY, not the logit ----------------------
+# The anchor is now LONGER because the one-line form became ambiguous when
+# typical-p was added: `cum += probs[idx];` appears in BOTH apply_top_p and
+# apply_typical_p, so the harness would have refused the edit (and correctly
+# so -- it edits ONE occurrence, and which one it picked would be a coin
+# flip). The form anchored on `descending_order(lg)` is unique to apply_top_p,
+# because typical-p sorts by DISTANCE with its own comparator.
 run_mutation M20 cpp \
- "$(printf 'cum += probs[idx];\x1fcum += lg[idx];')" \
+ "$(printf '    std::vector<size_t> order = descending_order(lg);\n\n    double cum = 0.0;\n    for (size_t i = 0; i < order.size(); ++i) {\n        size_t idx = order[i];\n        set_at(out, idx, get_at(logits, idx));\n        cum += probs[idx];\x1f    std::vector<size_t> order = descending_order(lg);\n\n    double cum = 0.0;\n    for (size_t i = 0; i < order.size(); ++i) {\n        size_t idx = order[i];\n        set_at(out, idx, get_at(logits, idx));\n        cum += lg[idx];')" \
  "nucleus accumulates LOGITS instead of probabilities"
 
 # --- min-p must apply the temperature BEFORE the threshold -----------------
@@ -467,7 +473,7 @@ run_mutation M23 cpp \
 
 run_mutation M24 cpp \
  "$(printf 'if (cum >= tau) break;\x1fif (cum > tau) break;')" \
- "typical-p: the cut is `>` -- the crossing token is DROPPED (S17)"
+ "typical-p: the cut is a STRICT inequality -- the crossing token is DROPPED (S17)"
 
 run_mutation M25 cpp \
  "$(printf 'if (probs[j] > 0.0) entropy -= probs[j] * std::log(probs[j]);\x1fif (probs[j] > 0.0) entropy += probs[j] * std::log(probs[j]);')" \

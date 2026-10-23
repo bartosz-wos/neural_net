@@ -1154,6 +1154,67 @@ static void test_typical_p_truncation() {
     CHECK(same_set(survivors(zt), {0, 2}),
           "17r the zero-probability token is NEVER kept");
 
+    // -----------------------------------------------------------------------
+    // THE UNDERFLOW FIXTURE. Three mutation survivors (M26, M27, M30) were
+    // found by the harness and the FIXTURE is the reason they survived: the
+    // -inf fixture CANNOT SEE THEM.
+    //
+    // THE MECHANISM, which is worth more than the fixture. A masked token
+    // holds -inf, and a token whose LOGIT is -inf also holds -inf. So on the
+    // -inf fixture "masked" and "kept" are the same observable value, and a
+    // survivor scan cannot tell them apart. MEASURED under the M26 mutant:
+    //
+    //     -inf fixture,      token 1's value = -inf   <-- indistinguishable
+    //     underflow fixture, token 1's value = -800  <-- FINITE, so VISIBLE
+    //
+    // The underflow fixture is the SAME mathematical situation reached a
+    // different way: logit -800 makes exp() UNDERFLOW to exactly 0.0, so the
+    // probability is 0 while the LOGIT IS FINITE. A correct implementation
+    // masks that token to -inf, and a broken one leaves the finite -800 in
+    // place -- which a survivor scan sees immediately.
+    //
+    // M26's failure mode, for the record: dropping the `probs[j] > 0.0` guard
+    // from the entropy sum makes the entropy NaN (0 * log 0 == NaN), every
+    // distance becomes NaN, the sort comparator is then always false, and
+    // std::stable_sort keeps the ORIGINAL index order -- so the loop VISITS
+    // the zero-probability token and writes its logit into the output. The
+    // -inf fixture hides that; the underflow fixture does not.
+    Tensor ul = row({0.0, -800.0, -1.0});
+    Tensor up = softmax(ul);
+    CHECK(at(up, 1) == 0.0, "17s the -800 logit UNDERFLOWS to probability 0");
+    CHECK(std::isfinite(at(ul, 1)),
+          "17t ... while its LOGIT is still finite, so a mask is observable");
+    Tensor ut = apply_typical_p(ul, 0.9);
+    CHECK(same_set(survivors(ut), {0, 2}),
+          "17u the underflowed token is NEVER kept (its value is masked to "
+          "-inf, not left at the finite -800)");
+    CHECK(is_neg_inf(at(ut, 1)),
+          "17v the underflowed token's value is exactly -inf -- a broken "
+          "implementation leaves the finite -800 there");
+    // And at tau = 0.5 it must not be kept either (M27's fixture).
+    CHECK(same_set(survivors(apply_typical_p(ul, 0.5)), {0}),
+          "17w the underflowed token is not kept at tau=0.5 either -- a broken "
+          "implementation gives it distance 0 and keeps it");
+
+    // M30: the temperature's FINITENESS check. An INFINITE temperature is
+    // finite-looking but not finite, and dropping the check lets it through:
+    // the logits become 0, the distribution becomes uniform, and the typical
+    // set is a completely different object. A NaN temperature must throw too.
+    bool threw_inf = false;
+    try {
+        apply_typical_p(lg, 0.5, std::numeric_limits<double>::infinity());
+    } catch (const std::invalid_argument&) {
+        threw_inf = true;
+    }
+    CHECK(threw_inf, "17x an INFINITE temperature throws");
+    bool threw_nan = false;
+    try {
+        apply_typical_p(lg, 0.5, std::nan(""));
+    } catch (const std::invalid_argument&) {
+        threw_nan = true;
+    }
+    CHECK(threw_nan, "17y a NaN temperature throws");
+
     // S18: the entropy's SIGN. A sign flip is a plausible slip and a
     // magnitude-only check cannot see it, so the direction is pinned: the
     // typical set must contain the token CLOSEST TO THE ENTROPY, and if the
@@ -1162,7 +1223,7 @@ static void test_typical_p_truncation() {
     // negated entropy it would be {3, 1, 2, 0} -- so the tau=0.2 survivor
     // would be {3} instead of {0}.
     CHECK(same_set(survivors(apply_typical_p(lg, 0.2)), {0}),
-          "17s the entropy's sign is right (a flipped entropy keeps {3}, not {0})");
+          "17z the entropy's sign is right (a flipped entropy keeps {3}, not {0})");
 
     // S16: the sort is ASCENDING by distance. The descending variant keeps
     // {1,2,3} at tau=0.2 -- the LEAST typical tokens. The oracle measured
@@ -1176,8 +1237,8 @@ static void test_typical_p_truncation() {
     bool unchanged = true;
     for (size_t j = 0; j < keep.cols; ++j)
         if (at(keep, j) != at(keep_copy, j)) unchanged = false;
-    CHECK(unchanged, "17t the input tensor is not mutated");
-    CHECK(out.rows == 1 && out.cols == 4, "17u the shape is preserved");
+    CHECK(unchanged, "17aa the input tensor is not mutated");
+    CHECK(out.rows == 1 && out.cols == 4, "17ab the shape is preserved");
 
     // S21: a (V, 1) row works too, and the survivor set is the same.
     Tensor col(4, 1);
@@ -1186,15 +1247,15 @@ static void test_typical_p_truncation() {
     std::vector<int> csurv;
     for (size_t j = 0; j < 4; ++j)
         if (!is_neg_inf(cout(j, 0))) csurv.push_back(static_cast<int>(j));
-    CHECK(same_set(csurv, {0, 2}), "17v a (V,1) column row gives the same survivors");
+    CHECK(same_set(csurv, {0, 2}), "17ac a (V,1) column row gives the same survivors");
 
     // The TEMPERATURE acts on the LOGITS FIRST, so the entropy is that of the
     // temperature-adjusted distribution. Oracle-pinned: T=4 keeps {0,1} at
     // tau=0.5, T=0.5 keeps {2}.
     CHECK(same_set(survivors(apply_typical_p(lg, 0.5, 4.0)), {0, 1}),
-          "17w temperature=4 keeps {0,1} at tau=0.5");
+          "17ad temperature=4 keeps {0,1} at tau=0.5");
     CHECK(same_set(survivors(apply_typical_p(lg, 0.5, 0.5)), {2}),
-          "17x temperature=0.5 keeps {2} at tau=0.5 -- the entropy is measured "
+          "17ae temperature=0.5 keeps {2} at tau=0.5 -- the entropy is measured "
           "on the ADJUSTED distribution");
 
     // The chain: the order matters (the repo's S8 contract, extended). The
@@ -1206,8 +1267,8 @@ static void test_typical_p_truncation() {
     c2.add_top_p(0.5).add_typical_p(0.3);
     std::vector<int> s1 = survivors(c1.apply(lg));
     std::vector<int> s2 = survivors(c2.apply(lg));
-    CHECK(same_set(s1, {0}), "17y typical-p then top-p keeps {0}");
-    CHECK(same_set(s2, {2}), "17z top-p then typical-p keeps {2} -- the chain "
+    CHECK(same_set(s1, {0}), "17af typical-p then top-p keeps {0}");
+    CHECK(same_set(s2, {2}), "17ag top-p then typical-p keeps {2} -- the chain "
                              "order MATTERS");
 }
 
