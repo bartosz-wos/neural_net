@@ -4,6 +4,67 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-23] TYPICAL-P (LOCALLY TYPICAL SAMPLING) SHIPPED. 276/276 +
+#     oracle 63/63, 27 mutations caught / 0 survived / 0 broken / 0 noop,
+#     ASan+UBSan CLEAN, zero new full-suite failures. Do not re-pop.
+<!-- 2026-10-23: typical-p (locally typical sampling) SHIPPED (see ## Done).
+     The list is drained a FOURTEENTH time.
+
+     THE PICK CAME FROM THE REPO'S OWN NEWEST UTILITY FILE, and the
+     DOCS-GAP GREP RAN FIRST as this file's own rule requires:
+
+         grep -rinE 'not entitled|out of scope|deliberately not|is not exposed
+                     |for now we do not|this repo does not|no hook' include/nn
+                     --include=*.h
+     -> 19 hits, all already accounted for in shipped headers. No new hit this
+        time, for the FOURTH consecutive run. Its yield has now fallen from
+        three consecutive to zero, because each of those three was a file THIS
+        QUEUE had just written. The grep's yield DECAYS as the file it reads
+        gets fixed, which is worth knowing: it is a self-consuming measure.
+
+     THE DOCS-GAP GREP WAS NOT WHAT FOUND THIS ONE, THOUGH. The fallback was
+     a broader concept sweep, and it returned several absent families (CRF,
+     VAE-ELBO, KV-cache, speculative decoding, typical-p). The typical-p one
+     is the STRONGEST of them, because it is not merely absent -- a shipped
+     header says it is absent AND says why:
+
+         include/nn/utils/logit_processing.h:149:
+         //   - Typical-p sampling (Meister et al.). The signature is reserved
+         //     in the header so it is not silently reinvented later; it is
+         //     NOT implemented, because it is not yet oracle-pinned.
+
+     **A FILE THAT NAMES ITS OWN MISSING PIECE IS A SPECIFICATION.** That is
+     the highest-signal absence available in a repo, and it is the same shape
+     as the `mup.h:239` and `sophia.h:25` hits the grep produced in 2026-10-19
+     -- just reached by a different route. The stated blocker ("not yet
+     oracle-pinned") named the deliverable.
+
+     STILL UNBUILT, verified absent BY CONTENT this session -- RE-MEASURE
+     BEFORE TAKING, and note that a `grep -ril` that returns hits is not
+     evidence of presence (it has matched `warmup_`/`mup_` and `sample_weight`
+     in comments before):
+       - `grep -rinE 'speculat|contrastive.decod|draft.model|medusa|eagle'
+         include/` -> 0 hits. SPECULATIVE DECODING is the remaining named
+         out-of-scope item in logit_processing.h's own block, so it is the
+         natural next pick from the same file. It is a bigger job than
+         typical-p: it needs a draft model and a target model, and the
+         REJECTION SAMPLING step is the part that must be right.
+       - `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/`
+         -> 0 content hits. A KV cache for the repo's transformer stack.
+         Verify before taking: many attention layers cache for BACKWARD
+         (`last_k_`, `last_v_`), which is NOT an inference-time KV cache.
+       - `grep -rinE '\bcrf\b|conditional.random.field|linear.chain' include/`
+         -> 0 hits. A CRF layer. Needs a forward-backward over a chain, which
+         is a different shape from everything else in the repo.
+       - `grep -rinE 'elbo|variational.inference|kullback' include/` ->
+         only `utils/distribution_losses.h` and `utils/vat.h`. A standalone
+         ELBO / VI utility is genuinely absent; the repo's VAE computes its
+         own KL inline.
+       - `weight.?standard`, `learnable.?lip`, `ngram`, `jelinek`, `mercer`,
+         `stupid.?backoff`, `katz`, `nystrom` are all CLOSED or measured
+         present. Do not re-pop.
+     -->
+
 # [DONE 2026-10-22] STATISTICAL N-GRAM LANGUAGE MODEL SHIPPED. 100/100 +
 #     oracle 85/85, 18 mutations caught / 0 survived / 0 broken, ASan+UBSan
 #     CLEAN, zero new full-suite failures. Do not re-pop.
@@ -1105,6 +1166,20 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Typical-p (locally typical) sampling** (Meister, Pimentel, Wiher, Cotterell, "Locally Typical Sampling", *Transactions of the Association for Computational Linguistics* **11**:102-121, 2023; ACL Anthology `2023.tacl-1.7`; **arXiv:2202.00666** (v6) -- **verified 2026-10-23 by TITLE search** (`arxiv.org/abs/2202.00666` returns the title and all four authors in order) **and by reading the algorithm out of the paper's own HTML**, `https://arxiv.org/html/2202.00666v6` (524 KB, HTTP 200), not from memory) -- **THE PICK CAME FROM THE REPO'S OWN NEWEST UTILITY FILE.** `include/nn/utils/logit_processing.h:149` said, in the repo's own words: *"Typical-p sampling (Meister et al.). The signature is reserved in the header so it is not silently reinvented later; it is NOT implemented, **because it is not yet oracle-pinned**."* That is the strongest shape of gap available: a shipped header stating that one specific algorithm is missing AND naming the blocker. The docs-gap grep that found `lr_multiplier` and `hutchinson` returned 19 hits this session, **all already accounted for in shipped headers** -- its yield has now fallen to zero for the fourth consecutive run, because each of the previous three was a file this queue had just written -- so the fallback was the file's own out-of-scope note. Implemented in `include/nn/utils/logit_processing.{h,cpp}` as `apply_typical_p(logits, tau, temperature = 1.0)` plus `LogitProcessorChain::add_typical_p`. **276/276 checks + 63/63 oracle, 27 mutations caught / 0 survived / 0 broken / 0 noop / 2 measured-inert, deterministic across 3 runs, ASan+UBSan CLEAN, zero warnings at the project's real `-O2 -march=native -Wall -Wextra`, umbrella header compiles standalone, zero new full-suite failures** (the aggregate run's only failure is the `test_neural_ode` entry already deferred in `NOT_FIXED.md` -- **proved** to fail identically, 47 passed / 1 failed at the same line 561, on a clean clone of the pre-change commit `2dc51a4`). Plan: `docs/plans/2026-10-23_typical-p-locally-typical-sampling.md`.
+
+  **THE ALGORITHM, AND THE PAPER'S OWN ERRATUM.** Eq. 7 defines a locally typical token by `| log p(y) + H | < eps`; Algorithm 5.3's **stated optimization problem carries a published erratum** ("allows for solutions in which continuations whose log-probabilities lie closest to the conditional entropy are excluded from the set"), so the implementation follows the paper's **Computational Complexity** procedure instead: compute the conditional entropy, **sort by absolute distance from it, greedily take until the cumulative mass reaches tau**. That procedure was **cross-checked against TWO independent formulations** -- the greedy wording and HuggingFace's `TypicalLogitsWarper` (transformers 5.14.1) transcribed literally -- and the two agree on every case in the oracle. **The two formulations agreeing is the point**: one formulation agreeing with itself proves nothing.
+
+  **IT IS NOT A MASS CUT, AND THE FIXTURE PROVES IT.** On logits `[0.0, -1.0, 0.5, -2.0]` the **argmax is token 2 but the token closest to the entropy is token 0**; top-p keeps `{2}` and the typical cut keeps `{0}`. **A survivor-COUNT test would pass an implementation that simply did top-p**, so every check pins the exact survivor SET. The S17 boundary fixture is the **dyadic** two-token uniform `[0.5, 0.5]`, whose cumulative mass lands EXACTLY on 0.5 -- the same lesson the nucleus fixture already learned the hard way (*"a fixture whose discriminating value is only correct to within a rounding error does not discriminate anything"*): `>=` keeps ONE token there and `>` keeps TWO.
+
+  **THE ORACLE CAUGHT A DEFECT IN ITSELF, AND IT WAS A CLAIM THAT WAS FALSE, NOT AN ALGORITHM THAT WAS WRONG.** The first draft asserted "the raw typical set and the raw top-p set differ" at EVERY (tau, p) pair, and it FAILED at tau=0.5 p=0.7 -- because there both sets are `{0, 2}`. The assertion was wrong, not the algorithm. **The interesting part is what the failure revealed**: the two CHAIN ORDERS still differ at that point (`{0,2}` vs `{2}`), because masking changes the distribution whose ENTROPY the second cut is measured against. So the chain-order property does **not** require the raw cuts to differ; asking for that conflated two different claims.
+
+  **THE PLAN'S FIRST DRAFT WAS ALSO WRONG ON A SEMANTIC, AND MEASUREMENT CAUGHT IT.** The plan claimed `tau = 0` is a no-op that returns the input unchanged. It is not: the greedy loop takes a token BEFORE it tests the threshold, so **`tau = 0` keeps EXACTLY ONE token -- the closest to the entropy**. The reference implementation agrees (its `last_ind` formula yields the same), and the two independent formulations were cross-checked on that case. `tau = 1` keeps everything, matching the reference's rule that the warper is applied only when `typical_p < 1.0`.
+
+  **THREE REAL COVERAGE GAPS, FOUND BY THE MUTATION HARNESS, AND ALL THREE HAD THE SAME ROOT CAUSE: THE `-inf` FIXTURE IS BLIND TO THEM.** The suite's zero-probability fixture used a `-inf` logit -- and **a masked token holds `-inf`, and a token whose LOGIT is `-inf` also holds `-inf`, so "masked" and "kept" are the same observable value and a survivor scan cannot tell them apart.** MEASURED under the M26 mutant: on the `-inf` fixture the token's value is `-inf` (indistinguishable); on the **underflow** fixture (logit `-800`, so `exp()` underflows to exactly `0.0` while the LOGIT STAYS FINITE) the value is `-800`, which a survivor scan sees immediately. The underflow fixture is the same mathematical situation reached a different way, and it is what kills M26 (the dropped `probs[j] > 0.0` guard makes the entropy NaN -- `0 * log 0` -- every distance NaN, the sort comparator then always false, and `std::stable_sort` keeps the ORIGINAL index order, so the loop VISITS the zero-probability token and writes its logit into the output) and M27 (a zero-probability token given distance 0 instead of infinity). **M30** (the temperature's finiteness check) differs only in the THROW -- an infinite temperature otherwise makes the distribution uniform, which is a completely different object -- so it needed its own assertion.
+
+  **TWO HARNESS DEFECTS, AND THE FIRST WAS CAUSED BY ADDING A FEATURE.** `apply_typical_p` contains the SAME temperature-division line as `apply_min_p`, and its cut loop contains the SAME `cum += probs[idx];` as `apply_top_p`, so **two EXISTING mutations' one-line anchors became AMBIGUOUS** and the harness correctly refused to edit them -- correctly, because it edits ONE occurrence and which one it picked would be a coin flip. **The lesson generalises beyond this feature: adding a feature can INVALIDATE an existing mutation's anchor, and the failure is quiet** -- the harness reports a harness defect rather than a verdict, so a reader who skims the output could read "M21 MUT-NOOP/AMBIGUOUS" as "M21 is inert". It was not inert; the edit simply was not applied. **Check the anchor count after EVERY feature addition, not only after every mutation.** The second defect was a **backtick inside a double-quoted description**, which the shell treats as command substitution -- it silently truncated two descriptions and printed a syntax error. **Seven semantics are pinned (S15..S21)**, each a natural mistake: the log-probability is NEGATED in the distance; the sort is ASCENDING; the crossing token is KEPT; the entropy is over the PROBABILITY distribution with `0 log 0 = 0` and its SIGN is positive; a zero-probability token has INFINITE distance; `tau` is a mass in `[0, 1]`; and the input is never mutated and the shape is preserved.
 
 - **Statistical n-gram language model** (Kneser & Ney, "Three methods for the construction of language models for large scale text retrieval", Eurospeech 1995, 125-135; Witten & Bell, "The statistical basis of predictive word association", IEE Proc-B 138(4), 1991, 375-380; Chen & Goodman, "An empirical study of smoothing techniques for language modeling", COLING-99, 291-304 -- **all three PRE-arXiv, so NO arXiv ID is asserted**) — implemented in `include/nn/utils/ngram_lm.{h,cpp}`. A count-based n-gram LM over **integer token ids** (so it composes directly with this repo's own `utils/tokenizer.h` and `utils/bpe_tokenizer.h`), with **three smoothing schemes** over the same count tables: **Kneser-Ney** (the INTERPOLATED variant), **Witten-Bell** (reserved-mass, renormalized over the unseen set), and **absolute discounting with interpolation**; plus **Heaps' law** (`V(n) = K n^beta`, fitted by least squares in log-log space) and **Good-Turing** (`P_0 = N_1/N`, discounted count `c*_r = (r+1) N_{r+1}/N_r`). The API is `NGramLM(max_order, discount, vocab_size_hint)`, `train(corpus)`, `kn_prob` / `wb_prob` / `ad_prob` (with 1- and 2-token context overloads), `sequence_logprob`, `corpus_perplexity`, `heaps_fit`, `good_turing_p0` / `_discounted_count` / `_probability`, plus the count accessors (`unigram_count`, `bigram_count`, `trigram_count`, `context_type_count`, `continuation_count`). **The gap was measured, not assumed**: `grep -rinE 'ngram|n-gram|backoff|jelinek|stupid.?backoff|good.?turing|heaps|kenlm|kneser|katz|bigram|trigram|unigram' include/ tests/` returns **0 content hits** (matching lines printed, not filenames), and the idea was already on the queue's own VERIFIED-ABSENT list. It is NOT redundant with the tokenizers (text <-> ids, no probabilities), with `logit_processing` (reshapes a NEURAL NETWORK's logits) or with `losses.h` (cross-entropy against logits): nothing in the repo produced a STATISTICAL language model or a **perplexity** for a token sequence. **100/100 checks pass** (deterministic over three runs) + **oracle 85/85**; **18/18 mutations caught, 0 survived, 0 broken**; **ASan+UBSan CLEAN**; umbrella header compiles standalone; **zero new full-suite failures** (the aggregate run's only failure is the `test_neural_ode` entry already deferred in `NOT_FIXED.md`, identical to the pre-change baseline). **THE ORACLE CAUGHT SIX DEFECTS IN ITSELF**, the first two of which made the normalization checks **VACUOUS**: a double-wrapped tuple key made every context look unseen, so every distribution degenerated to the unigram -- which ALSO sums to one -- and the check passed while measuring nothing (every normalization case now asserts the context is SEEN first); an int key into a tuple-keyed counter made a "differs from the raw count" check compare 0.1579 against 0.0; a hand-arithmetic slip used `c(the)/N` where the closed form needed `c(quick)/N` (the implementation was right, the literal was wrong); an `R^2 > 0.99` threshold that was **provably unreachable** on a 25-token corpus (the best possible power-law fit scores 0.9888, so the threshold was a test bug, and the property that actually proves the fit machinery is that a SYNTHETIC power law fits with `R^2 == 1` exactly); a missing OOV class in the unseen set; and a wrong NLTK denominator (`(c3 - D)/c(BIGRAM context)`, not `/c(the)`). **TWO REAL C++ BUGS, BOTH ABOUT WHICH SLICE OF THE CONTEXT IS KEPT**: the backoff took the PREFIX of the context instead of the SUFFIX (a language model's context is a suffix of the history -- and a prefix and a suffix are the same shape and length, so no type or size check can see the difference), and the growth curve recorded only the new types instead of a point per token, so Heaps' law was fitted to a different curve. **ONE REAL COVERAGE GAP, FOUND BY THE MUTATION HARNESS AND INVISIBLE TO THE SUITE**: the "retraining replaces, not accumulates" test checked `num_bigrams()`, the number of **distinct keys**, and accumulating into the same map does not change the number of distinct keys -- so the "retraining accumulates" mutation SURVIVED a green suite; the test now asserts the **counts**, which is what doubles. **ONE HARNESS DEFECT** (the twenty-second of its class here): the first M13 assigned to a `const`, so the build failed and the harness reported MUT-BROKEN -- a build error is not a mutation verdict. The Witten-Bell unigram was cross-checked against **NLTK's `WittenBellProbDist`** to floating point, and the Kneser-Ney **variant difference** was measured rather than argued: NLTK implements the NON-INTERPOLATED form and the two differ by **0.2418** on the fixture's p(the-quick-brown), so the variant is pinned rather than accidental. Plan: `docs/plans/2026-10-22_ngram-language-model.md`. Registered in `include/nn/nn.h` (verified by a standalone `-fsyntax-only` compile of `#include "nn/nn.h"`) and in the Makefile (`build/test_ngram_lm` rule, `tests:` deps entry, `=== Running test_ngram_lm ===` echo in `run_tests`). Jelinek-Mercer, stupid backoff and Katz are named in the header as the smoothing variants deliberately NOT implemented.
 

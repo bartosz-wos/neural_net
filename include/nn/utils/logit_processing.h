@@ -13,6 +13,26 @@
 // LOGIT PROCESSING AND DECODING STRATEGIES
 // ============================================================================
 //
+// ADDED 2026-10-23: TYPICAL-P (locally typical sampling), `apply_typical_p`.
+//
+// THE PICK CAME FROM THIS FILE'S OWN OUT-OF-SCOPE NOTE, which said:
+//
+//     "Typical-p sampling (Meister et al.). The signature is reserved in the
+//      header so it is not silently reinvented later; it is NOT implemented,
+//      because it is not yet oracle-pinned."
+//
+// That is a shipped header naming one specific missing algorithm AND naming
+// the blocker. The oracle is what the blocker asked for, and it is
+// tests/typical_p_oracle.py.
+//
+// The implementation is Meister, Pimentel, Wiher, Cotterell, "Locally Typical
+// Sampling", TACL 11:102-121, 2023, arXiv:2202.00666, read from the paper's
+// own HTML rather than from memory. It follows the paper's Computational-
+// Complexity procedure, because Algorithm 5.3's stated optimization problem
+// carries a published erratum; the procedure is cross-checked against TWO
+// independent formulations (the greedy wording and HuggingFace's
+// `TypicalLogitsWarper`) in the oracle.
+//
 // THE GAP THIS FILLS, MEASURED NOT ASSUMED (2026-10-20):
 //
 //   grep -rinE 'nucleus|top.?p\b|top_p_sampl|temperature_sampl|typical.?sampl
