@@ -146,9 +146,6 @@
 // -----------------------------------------------------------------------------
 // OUT OF SCOPE FOR v1, stated so it cannot creep in:
 //   - Speculative / lookahead / contrastive decoding.
-//   - Typical-p sampling (Meister et al.). The signature is reserved in the
-//     header so it is not silently reinvented later; it is NOT implemented,
-//     because it is not yet oracle-pinned.
 //   - min-p applied to a live beam during beam search (a research variant, not
 //     the paper's algorithm).
 //   - Any change to layers/generative/pixelcnn.{h,cpp} or vq_vae.{h,cpp}. The
@@ -189,6 +186,32 @@ Tensor apply_top_p(const Tensor& logits, double p);
 // to the logits FIRST, so the floor is relative to the TEMPERATURE-adjusted
 // maximum. min_p == 0 is a no-op.
 Tensor apply_min_p(const Tensor& logits, double min_p, double temperature = 1.0);
+
+// Typical-p / locally typical sampling (S15..S21). Keeps the tokens whose
+// NEGATIVE LOG-PROBABILITY is closest to the model's own CONDITIONAL ENTROPY,
+// greedily until their cumulative probability mass reaches `tau`.
+//
+// The ordering key is `| -log p_i - H |` in nats, where `H = -sum p log p` is
+// the entropy of the (temperature-adjusted) distribution, and the tokens are
+// ordered ASCENDING by that distance -- the one CLOSEST to the entropy first.
+// The cut is the smallest such prefix whose cumulative mass reaches `tau`
+// (S17).
+//
+// THIS IS NOT A MASS CUT LIKE TOP-P. Top-p keeps the most PROBABLE tokens;
+// typical-p keeps the tokens whose INFORMATION CONTENT is closest to the
+// model's EXPECTED information content, so the argmax is not privileged and
+// can be excluded. On the pinned fixture (logits [0, -1, 0.5, -2]) the argmax
+// is token 2 while the token closest to the entropy is token 0, and the two
+// cuts keep different sets.
+//
+// `temperature` is applied to the LOGITS FIRST, so the entropy is that of the
+// temperature-adjusted distribution.
+//
+// tau is a probability mass in [0, 1]. tau == 1 keeps everything (a no-op);
+// tau == 0 keeps EXACTLY ONE token -- the closest to the entropy -- because
+// the greedy loop takes a token before it tests the threshold. tau outside
+// [0, 1] throws.
+Tensor apply_typical_p(const Tensor& logits, double tau, double temperature = 1.0);
 
 // ---------------------------------------------------------------------------
 // Penalising processors. `history` is the multiset of previously emitted token
@@ -240,6 +263,7 @@ public:
     LogitProcessorChain& add_top_k(size_t k);
     LogitProcessorChain& add_top_p(double p);
     LogitProcessorChain& add_min_p(double min_p, double temperature = 1.0);
+    LogitProcessorChain& add_typical_p(double tau, double temperature = 1.0);
     LogitProcessorChain& add_repetition_penalty(const std::vector<int>& history,
                                                 double penalty);
     LogitProcessorChain& add_frequency_penalty(const std::vector<int>& history,

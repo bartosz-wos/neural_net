@@ -192,6 +192,88 @@ Tensor apply_min_p(const Tensor& logits, double min_p, double temperature) {
 }
 
 // ===========================================================================
+// Typical-p / locally typical sampling (S15..S21)
+//
+// Meister, Pimentel, Wiher, Cotterell, "Locally Typical Sampling", TACL
+// 11:102-121, 2023, arXiv:2202.00666. The algorithm below is the paper's
+// Computational-Complexity procedure, which is the one the maintained
+// reference implementation (HuggingFace `TypicalLogitsWarper`) follows:
+//
+//   1. compute the conditional entropy                O(|V|)
+//   2. sort words by their absolute distance from H   O(|V| log |V|)
+//   3. greedily take words from that list until their cumulative probability
+//      exceeds tau                                    O(|V|)
+//
+// The paper's Algorithm 5.3 also states an OPTIMIZATION PROBLEM, but it
+// carries a published ERRATUM: that formulation "allows for solutions in
+// which continuations whose log-probabilities lie closest to the conditional
+// entropy are excluded from the set". The greedy procedure above is the
+// correct reading, and both formulations are cross-checked against each other
+// in tests/typical_p_oracle.py.
+// ===========================================================================
+Tensor apply_typical_p(const Tensor& logits, double tau, double temperature) {
+    if (tau < 0.0 || tau > 1.0) {
+        throw std::invalid_argument("apply_typical_p: tau must be in [0, 1]");
+    }
+    if (!(temperature > 0.0) || !std::isfinite(temperature)) {
+        throw std::invalid_argument(
+            "apply_typical_p: temperature must be finite and > 0");
+    }
+    std::vector<double> lg = to_vec(logits);
+    // The temperature acts on the LOGITS FIRST, so the entropy below is that
+    // of the temperature-adjusted distribution.
+    for (size_t j = 0; j < lg.size(); ++j) {
+        if (!std::isinf(lg[j])) lg[j] /= temperature;
+    }
+    std::vector<double> probs = probabilities(lg);
+
+    // S18: the conditional entropy, in NATS, over the PROBABILITY
+    // distribution. A zero probability contributes NOTHING -- `0 * log 0` is 0,
+    // not NaN, and letting it become NaN would poison the whole row.
+    double entropy = 0.0;
+    for (size_t j = 0; j < probs.size(); ++j) {
+        if (probs[j] > 0.0) entropy -= probs[j] * std::log(probs[j]);
+    }
+
+    // S15: the ordering key is the distance between the token's NEGATIVE
+    // LOG-PROBABILITY and the entropy.
+    // S20: a zero-probability token has an INFINITE distance, so it is never
+    // kept -- sorting it first would let a token with no mass at all survive.
+    std::vector<double> dist(probs.size());
+    for (size_t j = 0; j < probs.size(); ++j) {
+        dist[j] = (probs[j] > 0.0)
+                      ? std::fabs(-std::log(probs[j]) - entropy)
+                      : std::numeric_limits<double>::infinity();
+    }
+
+    // S16: ASCENDING by distance -- the token CLOSEST to the entropy first.
+    // Sorting descending keeps the LEAST typical tokens, which is the exact
+    // opposite of the algorithm and still yields a plausible non-empty set.
+    std::vector<size_t> order(probs.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::stable_sort(order.begin(), order.end(),
+                     [&dist](size_t a, size_t b) { return dist[a] < dist[b]; });
+
+    Tensor out = like(logits);
+    for (size_t j = 0; j < probs.size(); ++j) set_at(out, j, kNegInf);
+
+    double cum = 0.0;
+    for (size_t i = 0; i < order.size(); ++i) {
+        size_t idx = order[i];
+        set_at(out, idx, get_at(logits, idx));
+        cum += probs[idx];
+        // S17: `>=`, not `>`. The token that REACHES the threshold is kept.
+        //
+        // NOTE that the loop takes a token BEFORE it tests the threshold, so
+        // tau == 0 keeps EXACTLY ONE token -- the closest to the entropy. It
+        // is not "keep everything" and not "keep nothing"; a `tau <= 0` early
+        // return that preserved the input would be a different algorithm.
+        if (cum >= tau) break;
+    }
+    return out;
+}
+
+// ===========================================================================
 // The three penalties (S5, S6)
 // ===========================================================================
 namespace {
@@ -372,6 +454,12 @@ LogitProcessorChain& LogitProcessorChain::add_top_p(double p) {
 LogitProcessorChain& LogitProcessorChain::add_min_p(double min_p, double temperature) {
     processors_.push_back(
         [min_p, temperature](const Tensor& x) { return apply_min_p(x, min_p, temperature); });
+    return *this;
+}
+
+LogitProcessorChain& LogitProcessorChain::add_typical_p(double tau, double temperature) {
+    processors_.push_back(
+        [tau, temperature](const Tensor& x) { return apply_typical_p(x, tau, temperature); });
     return *this;
 }
 
