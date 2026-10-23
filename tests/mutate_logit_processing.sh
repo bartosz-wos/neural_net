@@ -417,8 +417,89 @@ run_mutation M20 cpp \
 # monotonicity of a number, not the behaviour. The fixture below asserts exact
 # survivor SETS at T = 0.5, 1.0 and 4.0, which is what killed it.
 run_mutation M21 cpp \
- "$(printf 'if (!std::isinf(lg[j])) lg[j] /= temperature;\x1f')" \
+ "$(printf 'std::vector<double> lg = to_vec(logits);\n    for (size_t j = 0; j < lg.size(); ++j) {\n        if (!std::isinf(lg[j])) lg[j] /= temperature;\n    }\n    std::vector<double> probs = probabilities(lg);\n\n    // The floor is min_p * p_max\x1fstd::vector<double> lg = to_vec(logits);\n    std::vector<double> probs = probabilities(lg);\n\n    // The floor is min_p * p_max')" \
  "min-p ignores its temperature argument"
+
+# ---------------------------------------------------------------------------
+# HARNESS DEFECT FOUND BY ADDING A FEATURE (the twenty-second instance of
+# this class, and the first one caused by a NEW feature rather than by a new
+# mutation).
+#
+# The anchor `if (!std::isinf(lg[j])) lg[j] /= temperature;` matched ONCE
+# before typical-p was added. `apply_typical_p` contains THE SAME LINE, so the
+# count is now TWO and the harness REFUSES to edit an ambiguous anchor --
+# correctly: it would have edited whichever it found first, which is not a
+# verdict but a coin flip.
+#
+# The fix is a three-part anchor that is unique by construction: the closing
+# brace of the loop, the `probabilities(lg)` call, and the comment that
+# follows it. The replacement keeps the first two parts and drops the third,
+# so the MUTATED min-p skips its temperature division while typical-p keeps
+# its own. The MUTATION IS STILL THE MUTATION.
+#
+# THE LESSON, which generalises: adding a feature can INVALIDATE an existing
+# mutation's anchor, and the failure is silent in the sense that the harness
+# reports a harness defect rather than a verdict -- so a reader who skims the
+# output would see "M21 MUT-NOOP/AMBIGUOUS" and might read it as "M21 is
+# inert". It is not inert; the edit simply was not applied. Check the anchor
+# count after EVERY feature addition, not only after every mutation.
+# ---------------------------------------------------------------------------
+
+# ============================================================================
+# TYPICAL-P (S15..S21) -- the mutations added with the feature.
+#
+# M23 IS THE HEADLINE. The sort direction is the single most consequential
+# decision in the whole algorithm, and a SURVIVOR-COUNT test cannot see it: the
+# descending variant still returns a non-empty set of a plausible size, so the
+# count looks right and only the SET is wrong. The suite pins exact survivor
+# sets, which is what kills it. This is the same lesson the repo has already
+# learned twice -- the S8 chain check "compared two hand-composed calls" and
+# the min-p check "asserted an inequality, which holds whether or not the
+# temperature is honoured at all".
+# ============================================================================
+run_mutation M22 cpp \
+ "$(printf '? std::fabs(-std::log(probs[j]) - entropy)\x1f? std::fabs(std::log(probs[j]) - entropy)')" \
+ "typical-p: the log-probability is NOT negated in the distance (S15)"
+
+run_mutation M23 cpp \
+ "$(printf 'return dist[a] < dist[b]; });\x1freturn dist[a] > dist[b]; });')" \
+ "typical-p: the sort is DESCENDING by distance -- the LEAST typical first (S16)"
+
+run_mutation M24 cpp \
+ "$(printf 'if (cum >= tau) break;\x1fif (cum > tau) break;')" \
+ "typical-p: the cut is `>` -- the crossing token is DROPPED (S17)"
+
+run_mutation M25 cpp \
+ "$(printf 'if (probs[j] > 0.0) entropy -= probs[j] * std::log(probs[j]);\x1fif (probs[j] > 0.0) entropy += probs[j] * std::log(probs[j]);')" \
+ "typical-p: the entropy's SIGN is flipped (S18)"
+
+run_mutation M26 cpp \
+ "$(printf 'if (probs[j] > 0.0) entropy -= probs[j] * std::log(probs[j]);\x1fentropy -= probs[j] * std::log(probs[j]);')" \
+ "typical-p: the zero-probability guard is dropped from the entropy sum (S18)"
+
+run_mutation M27 cpp \
+ "$(printf ': std::numeric_limits<double>::infinity();\x1f: 0.0;')" \
+ "typical-p: a zero-probability token gets distance 0 instead of infinity (S20)"
+
+# The typical-p TEMPERATURE is a SEPARATE code path from min-p's, so it gets
+# its own mutation rather than reusing M21. The anchor is the two comment
+# lines above the loop, which are unique to apply_typical_p.
+run_mutation M29 cpp \
+ "$(printf '    // The temperature acts on the LOGITS FIRST, so the entropy below is that\n    // of the temperature-adjusted distribution.\n    for (size_t j = 0; j < lg.size(); ++j) {\n        if (!std::isinf(lg[j])) lg[j] /= temperature;\n    }\x1f    // The temperature acts on the LOGITS FIRST, so the entropy below is that\n    // of the temperature-adjusted distribution.')" \
+ "typical-p: ignores its temperature argument (the entropy is then measured on \
+the UNADJUSTED distribution)"
+
+# The temperature VALIDATION guard. A plausible slip: dropping the finiteness
+# check and letting a NaN temperature through.
+run_mutation M30 cpp \
+ "$(printf 'if (!(temperature > 0.0) || !std::isfinite(temperature)) {\n        throw std::invalid_argument(\n            \"apply_typical_p: temperature must be finite and > 0\");\n    }\x1fif (!(temperature > 0.0)) {\n        throw std::invalid_argument(\n            \"apply_typical_p: temperature must be finite and > 0\");\n    }')" \
+ "typical-p: the temperature's FINITENESS check is dropped (a NaN temperature \
+is accepted)"
+
+# The tau RANGE guard.
+run_mutation M31 cpp \
+ "$(printf 'if (tau < 0.0 || tau > 1.0) {\n        throw std::invalid_argument(\"apply_typical_p: tau must be in [0, 1]\");\n    }\x1fif (tau < 0.0 || tau > 1.5) {\n        throw std::invalid_argument(\"apply_typical_p: tau must be in [0, 1]\");\n    }')" \
+ "typical-p: the tau range guard is loosened (tau = 1.25 is wrongly accepted)"
 
 # ---------------------------------------------------------------------------
 echo ""
