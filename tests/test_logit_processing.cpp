@@ -41,6 +41,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -1041,6 +1042,175 @@ static void test_autoregressive_loop() {
     CHECK(same, "16f the same seed reproduces the same generated sequence");
 }
 
+// ===========================================================================
+// Test 17: TYPICAL-P (locally typical sampling) -- S15..S21
+//
+// Meister, Pimentel, Wiher, Cotterell, "Locally Typical Sampling", TACL
+// 11:102-121, 2023, arXiv:2202.00666. The algorithm was read from the paper's
+// own HTML, not from memory, and the expectation values below are ORACLE-
+// DERIVED from tests/typical_p_oracle.py (numpy float64).
+//
+// THE ALGORITHM. A token is kept when its NEGATIVE LOG-PROBABILITY is close to
+// the model's own CONDITIONAL ENTROPY:
+//     | -log p_i - H |  where  H = -sum p log p
+// Tokens are ordered ASCENDING by that distance -- the CLOSEST to the entropy
+// first -- and the greedy prefix whose cumulative mass reaches tau is kept.
+//
+// THE FIXTURE IS CHOSEN SO THE ALGORITHM IS VISIBLY NOT A MASS CUT. On
+// logits [0.0, -1.0, 0.5, -2.0] the ARGMAX is token 2 but the token closest
+// to the entropy is token 0. A top-p cut keeps token 2; the typical cut keeps
+// token 0. A test that only checked a survivor COUNT would pass an
+// implementation that simply did top-p, so every check here pins the exact
+// SURVIVOR SET.
+//
+// The S17 boundary fixture is the DYADIC two-token uniform [0.5, 0.5], whose
+// cumulative mass lands EXACTLY on 0.5 -- the same lesson as the nucleus
+// fixture: a boundary that is only correct to within a rounding error does not
+// discriminate anything.
+// ===========================================================================
+static void test_typical_p_truncation() {
+    banner("17 typical-p (locally typical sampling)");
+
+    Tensor lg = row({0.0, -1.0, 0.5, -2.0});
+
+    // The oracle's pinned distribution for this fixture.
+    Tensor p = softmax(lg);
+    CHECK(std::fabs(at(p, 0) - 0.31726532567666477) < 1e-15 &&
+              std::fabs(at(p, 1) - 0.11671539071300707) < 1e-15 &&
+              std::fabs(at(p, 2) - 0.5230820908987207) < 1e-15 &&
+              std::fabs(at(p, 3) - 0.0429371927116076) < 1e-15,
+          "17a the fixture's softmax matches the oracle's pinned probabilities");
+
+    // S15/S16: the token closest to the entropy is token 0, NOT the argmax.
+    // tau = 0.2 keeps {0}; a top-p cut at the same tau keeps {2}.
+    Tensor t2 = apply_typical_p(lg, 0.2);
+    CHECK(same_set(survivors(t2), {0}),
+          "17b tau=0.2 keeps {0} -- the token closest to the ENTROPY");
+    CHECK(same_set(survivors(apply_top_p(lg, 0.2)), {2}),
+          "17c the top-p cut on the same fixture keeps {2} -- typical-p is NOT top-p");
+
+    // The full survivor table, oracle-pinned.
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.3)), {0}),
+          "17d tau=0.3 keeps {0}");
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.5)), {0, 2}),
+          "17e tau=0.5 keeps {0,2}");
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.7)), {0, 2}),
+          "17f tau=0.7 keeps {0,2}");
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.9)), {0, 1, 2}),
+          "17g tau=0.9 keeps {0,1,2}");
+
+    // S17: the crossing token is KEPT. The dyadic fixture's cumulative mass
+    // reaches EXACTLY 0.5, so `>=` keeps ONE token and `>` keeps TWO.
+    Tensor dy = row({0.0, 0.0});
+    Tensor dp = softmax(dy);
+    CHECK(at(dp, 0) == 0.5 && at(dp, 1) == 0.5,
+          "17h the dyadic fixture is EXACTLY [0.5, 0.5]");
+    CHECK(same_set(survivors(apply_typical_p(dy, 0.5)), {0}),
+          "17i tau=0.5 on the exact boundary keeps ONE token (`>=`, not `>`)");
+    CHECK(same_set(survivors(apply_typical_p(dy, 0.75)), {0, 1}),
+          "17j tau=0.75 keeps both (the mass passes 0.5 and reaches 1.0)");
+
+    // S19: the tau boundaries. tau = 0 keeps EXACTLY ONE token -- the closest
+    // to the entropy -- because the greedy loop takes a token before it tests
+    // the threshold. It is NOT "keep everything" and NOT "keep nothing".
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.0)), {0}),
+          "17k tau=0 keeps EXACTLY ONE token (the closest to the entropy)");
+    CHECK(same_set(survivors(apply_typical_p(lg, 1.0)), {0, 1, 2, 3}),
+          "17l tau=1 keeps EVERY token (a no-op)");
+
+    // S19: tau out of range throws, with a DISTINCT message.
+    bool threw = false;
+    try {
+        apply_typical_p(lg, 1.5);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw, "17m tau > 1 throws");
+    threw = false;
+    try {
+        apply_typical_p(lg, -0.1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw, "17n tau < 0 throws");
+    threw = false;
+    try {
+        apply_typical_p(lg, 0.5, 0.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw, "17o a non-positive temperature throws");
+
+    // S18: a zero-probability token (a -inf logit) must not make the entropy
+    // NaN, and must never be kept. `0 * log 0` is 0, not NaN.
+    Tensor zl = row({0.0, -std::numeric_limits<double>::infinity(), -1.0});
+    Tensor zp = softmax(zl);
+    CHECK(at(zp, 1) == 0.0, "17p the -inf logit has probability exactly 0");
+    Tensor zt = apply_typical_p(zl, 0.9);
+    bool any_nan = false;
+    for (size_t j = 0; j < zt.cols; ++j)
+        if (is_nan(at(zt, j))) any_nan = true;
+    CHECK(!any_nan, "17q the output is not NaN when a token has probability 0");
+    CHECK(same_set(survivors(zt), {0, 2}),
+          "17r the zero-probability token is NEVER kept");
+
+    // S18: the entropy's SIGN. A sign flip is a plausible slip and a
+    // magnitude-only check cannot see it, so the direction is pinned: the
+    // typical set must contain the token CLOSEST TO THE ENTROPY, and if the
+    // entropy's sign were flipped the ordering would reverse.
+    // On this fixture the distance ordering ascending is {0, 2, 1, 3}; with a
+    // negated entropy it would be {3, 1, 2, 0} -- so the tau=0.2 survivor
+    // would be {3} instead of {0}.
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.2)), {0}),
+          "17s the entropy's sign is right (a flipped entropy keeps {3}, not {0})");
+
+    // S16: the sort is ASCENDING by distance. The descending variant keeps
+    // {1,2,3} at tau=0.2 -- the LEAST typical tokens. The oracle measured
+    // that difference; this pins it.
+    // (Implied by 17b/17e, and stated here so the property is named.)
+
+    // S21: the input is NEVER mutated, and the shape is preserved.
+    Tensor keep = row({0.0, -1.0, 0.5, -2.0});
+    Tensor keep_copy = keep.clone();
+    Tensor out = apply_typical_p(keep, 0.5);
+    bool unchanged = true;
+    for (size_t j = 0; j < keep.cols; ++j)
+        if (at(keep, j) != at(keep_copy, j)) unchanged = false;
+    CHECK(unchanged, "17t the input tensor is not mutated");
+    CHECK(out.rows == 1 && out.cols == 4, "17u the shape is preserved");
+
+    // S21: a (V, 1) row works too, and the survivor set is the same.
+    Tensor col(4, 1);
+    for (size_t j = 0; j < 4; ++j) col(j, 0) = at(lg, j);
+    Tensor cout = apply_typical_p(col, 0.5);
+    std::vector<int> csurv;
+    for (size_t j = 0; j < 4; ++j)
+        if (!is_neg_inf(cout(j, 0))) csurv.push_back(static_cast<int>(j));
+    CHECK(same_set(csurv, {0, 2}), "17v a (V,1) column row gives the same survivors");
+
+    // The TEMPERATURE acts on the LOGITS FIRST, so the entropy is that of the
+    // temperature-adjusted distribution. Oracle-pinned: T=4 keeps {0,1} at
+    // tau=0.5, T=0.5 keeps {2}.
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.5, 4.0)), {0, 1}),
+          "17w temperature=4 keeps {0,1} at tau=0.5");
+    CHECK(same_set(survivors(apply_typical_p(lg, 0.5, 0.5)), {2}),
+          "17x temperature=0.5 keeps {2} at tau=0.5 -- the entropy is measured "
+          "on the ADJUSTED distribution");
+
+    // The chain: the order matters (the repo's S8 contract, extended). The
+    // oracle measured that typical->top-p gives {0} and top-p->typical gives
+    // {2} at tau=0.3 / p=0.5.
+    LogitProcessorChain c1;
+    c1.add_typical_p(0.3).add_top_p(0.5);
+    LogitProcessorChain c2;
+    c2.add_top_p(0.5).add_typical_p(0.3);
+    std::vector<int> s1 = survivors(c1.apply(lg));
+    std::vector<int> s2 = survivors(c2.apply(lg));
+    CHECK(same_set(s1, {0}), "17y typical-p then top-p keeps {0}");
+    CHECK(same_set(s2, {2}), "17z top-p then typical-p keeps {2} -- the chain "
+                             "order MATTERS");
+}
+
 int main() {
     printf("=== Logit Processing / Decoding Tests ===\n");
 
@@ -1060,6 +1230,7 @@ int main() {
     printf("\n[14] beam search\n");                    test_beam_length_penalty_only_on_finished();
     printf("\n[15] eod is not eos\n");                 test_eod_is_not_eos();
     printf("\n[16] autoregressive loop\n");            test_autoregressive_loop();
+    printf("\n[17] typical-p\n");                      test_typical_p_truncation();
 
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed ? 1 : 0;
