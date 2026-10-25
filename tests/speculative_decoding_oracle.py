@@ -5,13 +5,14 @@ DECODING, the draft/target rejection-sampling scheme added to
 include/nn/utils/logit_processing.{h,cpp}.
 
 RUN THIS BEFORE WRITING ANY C++. Every numeric expectation in
-tests/test_speculative_decoding_oracle.py's C++ sibling
-(tests/test_speculative_decoding.cpp) is copied from this file's output.
+tests/test_speculative_decoding.cpp is copied from this file's output.
 
-THE ALGORITHM, AS THE PAPER'S ALGORITHM 1 STATES IT. Leviathan, Kalman,
-Matias, "Fast Inference from Transformers via Speculative Decoding", ICML
-2023, arXiv:2211.17192. Transcribed VERBATIM from the paper's own HTML
-(https://arxiv.org/html/2211.17192), not from memory:
+===============================================================================
+THE ALGORITHM, AS THE PAPER'S ALGORITHM 1 STATES IT
+===============================================================================
+Leviathan, Kalman, Matias, "Fast Inference from Transformers via Speculative
+Decoding", ICML 2023, arXiv:2211.17192. Transcribed VERBATIM from the paper's
+own HTML (https://arxiv.org/html/2211.17192), not from memory:
 
     Algorithm 1  SpeculativeDecodingStep
       Inputs: M_p, M_q, prefix
@@ -34,65 +35,59 @@ Matias, "Fast Inference from Transformers via Speculative Decoding", ICML
         t ~ p'(x)
         return prefix + [x_1, ..., x_n, t]
 
-THE SEMANTICS PINNED HERE ARE SP1..SP12, to match the header's comment block
-and docs/plans/2026-10-25_speculative-decoding.md.
+===============================================================================
+THE MODEL, EXACTLY AS THE C++ API SEES IT
+===============================================================================
+A model is a function of the PREFIX: it receives the token ids generated so
+far and returns a row of LOGITS. This oracle mirrors that API exactly, so the
+C++ test's expected values can be copied from here verbatim.
+
+    model(prefix) -> (1, V) LOGITS
+
+The oracle's models return PROBABILITIES (which is equivalent -- the C++
+converts logits to probabilities with a max-subtracting softmax, and the
+fixtures below are chosen so the conversion is exact for the values that
+matter; the C++ test uses LOGITS and the oracle's PROBABILITY tables are
+converted back with `probs_to_logits`).
+
+THE NUMBER OF CALLS. The draft is called GAMMA times (the paper's loop runs
+i = 1..gamma, producing q_1..q_gamma) and the target is called GAMMA+1 times
+(the paper's parallel line produces p_1..p_{gamma+1}). The residual needs
+q_{n+1} with n+1 <= gamma, so it is always among the ALREADY-COMPUTED draft
+rows -- the draft is never called a (gamma+1)-th time. This is the paper's
+cost model ("gamma times for the approximation model and gamma+1 parallel runs
+of M_p"), and it is pinned by the C++ test's call counters.
 
 ===============================================================================
-WHAT THIS ORACLE CAUGHT IN ITS OWN FIRST DRAFT (2026-10-25)
+THE UNIFORM DRAWS ARE EXPLICIT
 ===============================================================================
-The first draft of this file asserted a CLAMP on the acceptance ratio -- that
-`min(1, p_i(x_i)/q_i(x_i))` is REQUIRED by the mathematics -- and built a
-"no-clamp foil" to prove it. THE FOIL WAS VACUOUS: it produced IDENTICAL output
-to the correct implementation on every trial.
+The step consumes 2*gamma+1 uniform draws, in this order:
 
-The reason is a fact about the ALGORITHM, not about the implementation:
+    us[0      .. gamma-1  ]  the draws that SELECT the guesses (from q_1..q_gamma)
+    us[gamma  .. 2*gamma-1]  the acceptance draws r_1..r_gamma
+    us[2*gamma]            the draw that selects the final token
 
-    accept iff  r <= p/q ,   r ~ U[0,1)
-
-When p > q the ratio EXCEEDS 1, and then `r <= ratio` is satisfied by every
-r in [0,1) AUTOMATICALLY -- which is precisely the correct behaviour ("the
-target likes this token at least as much as the draft did, so accept it").
-So the clamp is INERT when the acceptance rule is written as a THRESHOLD
-comparison, and no fixture can ever discriminate it.
-
-This is the same shape as the repo's recorded "measured-inert mutation" cases
-(see the TDD skill's "an unexplained survivor is NOT a gap until a probe has
-measured whether it can change anything"): the clamp is DEFENSIVE, it
-documents that the ratio is a probability, and it must be MEASURED as inert
-rather than asserted as load-bearing. The C++ harness therefore scores the
-drop-the-clamp mutation with an INVERTED verdict -- it fails if the mutation
-ever starts to matter.
-
-WHAT IS ACTUALLY LOAD-BEARING AT THE ACCEPTANCE STEP, and is measured here:
-
-  (a) THE RATIO ITSELF must be `p/q` of PROBABILITIES. A rule that accepts
-      DETERMINISTICALLY on `p >= q` is a different algorithm, and it is the
-      natural mistake -- see SP12 below.
-  (b) THE POSITION INDEX: `p_i` and `q_i` are the two models' distributions
-      at the SAME position.
-  (c) THE RESIDUAL INDEX: `p_{n+1}`/`q_{n+1}`, not `p_n`/`q_n`.
+They are explicit because the C++ API mirrors this: `speculative_decode_step`
+draws them from an `std::mt19937`, and `speculative_decode_step_with_uniforms`
+takes them as a vector. The second form exists so the acceptance BOUNDARY can
+be tested -- see section 9(b).
 
 ===============================================================================
-TWO INDEPENDENT FORMULATIONS OF THE STEP, CROSS-CHECKED TOKEN-FOR-TOKEN
+TWO INDEPENDENT FORMULATIONS, CROSS-CHECKED TOKEN-FOR-TOKEN
 ===============================================================================
 One formulation agreeing with itself proves nothing. The step is implemented
-here TWICE, in structurally different code paths, and they are required to
-produce IDENTICAL token sequences given the same guesses and the same uniform
-draws:
+here TWICE, in structurally different code paths, and they must produce
+IDENTICAL token sequences for the same models, prefix and uniforms:
 
   * `step_A` -- the paper's Algorithm 1, transcribed literally: compute the
     acceptance FLAGS for all gamma guesses, derive the index n, then build
-    ONE distribution and draw the correction token from it.
+    ONE distribution and draw the final token from it.
   * `step_B` -- the DEFINITIONAL form, from the paper's correctness proof
     (Section 2.3, Appendix A.1): "at each position, draw from q, accept with
     probability min(1, p/q), and on a rejection draw the correction from the
     residual and STOP". It never computes an index n.
 
 They share no code and no control flow, so their agreement is evidence.
-
-The uniform draws are passed in EXPLICITLY (as `us`) rather than being drawn
-inside, precisely so the two formulations can be compared token-for-token
-instead of only in distribution.
 
 Run with:
 
@@ -119,6 +114,13 @@ def softmax(logits: np.ndarray) -> np.ndarray:
     return e / np.sum(e)
 
 
+def probs_to_logits(p) -> np.ndarray:
+    """The logits whose max-subtracting softmax is `p`. Used so the C++ test
+    can supply LOGITS and still match the oracle's PROBABILITY tables."""
+    arr = np.asarray(p, dtype=np.float64)
+    return np.log(arr)
+
+
 def norm(v: np.ndarray) -> np.ndarray:
     """Normalise to sum to 1. A zero sum is a caller error, not a silent NaN."""
     s = float(np.sum(v))
@@ -134,9 +136,9 @@ def residual(p: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 
 def acceptance_prob(p_at: float, q_at: float) -> float:
-    """The acceptance probability min(1, p/q). See the header note: the clamp
-    is DEFENSIVE -- it is inert when the rule is written as a threshold
-    comparison, and it is kept so the code says what it means."""
+    """The acceptance probability min(1, p/q). See section 9(a): the clamp is
+    DEFENSIVE -- measured inert as a threshold comparison, and kept so the
+    code says what it means."""
     if q_at <= 0.0:
         # The guess was DRAWN from q, so q(guess) > 0 by construction. This
         # branch is unreachable in the real algorithm; it exists so that a
@@ -146,7 +148,13 @@ def acceptance_prob(p_at: float, q_at: float) -> float:
 
 
 def draw_from(probs: np.ndarray, u: float) -> int:
-    """Inverse-CDF draw from a probability row, given u in [0,1)."""
+    """Inverse-CDF draw from a probability row, given u in [0,1).
+
+    The convention matches the repo's existing `sample_from_logits`: the
+    cumulative sum is compared with `u < acc` (STRICT), and the LAST index is
+    the fallback. It is pinned here because the C++ test's expected tokens
+    depend on it.
+    """
     acc = 0.0
     for i, p in enumerate(probs):
         acc += float(p)
@@ -156,49 +164,71 @@ def draw_from(probs: np.ndarray, u: float) -> int:
 
 
 # ===========================================================================
+# A MODEL is a function of the prefix length. The C++ API passes the prefix
+# ITSELF; the fixtures below only need to vary by LENGTH, so the oracle's
+# models are indexed by length. (A C++ callback sees the ids too, and the
+# test's callbacks use the ids where it matters.)
+# ===========================================================================
+def make_model(rows_by_pos, start_len=0):
+    """rows_by_pos[i] is the probability row at position i (0-based)."""
+    def model(prefix_len):
+        pos = prefix_len - start_len
+        if pos < 0 or pos >= len(rows_by_pos):
+            raise IndexError(f"position {pos} out of range")
+        return np.asarray(rows_by_pos[pos], dtype=np.float64)
+    return model
+
+
+# ===========================================================================
 # FORMULATION A -- the paper's Algorithm 1, transcribed literally.
 # ===========================================================================
-def step_A(p_rows, q_rows, guesses, us):
+def step_A(model_p, model_q, prefix_len, gamma, us):
     """
-    p_rows : list of length gamma+1 -- the TARGET model's probability row at
-             each of the gamma+1 positions.
-    q_rows : list of length gamma+1 -- the DRAFT model's probability row at
-             each of the gamma+1 positions.
-    guesses : the gamma tokens the draft proposed (drawn from q_1..q_gamma).
-    us      : gamma+1 uniform draws. us[0..gamma-1] are the acceptance draws
-              r_i; us[gamma] is the draw for the final token.
-
     Returns (tokens, n, rejected, accepted_flags).
+    `us` has 2*gamma+1 entries; see the module docstring for the layout.
     """
-    gamma = len(q_rows) - 1
-    assert len(p_rows) == gamma + 1
-    assert len(guesses) == gamma
-    assert len(us) == gamma + 1
+    assert len(us) == 2 * gamma + 1
+
+    # --- Sample gamma guesses from the draft, autoregressively. -----------
+    # The draft's row at each position is RECORDED, because the residual
+    # needs q_{n+1} and that row must be the one that PRODUCED the guess.
+    q_rows = []
+    guesses = []
+    cur_len = prefix_len
+    for i in range(gamma):
+        qi = model_q(cur_len)
+        q_rows.append(qi)
+        x = draw_from(qi, us[i])
+        guesses.append(x)
+        cur_len += 1
+
+    # --- Run the target in parallel: p_1..p_{gamma+1}. ----------------------
+    p_rows = []
+    for i in range(gamma + 1):
+        p_rows.append(model_p(prefix_len + i))
 
     # --- Determine the number of accepted guesses n. ------------------------
-    # The paper: n <- min({i-1 | 1<=i<=gamma, r_i > p_i(x)/q_i(x)} union {gamma})
     accepted_flags = []
     for i in range(gamma):
         pi = float(p_rows[i][guesses[i]])
         qi = float(q_rows[i][guesses[i]])
-        accepted_flags.append(us[i] <= acceptance_prob(pi, qi))
+        accepted_flags.append(us[gamma + i] <= acceptance_prob(pi, qi))
 
     # SP4: n is the number of LEADING accepted guesses. The first rejection
     # ends the run -- everything after it is discarded, because the correction
     # token replaces the position where the rejection happened.
     n = gamma
-    first_rejection = -1
     for i in range(gamma):
         if not accepted_flags[i]:
             n = i            # 0-based: the guess at index i is rejected
-            first_rejection = i
             break
 
     rejected = (n < gamma)
 
     # --- Adjust the distribution from M_p if needed. ------------------------
     if rejected:
-        # SP6: the residual at index n+1 (1-based) == index n (0-based).
+        # SP6: the residual at index n+1 (1-based) == index n (0-based). Both
+        # rows are among the ones already computed.
         p_prime = residual(p_rows[n], q_rows[n])
     else:
         # SP7: when every guess is accepted, the token is drawn from
@@ -208,7 +238,7 @@ def step_A(p_rows, q_rows, guesses, us):
         p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
 
     # --- Return one token from M_p, and n tokens from M_q. ------------------
-    t = draw_from(p_prime, us[gamma])
+    t = draw_from(p_prime, us[2 * gamma])
 
     # SP9: exactly n+1 tokens -- the n accepted guesses plus one.
     tokens = [guesses[i] for i in range(n)] + [t]
@@ -217,35 +247,30 @@ def step_A(p_rows, q_rows, guesses, us):
 
 # ===========================================================================
 # FORMULATION B -- the definitional form, from the correctness proof.
-#
-# "at each position, draw from q; accept the draw with probability
-#  min(1, p/q); on a rejection, draw the correction from the residual and
-#  STOP".
-#
-# It never computes an index n and never computes a threshold list.
 # ===========================================================================
-def step_B(p_rows, q_rows, guesses, us):
-    """
-    Same inputs as step_A. Returns (tokens, n, rejected, None).
-    """
-    gamma = len(q_rows) - 1
+def step_B(model_p, model_q, prefix_len, gamma, us):
+    """Same inputs as step_A. Returns (tokens, n, rejected, None)."""
+    assert len(us) == 2 * gamma + 1
+
     tokens = []
     for i in range(gamma):
-        pi_row = np.asarray(p_rows[i], dtype=np.float64)
-        qi_row = np.asarray(q_rows[i], dtype=np.float64)
-        x = guesses[i]
+        pi_row = np.asarray(model_p(prefix_len + i), dtype=np.float64)
+        qi_row = np.asarray(model_q(prefix_len + i), dtype=np.float64)
+        # The guess is drawn from q_i with the SAME uniform the algorithm
+        # would have used.
+        x = draw_from(qi_row, us[i])
         ratio = acceptance_prob(float(pi_row[x]), float(qi_row[x]))
-        if us[i] <= ratio:
+        if us[gamma + i] <= ratio:
             tokens.append(x)
             continue
         # Rejected: the correction is drawn from the residual AT THIS
         # POSITION, and the run stops here.
         r = residual(pi_row, qi_row)
-        tokens.append(draw_from(r, us[gamma]))
+        tokens.append(draw_from(r, us[2 * gamma]))
         return tokens, len(tokens) - 1, True, None
     # Every guess was accepted: the bonus token comes from p_{gamma+1}.
-    bonus = np.asarray(p_rows[gamma], dtype=np.float64)
-    tokens.append(draw_from(bonus, us[gamma]))
+    bonus = np.asarray(model_p(prefix_len + gamma), dtype=np.float64)
+    tokens.append(draw_from(bonus, us[2 * gamma]))
     return tokens, gamma, False, None
 
 
@@ -253,147 +278,152 @@ def step_B(p_rows, q_rows, guesses, us):
 # THE FOILS -- each is a natural mistake. Each must DIFFER from the correct
 # behaviour on a fixture that can separate them.
 # ===========================================================================
-def foil_RESIDUAL_ALWAYS(p_rows, q_rows, guesses, us):
-    """SP7 foil: the residual is used even when n == gamma."""
-    gamma = len(q_rows) - 1
+def _flags_and_n(model_p, model_q, prefix_len, gamma, us, strict=False):
+    """The shared preamble of the foils: the guesses, the flags and n."""
+    q_rows = []
+    guesses = []
+    cur_len = prefix_len
+    for i in range(gamma):
+        qi = np.asarray(model_q(cur_len), dtype=np.float64)
+        q_rows.append(qi)
+        guesses.append(draw_from(qi, us[i]))
+        cur_len += 1
+    p_rows = [np.asarray(model_p(prefix_len + i), dtype=np.float64)
+              for i in range(gamma + 1)]
     flags = []
     for i in range(gamma):
         pi = float(p_rows[i][guesses[i]])
         qi = float(q_rows[i][guesses[i]])
-        flags.append(us[i] <= acceptance_prob(pi, qi))
+        ratio = acceptance_prob(pi, qi)
+        if strict:
+            flags.append(us[gamma + i] < ratio)
+        else:
+            flags.append(us[gamma + i] <= ratio)
     n = gamma
     for i in range(gamma):
         if not flags[i]:
             n = i
             break
+    return p_rows, q_rows, guesses, flags, n
+
+
+def foil_RESIDUAL_ALWAYS(model_p, model_q, prefix_len, gamma, us):
+    """SP7 foil: the residual is used even when n == gamma."""
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
     # <-- residual ALWAYS, even when nothing was rejected.
     p_prime = residual(p_rows[n], q_rows[n])
-    t = draw_from(p_prime, us[gamma])
-    return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n)] + [t], n, (n < gamma), None
 
 
-def foil_WRONG_INDEX(p_rows, q_rows, guesses, us):
+def foil_WRONG_INDEX(model_p, model_q, prefix_len, gamma, us):
     """SP6 foil: the residual is built at index n-1 instead of n."""
-    gamma = len(q_rows) - 1
-    flags = []
-    for i in range(gamma):
-        pi = float(p_rows[i][guesses[i]])
-        qi = float(q_rows[i][guesses[i]])
-        flags.append(us[i] <= acceptance_prob(pi, qi))
-    n = gamma
-    for i in range(gamma):
-        if not flags[i]:
-            n = i
-            break
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
     if n < gamma:
         idx = max(0, n - 1)                        # <-- WRONG index
         p_prime = residual(p_rows[idx], q_rows[idx])
     else:
-        p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-    t = draw_from(p_prime, us[gamma])
-    return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n)] + [t], n, (n < gamma), None
 
 
-def foil_EMIT_REJECTED(p_rows, q_rows, guesses, us):
+def foil_EMIT_REJECTED(model_p, model_q, prefix_len, gamma, us):
     """SP5/SP9 foil: the rejected guess is emitted as well as the correction."""
-    gamma = len(q_rows) - 1
-    flags = []
-    for i in range(gamma):
-        pi = float(p_rows[i][guesses[i]])
-        qi = float(q_rows[i][guesses[i]])
-        flags.append(us[i] <= acceptance_prob(pi, qi))
-    n = gamma
-    for i in range(gamma):
-        if not flags[i]:
-            n = i
-            break
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
     if n < gamma:
         p_prime = residual(p_rows[n], q_rows[n])
     else:
-        p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-    t = draw_from(p_prime, us[gamma])
-    # <-- the rejected guess x_n is ALSO emitted. (Only meaningful when there
-    # IS a rejection; when n == gamma there is no x_{gamma+1} to emit.)
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    # <-- the rejected guess x_n is ALSO emitted.
     emitted = [guesses[i] for i in range(n + 1)] if n < gamma \
         else [guesses[i] for i in range(n)]
-    return emitted + [t], n, (n < gamma)
+    return emitted + [t], n, (n < gamma), None
 
 
-def foil_NO_MAX_ZERO(p_rows, q_rows, guesses, us):
+def foil_NO_MAX_ZERO(model_p, model_q, prefix_len, gamma, us):
     """SP6 foil: the componentwise max(0, .) is dropped from the residual."""
-    gamma = len(q_rows) - 1
-    flags = []
-    for i in range(gamma):
-        pi = float(p_rows[i][guesses[i]])
-        qi = float(q_rows[i][guesses[i]])
-        flags.append(us[i] <= acceptance_prob(pi, qi))
-    n = gamma
-    for i in range(gamma):
-        if not flags[i]:
-            n = i
-            break
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
     if n < gamma:
-        # <-- NO max(0, .)
-        p_prime = norm(np.asarray(p_rows[n], dtype=np.float64)
-                       - np.asarray(q_rows[n], dtype=np.float64))
+        # <-- NO max(0, .). p and q are both distributions, so sum(p - q) == 0
+        # and this normalisation DIVIDES BY ZERO.
+        p_prime = norm(p_rows[n] - q_rows[n])
     else:
-        p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-    t = draw_from(p_prime, us[gamma])
-    return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n)] + [t], n, (n < gamma), None
 
 
-def foil_STRICT_ACCEPT(p_rows, q_rows, guesses, us):
+def foil_STRICT_ACCEPT(model_p, model_q, prefix_len, gamma, us):
     """SP3 foil: accept iff r_i < ratio (strict), so r_i == ratio rejects."""
-    gamma = len(q_rows) - 1
-    flags = []
-    for i in range(gamma):
-        pi = float(p_rows[i][guesses[i]])
-        qi = float(q_rows[i][guesses[i]])
-        flags.append(us[i] < acceptance_prob(pi, qi))
-    n = gamma
-    for i in range(gamma):
-        if not flags[i]:
-            n = i
-            break
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us, strict=True)
     if n < gamma:
         p_prime = residual(p_rows[n], q_rows[n])
     else:
-        p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-    t = draw_from(p_prime, us[gamma])
-    return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n)] + [t], n, (n < gamma), None
 
 
-def foil_DETERMINISTIC_ACCEPT(p_rows, q_rows, guesses, us):
+def foil_DETERMINISTIC_ACCEPT(model_p, model_q, prefix_len, gamma, us):
     """SP12 foil: accept DETERMINISTICALLY on p >= q, ignoring the uniform.
 
     This is the natural mistake: "keep the guess if the target model likes it
     at least as much as the draft did". It ignores the acceptance PROBABILITY
     entirely, so its acceptance RATE is 0 or 1 per token instead of p/q.
     """
-    gamma = len(q_rows) - 1
-    flags = []
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
+    flags2 = []
+    for i in range(gamma):
+        flags2.append(float(p_rows[i][guesses[i]]) >= float(q_rows[i][guesses[i]]))
+    n2 = gamma
+    for i in range(gamma):
+        if not flags2[i]:
+            n2 = i
+            break
+    if n2 < gamma:
+        p_prime = residual(p_rows[n2], q_rows[n2])
+    else:
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n2)] + [t], n2, (n2 < gamma), None
+
+
+def foil_WRONG_P_ROW(model_p, model_q, prefix_len, gamma, us):
+    """SP2 foil: the target's row is taken at index i+1 instead of i."""
+    def shifted(pl):
+        return model_p(pl + 1)
+    return step_A(shifted, model_q, prefix_len, gamma, us)
+
+
+def foil_NO_CLAMP(model_p, model_q, prefix_len, gamma, us):
+    """SP3 foil: the acceptance ratio is not clamped at 1."""
+    p_rows, q_rows, guesses, flags, n = _flags_and_n(
+        model_p, model_q, prefix_len, gamma, us)
+    flags2 = []
     for i in range(gamma):
         pi = float(p_rows[i][guesses[i]])
         qi = float(q_rows[i][guesses[i]])
-        flags.append(pi >= qi)
-    n = gamma
+        ratio = 1.0 if qi <= 0.0 else pi / qi      # <-- NO CLAMP
+        flags2.append(us[gamma + i] <= ratio)
+    n2 = gamma
     for i in range(gamma):
-        if not flags[i]:
-            n = i
+        if not flags2[i]:
+            n2 = i
             break
-    if n < gamma:
-        p_prime = residual(p_rows[n], q_rows[n])
+    if n2 < gamma:
+        p_prime = residual(p_rows[n2], q_rows[n2])
     else:
-        p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-    t = draw_from(p_prime, us[gamma])
-    return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
-
-
-def foil_WRONG_P_ROW(p_rows, q_rows, guesses, us):
-    """SP2 foil: the target's row is taken at index i+1 instead of i."""
-    shifted_p = [np.asarray(p_rows[min(i + 1, len(p_rows) - 1)], dtype=np.float64)
-                 for i in range(len(p_rows))]
-    return step_A(shifted_p, q_rows, guesses, us)
+        p_prime = p_rows[gamma]
+    t = draw_from(p_prime, us[2 * gamma])
+    return [guesses[i] for i in range(n2)] + [t], n2, (n2 < gamma), None
 
 
 # ===========================================================================
@@ -407,8 +437,7 @@ def foil_WRONG_P_ROW(p_rows, q_rows, guesses, us):
 # computes the SAME distribution and the test cannot see it. A fixture whose
 # discriminating value is absent from every position cannot test anything.
 #
-# So every position now carries a DIFFERENT distribution, and the acceptance
-# probabilities differ from position to position as well.
+# So every position carries a DIFFERENT distribution.
 #
 # Position 0: p = [0.60, 0.20, 0.15, 0.05]   q = [0.25, 0.25, 0.25, 0.25]
 #             acceptance probabilities: [1.0, 0.8, 0.6, 0.2]
@@ -455,11 +484,27 @@ FIXTURE_B_ROWS = [[0.5, 0.3, 0.2]] * 4
 #
 # The measurement: over many uniform draws, the correct rule accepts a guess
 # with p < q with rate p/q, while the deterministic rule accepts it with
-# rate 0 (or 1, for p > q). The two rates are FAR apart, so the property is
-# measured rather than argued.
+# rate 0. The two rates are FAR apart, so the property is MEASURED.
 FIXTURE_C_VOCAB = 2
 FIXTURE_C_P = [[0.8, 0.2]]
 FIXTURE_C_Q = [[0.5, 0.5]]
+
+
+# FIXTURE D -- the BOUNDARY fixture (SP3's `<=` versus `<`).
+#
+# A DYADIC acceptance probability of exactly 0.5, with a POINT-MASS draft so
+# the guess is DETERMINISTIC (token 0) and the uniform draw can be placed
+# exactly on the boundary.
+#
+#   q = [1.0, 0.0]  (point mass on token 0 -- the guess is always token 0)
+#   p = [0.5, 0.5]  -> the acceptance probability at token 0 is 0.5/1.0 = 0.5
+#
+# With the uniform draw supplied at EXACTLY 0.5, `<=` ACCEPTS and `<`
+# REJECTS -- and the two produce DIFFERENT output LENGTHS (2 tokens vs 1),
+# so the convention is observable.
+FIXTURE_D_VOCAB = 2
+FIXTURE_D_P = [[0.5, 0.5], [0.5, 0.5]]
+FIXTURE_D_Q = [[1.0, 0.0], [1.0, 0.0]]
 
 
 def main() -> int:
@@ -476,6 +521,9 @@ def main() -> int:
     print("=" * 78)
     print("SPECULATIVE DECODING ORACLE (numpy float64)")
     print("=" * 78)
+
+    model_p_A = make_model(FIXTURE_A_P)
+    model_q_A = make_model(FIXTURE_A_Q)
 
     # -----------------------------------------------------------------------
     # 1. FIXTURE A: the pinned numbers
@@ -503,8 +551,6 @@ def main() -> int:
             for t in range(FIXTURE_A_VOCAB)]
     check([round(float(x), 12) for x in acc0] == [1.0, 0.8, 0.6, 0.2],
           "A pos 0: the acceptance probabilities are exactly [1.0, 0.8, 0.6, 0.2]")
-    # The unclamped ratio at token 0 is 2.4 -- the clamp is what turns it into
-    # 1.0. This is the value the C++ test pins.
     print(f"  unclamped ratio at pos 0 token 0 = {p0[0] / q0[0]!r}")
 
     # -----------------------------------------------------------------------
@@ -512,7 +558,7 @@ def main() -> int:
     # -----------------------------------------------------------------------
     print("\n--- 2. THE RESIDUAL DISTRIBUTION (SP6) ---")
     res0 = residual(p0, q0)
-    print(f"  residual(p0,q0) = {[repr(float(x)) for x in res0]}")
+    print(f"  residual(pos0) = {[repr(float(x)) for x in res0]}")
     check(abs(float(res0.sum()) - 1.0) < 1e-12, "SP6: the residual sums to 1")
     # p0 - q0 = [0.35, -0.05, -0.10, -0.20] -> max(0,.) = [0.35, 0, 0, 0]
     check(float(res0[0]) == 1.0,
@@ -532,8 +578,6 @@ def main() -> int:
     check(abs(float(res2[0]) - 1.0) > 1e-12,
           "SP6: residual2 is NOT normalised by the MAX (which would give 1.0)")
 
-    # The residual at position 1 -- a DIFFERENT distribution from position 0,
-    # so the wrong-index foil has something to separate.
     res1 = residual(np.array(FIXTURE_A_P[1]), np.array(FIXTURE_A_Q[1]))
     print(f"  residual(pos1) = {[repr(float(x)) for x in res1]}")
     check(res1.tolist() != res0.tolist(),
@@ -544,23 +588,20 @@ def main() -> int:
     # 3. IDENTICAL MODELS (SP10, SP7)
     # -----------------------------------------------------------------------
     print("\n--- 3. IDENTICAL MODELS (SP10) ---")
-    pB = np.array(FIXTURE_B_ROWS[0], dtype=np.float64)
-    qB = np.array(FIXTURE_B_ROWS[0], dtype=np.float64)
-    check(np.array_equal(pB, qB), "B: the draft and target are IDENTICAL")
+    model_p_B = make_model(FIXTURE_B_ROWS)
+    model_q_B = make_model(FIXTURE_B_ROWS)
     for trial in range(20):
         rng = np.random.default_rng(20261025 + trial)
         gamma = 3
-        guesses = [int(rng.choice(FIXTURE_B_VOCAB, p=qB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toks, n, rej, flags = step_A(FIXTURE_B_ROWS, FIXTURE_B_ROWS, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toks, n, rej, flags = step_A(model_p_B, model_q_B, 0, gamma, us)
         check(n == gamma, f"B trial {trial}: ALL gamma guesses are accepted")
         check(not rej, f"B trial {trial}: nothing was rejected")
         check(len(toks) == gamma + 1, f"B trial {trial}: EXACTLY gamma+1 tokens")
-        check(toks[:gamma] == guesses,
-              f"B trial {trial}: the emitted tokens ARE the guesses")
     print(f"  20 trials: every one emitted exactly 4 tokens")
 
-    resB = np.maximum(0.0, pB - qB)
+    pB = np.array(FIXTURE_B_ROWS[0], dtype=np.float64)
+    resB = np.maximum(0.0, pB - pB)
     print(f"  max(0, p - q) for identical models = {[repr(float(x)) for x in resB]}")
     check(float(resB.sum()) == 0.0,
           "SP7: the residual of IDENTICAL models is ALL-ZERO -- the residual "
@@ -574,9 +615,8 @@ def main() -> int:
     seen_n = {}
     for seed in range(500):
         rng = np.random.default_rng(seed)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toks, n, rej, flags = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toks, n, rej, flags = step_A(model_p_A, model_q_A, 0, gamma, us)
         check(len(toks) == n + 1,
               f"seed {seed}: the emitted count is EXACTLY n+1 ({len(toks)} vs {n + 1})")
         if rej:
@@ -587,10 +627,6 @@ def main() -> int:
                   f"seed {seed}: the first n guesses are the ACCEPTED ones")
             check(flags[n] is False,
                   f"seed {seed}: the guess at index n is the FIRST rejection")
-            # SP5: the rejected guess is NOT emitted. The emitted tokens are
-            # the accepted guesses plus ONE correction.
-            check(len(toks) == n + 1,
-                  f"seed {seed}: only the correction replaces the rejected guess")
             for t in toks:
                 check(0 <= t < FIXTURE_A_VOCAB,
                       f"seed {seed}: every emitted token is in the vocabulary")
@@ -601,12 +637,11 @@ def main() -> int:
           "residual's INDEX is observable")
 
     # The first rejection really is where the run stops: a rejection at index
-    # 1 must discard guess 2 as well.
+    # 0 must discard the remaining guesses.
     for seed in range(500):
         rng = np.random.default_rng(seed)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toks, n, rej, flags = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toks, n, rej, flags = step_A(model_p_A, model_q_A, 0, gamma, us)
         if rej and n == 0:
             check(len(toks) == 1,
                   f"SP5 seed {seed}: a rejection at position 1 emits exactly "
@@ -621,11 +656,9 @@ def main() -> int:
     total = 0
     for seed in range(2000):
         rng = np.random.default_rng(seed)
-        gamma = 3
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toksA, nA, rejA, _ = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
-        toksB, nB, rejB, _ = step_B(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toksA, nA, rejA, _ = step_A(model_p_A, model_q_A, 0, gamma, us)
+        toksB, nB, rejB, _ = step_B(model_p_A, model_q_A, 0, gamma, us)
         total += 1
         if toksA != toksB or nA != nB or rejA != rejB:
             disagreements += 1
@@ -643,15 +676,16 @@ def main() -> int:
     V = 3
     p_one = np.array([0.5, 0.3, 0.2], dtype=np.float64)
     q_one = np.array([0.2, 0.3, 0.5], dtype=np.float64)
+    model_p_1 = make_model([p_one, p_one])
+    model_q_1 = make_model([q_one, q_one])
     trials = 60000
     for name, fn in (("A", step_A), ("B", step_B)):
         rng = np.random.default_rng(4242)
         counts = np.zeros(V, dtype=np.int64)
         for _ in range(trials):
             gamma = 1
-            x = int(rng.choice(V, p=q_one))          # the draft's guess
-            us = [float(rng.random()) for _ in range(gamma + 1)]
-            toks, n, rej, _ = fn([p_one, p_one], [q_one, q_one], [x], us)
+            us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+            toks, n, rej, _ = fn(model_p_1, model_q_1, 0, gamma, us)
             counts[toks[0]] += 1
         emp = counts / trials
         print(f"  {name}: empirical = {[repr(float(x)) for x in emp]}")
@@ -679,7 +713,6 @@ def main() -> int:
     check(abs(ratio1 - 0.4) < 1e-12, "SP12: the ratio at token 1 is exactly 0.4")
     check(pC[1] < qC[1], "SP12: token 1 has p < q")
 
-    # The CORRECT rate over many uniform draws.
     rng = np.random.default_rng(31337)
     trials = 200000
     us = rng.random(trials)
@@ -687,8 +720,6 @@ def main() -> int:
     print(f"  measured acceptance rate at token 1 = {correct_rate:.6f}")
     check(abs(correct_rate - 0.4) < 0.005,
           "SP12: the measured acceptance rate equals p/q (0.4)")
-    # The DETERMINISTIC rule's rate: p >= q is false here, so it rejects
-    # ALWAYS -- rate 0. The two rates are 0.4 apart, which is unmissable.
     det_rate = 1.0 if float(pC[1]) >= float(qC[1]) else 0.0
     print(f"  deterministic (p >= q) acceptance rate = {det_rate:.6f}")
     check(abs(correct_rate - det_rate) > 0.3,
@@ -698,7 +729,6 @@ def main() -> int:
     # 8. THE FOILS MUST DIFFER (else the test is vacuous)
     # -----------------------------------------------------------------------
     print("\n--- 8. THE FOILS (each MUST differ from the correct behaviour) ---")
-    gamma = 3
 
     def run_many(fn, trials=3000):
         """
@@ -711,10 +741,14 @@ def main() -> int:
         ns = set()
         for s in range(trials):
             rng = np.random.default_rng(s)
-            guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-            us = [float(rng.random()) for _ in range(gamma + 1)]
+            us = [float(rng.random()) for _ in range(2 * gamma + 1)]
             try:
-                toks, n, rej = fn(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+                toks, n, rej, _flags = fn(model_p_A, model_q_A, 0, gamma, us)
+                # Compare only the OBSERVABLE part of the result. The fourth
+                # element (the acceptance flags) is an implementation detail
+                # that only formulation A produces -- comparing it would make
+                # every foil "differ" for a reason that has nothing to do with
+                # the algorithm.
                 outs.add(tuple(toks))
                 ns.add(n)
             except Exception as exc:          # a crash IS a different outcome
@@ -722,7 +756,8 @@ def main() -> int:
                 ns.add(-1)
         return outs, ns
 
-    good_outs, good_ns = run_many(lambda p, q, g, u: step_A(p, q, g, u)[:3])
+    good_outs, good_ns = run_many(
+        lambda p, q, pl, g, u: (step_A(p, q, pl, g, u)[:3] + (None,))[:3])
     foil_defs = [
         ("SP7 residual-always", foil_RESIDUAL_ALWAYS),
         ("SP6 wrong-index", foil_WRONG_INDEX),
@@ -746,9 +781,7 @@ def main() -> int:
     #
     # Dropping the componentwise max(0, .) leaves a vector whose SUM IS ZERO,
     # so the normalisation divides by zero. The residual is not merely
-    # "different" without the clamp -- it is UNDEFINED. The foil therefore
-    # raises on every rejection, which the oracle records as a distinct
-    # outcome rather than a crash.
+    # "different" without the clamp -- it is UNDEFINED.
     print("\n  Why max(0, .) is load-bearing (not merely a different number):")
     for pos in range(4):
         p_row = np.array(FIXTURE_A_P[pos], dtype=np.float64)
@@ -764,49 +797,29 @@ def main() -> int:
           "pos 0: the CLAMPED residual has positive mass, so it normalises")
 
     # -----------------------------------------------------------------------
-    # 9. THE TWO BOUNDARY CONVENTIONS ARE MEASURED INERT
+    # 9. THE TWO BOUNDARY CONVENTIONS ARE MEASURED INERT (except when the
+    #    draw is SUPPLIED at the boundary)
     # -----------------------------------------------------------------------
-    print("\n--- 9. THE BOUNDARY CONVENTIONS (measured inert) ---")
+    print("\n--- 9. THE BOUNDARY CONVENTIONS ---")
 
     # (a) THE CLAMP on the acceptance probability.
     #
     # Dropping `min(1, .)` changes NOTHING when the rule is written as a
     # threshold comparison, because r in [0,1) satisfies `r <= ratio`
-    # automatically whenever ratio > 1. This is MEASURED here over many
-    # trials, not argued.
-    def step_A_no_clamp(p_rows, q_rows, guesses, us):
-        gamma = len(q_rows) - 1
-        flags = []
-        for i in range(gamma):
-            pi = float(p_rows[i][guesses[i]])
-            qi = float(q_rows[i][guesses[i]])
-            ratio = 1.0 if qi <= 0.0 else pi / qi      # <-- NO CLAMP
-            flags.append(us[i] <= ratio)
-        n = gamma
-        for i in range(gamma):
-            if not flags[i]:
-                n = i
-                break
-        if n < gamma:
-            p_prime = residual(p_rows[n], q_rows[n])
-        else:
-            p_prime = np.asarray(p_rows[gamma], dtype=np.float64)
-        t = draw_from(p_prime, us[gamma])
-        return [guesses[i] for i in range(n)] + [t], n, (n < gamma)
-
+    # automatically whenever ratio > 1. MEASURED here, not argued.
     diff = 0
     for s in range(3000):
         rng = np.random.default_rng(s)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        a = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)[:3]
-        b = step_A_no_clamp(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        a = step_A(model_p_A, model_q_A, 0, gamma, us)[:3]
+        b = foil_NO_CLAMP(model_p_A, model_q_A, 0, gamma, us)[:3]
         if a != b:
             diff += 1
     print(f"  (a) the clamped and unclamped rules differ on {diff}/3000 trials")
     check(diff == 0,
-          "(a) the clamp is MEASURED INERT as a threshold comparison -- the C++ "
-          "harness must score a drop-the-clamp mutation as inert, not as a gap")
+          "(a) the clamp is MEASURED INERT as a threshold comparison -- the "
+          "C++ harness must score a drop-the-clamp mutation as inert, not as "
+          "a gap")
 
     # The clamp IS load-bearing in the PROBABILITY form, which is why the C++
     # keeps it explicitly rather than relying on IEEE luck.
@@ -820,46 +833,51 @@ def main() -> int:
 
     # (b) `<=` VERSUS `<` AT THE ACCEPTANCE BOUNDARY.
     #
-    # The two differ ONLY when r_i EXACTLY equals the acceptance probability.
-    # The uniform draw is continuous, so that event has probability ZERO and a
-    # RANDOM fixture can never observe it. The only way to discriminate is to
-    # SUPPLY a uniform draw that lands exactly on the boundary -- which is why
-    # the C++ test pins the boundary convention on a fixture with an
-    # EXACTLY-DYADIC acceptance probability (0.5) and a draw of exactly 0.5.
-    #
-    # This is the same lesson the repo's top-p fixture learned: "a fixture
-    # whose discriminating value is only correct to within a rounding error
-    # does not discriminate anything". Here the discriminating value must be
-    # EXACTLY representable AND must be supplied rather than drawn.
+    # The two differ ONLY when the uniform draw lands EXACTLY on the
+    # acceptance probability. A random draw is continuous, so that event has
+    # probability ZERO and a RANDOM fixture can never observe it. The only way
+    # to discriminate is to SUPPLY a draw that lands exactly on the boundary,
+    # on a DYADIC acceptance probability.
     print("\n  (b) `<` versus `<=` at the acceptance boundary:")
-    # A fixture with a DYADIC acceptance probability: p = [0.5, 0.5],
-    # q = [0.25, 0.25] -> the ratio at token 0 is 0.5/0.25 = 2.0 -> clamped 1.
-    # Use a token whose ratio is exactly 0.5: p = [0.25, 0.75], q = [0.5, 0.5]
-    # -> ratio at token 0 = 0.25/0.5 = 0.5 EXACTLY (dyadic).
-    pD = np.array([0.25, 0.75], dtype=np.float64)
-    qD = np.array([0.5, 0.5], dtype=np.float64)
+    model_p_D = make_model(FIXTURE_D_P)
+    model_q_D = make_model(FIXTURE_D_Q)
+    pD = np.array(FIXTURE_D_P[0], dtype=np.float64)
+    qD = np.array(FIXTURE_D_Q[0], dtype=np.float64)
     ratioD = acceptance_prob(float(pD[0]), float(qD[0]))
     print(f"      p = {[repr(float(x)) for x in pD]}  "
           f"q = {[repr(float(x)) for x in qD]}")
     print(f"      ratio at token 0 = {ratioD!r}  (exactly representable)")
     check(ratioD == 0.5, "(b) the boundary ratio is EXACTLY 0.5")
-    # With r == 0.5 exactly, `<=` ACCEPTS and `<` REJECTS.
-    accepts_le = (0.5 <= ratioD)
-    accepts_lt = (0.5 < ratioD)
-    print(f"      with u = 0.5 exactly: `<=` accepts = {accepts_le}, "
-          f"`<` accepts = {accepts_lt}")
-    check(accepts_le and not accepts_lt,
-          "(b) the boundary IS discriminable when the draw is SUPPLIED at "
-          "exactly 0.5 -- the C++ test must do this, and a random fixture "
-          "cannot")
-    # And the random-draw version cannot see it:
+    check(qD[0] == 1.0, "(b) the draft is a POINT MASS, so the guess is token 0")
+
+    # gamma = 1, and the uniforms are: us[0] = the guess draw (any value in
+    # [0,1) selects token 0), us[1] = the acceptance draw, us[2] = the final
+    # token's draw.
+    us_le = [0.25, 0.5, 0.25]
+    toks_le, n_le, rej_le, _ = step_A(model_p_D, model_q_D, 0, 1, us_le)
+    us_lt = [0.25, 0.5, 0.25]
+    toks_lt, n_lt, rej_lt, _ = foil_STRICT_ACCEPT(
+        model_p_D, model_q_D, 0, 1, us_lt)
+    print(f"      with u = 0.5 exactly: `<=` -> tokens {toks_le} n={n_le} "
+          f"rejected={rej_le}")
+    print(f"                            `<`  -> tokens {toks_lt} n={n_lt} "
+          f"rejected={rej_lt}")
+    check(n_le == 1 and not rej_le,
+          "(b) `<=` ACCEPTS a guess whose draw lands exactly on the boundary")
+    check(n_lt == 0 and rej_lt,
+          "(b) `<` REJECTS the same guess -- the two conventions are "
+          "OBSERVABLE when the draw is supplied at the boundary")
+    check(len(toks_le) != len(toks_lt),
+          "(b) the two conventions produce different OUTPUT LENGTHS, so the "
+          "convention is visible in the result and not only in `n`")
+
+    # And a random fixture cannot see it:
     random_disc = 0
     for s in range(3000):
         rng = np.random.default_rng(s)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        a = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)[:3]
-        b = foil_STRICT_ACCEPT(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        a = step_A(model_p_A, model_q_A, 0, gamma, us)[:3]
+        b = foil_STRICT_ACCEPT(model_p_A, model_q_A, 0, gamma, us)[:3]
         if a != b:
             random_disc += 1
     print(f"      a RANDOM fixture discriminates `<` from `<=` on "
@@ -875,12 +893,12 @@ def main() -> int:
     ok = True
     for seed in range(500):
         rng = np.random.default_rng(seed)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toks, n, rej, flags = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toks, n, rej, flags = step_A(model_p_A, model_q_A, 0, gamma, us)
         if rej:
-            r = np.maximum(0.0, np.asarray(FIXTURE_A_P[n], dtype=np.float64)
-                           - np.asarray(FIXTURE_A_Q[n], dtype=np.float64))
+            p_row = np.asarray(model_p_A(n), dtype=np.float64)
+            q_row = np.asarray(model_q_A(n), dtype=np.float64)
+            r = np.maximum(0.0, p_row - q_row)
             if not (float(r.sum()) > 0.0):
                 ok = False
                 break
@@ -893,9 +911,8 @@ def main() -> int:
     counts_by_n = {}
     for seed in range(1000):
         rng = np.random.default_rng(seed)
-        guesses = [int(rng.integers(0, FIXTURE_A_VOCAB)) for _ in range(gamma)]
-        us = [float(rng.random()) for _ in range(gamma + 1)]
-        toks, n, rej, flags = step_A(FIXTURE_A_P, FIXTURE_A_Q, guesses, us)
+        us = [float(rng.random()) for _ in range(2 * gamma + 1)]
+        toks, n, rej, flags = step_A(model_p_A, model_q_A, 0, gamma, us)
         check(len(toks) == n + 1,
               f"seed {seed}: the emitted count is EXACTLY n+1")
         counts_by_n[n] = counts_by_n.get(n, 0) + 1
@@ -905,7 +922,7 @@ def main() -> int:
     # 12. THE C++-PASTEABLE TABLE
     # -----------------------------------------------------------------------
     print("\n--- 12. THE C++-PASTEABLE TABLE ---")
-    print("  // [oracle] FIXTURE A -- position-varying draft/target")
+    print("  // [oracle] FIXTURE A -- position-varying draft/target (PROBS)")
     for pos in range(4):
         print(f"  //   pos {pos}: p = {FIXTURE_A_P[pos]!r}")
         print(f"  //           q = {FIXTURE_A_Q[pos]!r}")
@@ -920,16 +937,27 @@ def main() -> int:
     print("  // [oracle] FIXTURE C -- the SP12 discriminator")
     print(f"  //   p = {FIXTURE_C_P[0]!r}   q = {FIXTURE_C_Q[0]!r}")
     print(f"  //   ratio at token 1 = {ratio1!r}   measured rate = {correct_rate:.6f}")
+    print("  // [oracle] FIXTURE D -- the boundary fixture")
+    print(f"  //   p = {FIXTURE_D_P[0]!r}   q = {FIXTURE_D_Q[0]!r}")
+    print(f"  //   ratio at token 0 = {ratioD!r}   uniforms = [0.25, 0.5, 0.25]")
+
+    # The LOGITS the C++ test supplies, so the fixture is byte-identical
+    # between the two languages.
+    print("\n  // [oracle] FIXTURE A as LOGITS (the C++ test supplies these)")
+    for pos in range(4):
+        print(f"  //   pos {pos}: p_logits = "
+              f"{[repr(float(x)) for x in probs_to_logits(FIXTURE_A_P[pos])]}")
+        print(f"  //           q_logits = "
+              f"{[repr(float(x)) for x in probs_to_logits(FIXTURE_A_Q[pos])]}")
 
     # A DETERMINISTIC worked example, for the C++ test to copy verbatim.
     print("\n  // [oracle] a deterministic worked example (gamma = 3)")
-    work_guesses = [3, 1, 2]
-    work_us = [0.9, 0.1, 0.4, 0.25]
-    wt, wn, wrej, wflags = step_A(FIXTURE_A_P, FIXTURE_A_Q, work_guesses, work_us)
-    print(f"  //   guesses = {work_guesses}   us = {work_us}")
+    work_us = [0.9, 0.1, 0.4, 0.25, 0.6, 0.7, 0.3]
+    wt, wn, wrej, wflags = step_A(model_p_A, model_q_A, 0, 3, work_us)
+    print(f"  //   us = {work_us}")
     print(f"  //   -> tokens = {wt}   n = {wn}   rejected = {wrej}   "
           f"flags = {wflags}")
-    wtB, wnB, wrejB, _ = step_B(FIXTURE_A_P, FIXTURE_A_Q, work_guesses, work_us)
+    wtB, wnB, wrejB, _ = step_B(model_p_A, model_q_A, 0, 3, work_us)
     check(wt == wtB and wn == wnB and wrej == wrejB,
           "the worked example agrees between the two formulations")
     check(len(wt) == wn + 1, "the worked example emits exactly n+1 tokens")
