@@ -13,6 +13,35 @@
 // LOGIT PROCESSING AND DECODING STRATEGIES
 // ============================================================================
 //
+// ADDED 2026-10-25: SPECULATIVE DECODING, `speculative_decode_step`.
+//
+// THE PICK CAME FROM THIS FILE'S OWN OUT-OF-SCOPE NOTE, which said:
+//
+//     "Speculative / lookahead / contrastive decoding."
+//
+// The gap was measured, not assumed:
+//
+//     grep -rinE 'speculat|draft.model|draft_model|acceptance|rejection.sampl
+//                 |target.model|lookahead.decod' include/ tests/
+//     -> the out-of-scope line above, and nothing else.
+//
+// The algorithm was read out of the paper's own HTML
+// (https://arxiv.org/html/2211.17192), not from memory, and the semantics are
+// pinned by tests/speculative_decoding_oracle.py -- a numpy float64 oracle
+// that caught FOUR defects before a line of C++ existed, THREE of them in
+// the oracle's own first draft:
+//
+//   1. THE CLAMP on the acceptance ratio is MEASURED INERT as a threshold
+//      comparison (`r <= p/q` already holds for every `r` when `p > q`), so
+//      the first draft's "no-clamp foil" was VACUOUS.
+//   2. THE `<=` versus `<` BOUNDARY is unobservable by a RANDOM fixture --
+//      the uniform is continuous, so landing exactly on the acceptance
+//      probability has probability zero. The draw must be SUPPLIED.
+//   3. A FIXTURE THAT DOES NOT VARY BY POSITION makes the residual's INDEX
+//      unobservable (`p_n == p_{n+1}` for every `n`).
+//   4. `max(0, .)` in the residual is MATHEMATICALLY load-bearing: `p` and
+//      `q` are both distributions, so `sum(p - q) == 0` exactly.
+//
 // ADDED 2026-10-23: TYPICAL-P (locally typical sampling), `apply_typical_p`.
 //
 // THE PICK CAME FROM THIS FILE'S OWN OUT-OF-SCOPE NOTE, which said:
@@ -165,7 +194,8 @@
 //
 // -----------------------------------------------------------------------------
 // OUT OF SCOPE FOR v1, stated so it cannot creep in:
-//   - Speculative / lookahead / contrastive decoding.
+//   - Lookahead / contrastive decoding. (SPECULATIVE decoding was here until
+//     2026-10-25; it is now implemented below.)
 //   - min-p applied to a live beam during beam search (a research variant, not
 //     the paper's algorithm).
 //   - Any change to layers/generative/pixelcnn.{h,cpp} or vq_vae.{h,cpp}. The
@@ -376,6 +406,128 @@ AutoregressiveResult autoregressive_sample(
     const BeamSearchDecoder::ScoreFn& score_fn, const Tensor& start_ids,
     size_t steps, const LogitProcessorChain& chain, SamplingStrategy strategy,
     std::mt19937& rng, int eos_id = -1, bool stop_on_eos = false);
+
+// ===========================================================================
+// SPECULATIVE DECODING
+//
+// Leviathan, Kalman, Matias, "Fast Inference from Transformers via Speculative
+// Decoding", ICML 2023, PMLR v202:19274-19286, arXiv:2211.17192.
+//
+// THE PICK CAME FROM THIS FILE'S OWN OUT-OF-SCOPE NOTE, which said:
+//
+//     "Speculative / lookahead / contrastive decoding."
+//
+// The algorithm was read out of the paper's OWN HTML
+// (https://arxiv.org/html/2211.17192), not from memory: Algorithm 1
+// `SpeculativeDecodingStep` is transcribed below.
+//
+// THE POINT OF THE METHOD. A draft model proposes `gamma` tokens cheaply; the
+// target model scores `gamma + 1` positions in parallel; the guesses that the
+// target model likes at least as much as the draft did are ACCEPTED, and if
+// one is rejected it is replaced by a correction token drawn from the
+// residual distribution. The output distribution is IDENTICAL to sampling from
+// the target model alone -- that is the paper's entire claim, and it is the
+// property the test suite pins.
+//
+// ---------------------------------------------------------------------------
+// THE DRAFT AND TARGET ARE CALLBACKS, so this file stays model-agnostic.
+//
+// A MODEL is `prefix -> (1, V) LOGITS`: it receives the token ids generated
+// so far and returns a row of logits. The library never learns what produced
+// them, which is what lets the tests drive the algorithm from a hand-written
+// oracle AND lets it drive a real PixelCNN with no decoder change. This is
+// the same boundary `BeamSearchDecoder::ScoreFn` already draws.
+//
+// THE COST MODEL, which is the whole speedup claim: the draft is called
+// GAMMA times and the target GAMMA+1 times per step. The residual needs
+// `q_{n+1}` with `n + 1 <= gamma`, so it is always among the rows already
+// computed and the draft is NEVER called a (gamma+1)-th time.
+//
+// ---------------------------------------------------------------------------
+// THE SEMANTICS, each pinned by a test (SP1..SP12 in the plan).
+//
+// SP1. `q_i` is the DRAFT's distribution at `prefix + [x_1..x_{i-1}]` --
+//      exactly the distribution that PRODUCED the guess `x_i`.
+// SP2. `p_i` is the TARGET's distribution at the SAME prefix, so `p_i` and
+//      `q_i` are two models' distributions over the same vocabulary at the
+//      same position.
+// SP3. A guess is accepted iff `r_i <= p_i(x_i) / q_i(x_i)`, with `r_i` a
+//      uniform draw on [0,1). The ratio is a PROBABILITY and is clamped at 1.
+//      (The clamp is DEFENSIVE: measured INERT as a threshold comparison,
+//      because `r <= ratio` already holds for every `r` when `ratio > 1`.
+//      It is kept so the code says what it means.)
+// SP4. `n` is the number of LEADING accepted guesses; the first rejection
+//      ends the run, because the correction token replaces that position.
+// SP5. THE REJECTED GUESS IS NOT EMITTED. It is replaced by the correction.
+// SP6. The correction is drawn from `norm(max(0, p_{n+1} - q_{n+1}))` --
+//      componentwise, over the FULL vocabulary. The `max(0, .)` is
+//      mathematically load-bearing: `p` and `q` are both distributions, so
+//      `sum(p - q) == 0` EXACTLY, and without the clamp the normalisation
+//      divides by zero.
+// SP7. When `n == gamma` (every guess accepted) the bonus token is drawn
+//      from `p_{gamma+1}` UNMODIFIED. Using the residual there would lose
+//      the bonus token and cost the entire speedup -- and for identical
+//      models the residual is all-zero, so it would also divide by zero.
+// SP8. The draft is called `gamma` times, the target `gamma + 1` times.
+// SP9. The step emits EXACTLY `n + 1` tokens: the `n` accepted guesses plus
+//      one. Never `n`, never `n + 2`.
+// SP10. With identical draft and target, EVERY guess is accepted and
+//      `gamma + 1` tokens are emitted.
+// SP11. The residual is never all-zero when a rejection happens: the
+//      rejected guess has `q(x) > p(x)`, so `p - q` is strictly positive
+//      there.
+// SP12. The ratio is computed from PROBABILITIES, not from logits. The
+//      acceptance is PROBABILISTIC: a guess is accepted with probability
+//      `p/q`, not deterministically whenever `p >= q`.
+//
+// The boundary convention is `<=` (accept iff `r_i <= ratio`). It is
+// observable ONLY when the uniform draw lands exactly on the acceptance
+// probability -- a measure-zero event for a continuous draw -- so the test
+// supplies the draw at exactly the boundary on a dyadic acceptance
+// probability. A random fixture cannot see it.
+// ===========================================================================
+
+// A draft or target model: token-id prefix (1, L) -> (1, V) LOGITS.
+using DraftModel = std::function<Tensor(const Tensor&)>;
+
+struct SpeculativeResult {
+    // The tokens emitted by THIS step: the accepted guesses plus one
+    // correction token. The length is between 1 and gamma+1, and is exactly
+    // `num_accepted + 1` (SP9).
+    Tensor tokens;              // (1, k)
+    size_t num_accepted = 0;    // n -- how many guesses were accepted
+    bool rejected = false;      // true iff a guess was rejected (n < gamma)
+};
+
+// One speculative decoding step.
+//
+// `draft` proposes `gamma` tokens autoregressively; `target` scores
+// `gamma + 1` positions. The accepted prefix and the correction token follow
+// Algorithm 1 exactly.
+//
+// The step consumes 2*gamma+1 uniform draws, in this order:
+//     us[0      .. gamma-1  ]  the draws that SELECT the guesses
+//     us[gamma  .. 2*gamma-1]  the acceptance draws r_1..r_gamma
+//     us[2*gamma]              the draw that SELECTS the final token
+//
+// Throws std::invalid_argument on gamma == 0, a null callback, a prefix with
+// more than one row, or the wrong number of uniforms; and
+// std::runtime_error when the draft and the target disagree about the
+// vocabulary width.
+SpeculativeResult speculative_decode_step(const DraftModel& draft,
+                                           const DraftModel& target,
+                                           const Tensor& prefix, size_t gamma,
+                                           std::mt19937& rng);
+
+// The same step, with the uniform draws SUPPLIED instead of drawn.
+//
+// This exists so the boundary convention (SP3's `<=` versus `<`) is
+// testable: the uniform is continuous, so a random draw lands exactly on the
+// acceptance probability with probability zero. `uniforms` must hold exactly
+// 2*gamma+1 values, each in [0, 1).
+SpeculativeResult speculative_decode_step_with_uniforms(
+    const DraftModel& draft, const DraftModel& target, const Tensor& prefix,
+    size_t gamma, const std::vector<double>& uniforms);
 
 }  // namespace utils
 }  // namespace nn

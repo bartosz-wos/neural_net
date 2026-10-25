@@ -109,13 +109,6 @@ static void banner(const char* s) { printf("\n--- %s ---\n", s); }
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
-static Tensor row(std::initializer_list<double> v) {
-    Tensor t(1, v.size());
-    size_t j = 0;
-    for (double x : v) t(0, j++) = x;
-    return t;
-}
-
 static Tensor ids_row(std::initializer_list<int> v) {
     Tensor t(1, v.size());
     size_t j = 0;
@@ -154,26 +147,35 @@ static bool ids_are(const Tensor& t, std::initializer_list<int> expected) {
 // ---------------------------------------------------------------------------
 static const size_t A_VOCAB = 4;
 
-static const double A_P_LOGITS[4][4] = {
+static const double A_P_LOGITS[5][4] = {
     {-0.5108256237659907, -1.6094379124341003, -1.8971199848858813, -2.995732273553991},
     {-2.3025850929940455, -0.6931471805599453, -1.2039728043259361, -2.3025850929940455},
     {-1.3862943611198906, -1.3862943611198906, -1.3862943611198906, -1.3862943611198906},
     {-2.995732273553991, -1.8971199848858813, -1.6094379124341003, -0.5108256237659907},
+    // A fifth row, so a ONE-token prefix also fits: the purity test needs a
+    // non-empty prefix to check that it is not mutated.
+    {-0.5108256237659907, -1.6094379124341003, -1.8971199848858813, -2.995732273553991},
 };
 
-static const double A_Q_LOGITS[4][4] = {
+static const double A_Q_LOGITS[5][4] = {
     {-1.3862943611198906, -1.3862943611198906, -1.3862943611198906, -1.3862943611198906},
     {-0.916290731874155, -1.6094379124341003, -1.6094379124341003, -1.6094379124341003},
     {-2.3025850929940455, -0.916290731874155, -1.2039728043259361, -1.6094379124341003},
     {-1.6094379124341003, -1.6094379124341003, -1.2039728043259361, -1.2039728043259361},
+    {-1.3862943611198906, -1.3862943611198906, -1.3862943611198906, -1.3862943611198906},
 };
 
 // A model that returns the row for the position given by the prefix LENGTH.
+//
+// The row table is a template parameter rather than a `const double*` so
+// that a 2-D fixture keeps its array type: a plain pointer cannot be
+// subscripted by position, and casting away the type would lose the width.
+template <size_t N, size_t M>
 struct PositionalModel {
-    const double* rows;      // [n_pos][vocab]
+    const double (&rows)[N][M];   // [n_pos][vocab]
     size_t n_pos;
     size_t vocab;
-    int* call_count;         // optional
+    int* call_count;              // optional
 
     Tensor operator()(const Tensor& prefix) const {
         if (call_count) ++(*call_count);
@@ -184,14 +186,15 @@ struct PositionalModel {
                 " is beyond the fixture");
         }
         Tensor out(1, vocab);
-        for (size_t j = 0; j < vocab; ++j) out(0, j) = rows[pos * vocab + j];
+        for (size_t j = 0; j < vocab; ++j) out(0, j) = rows[pos][j];
         return out;
     }
 };
 
-static DraftModel make_positional(const double* rows, size_t n_pos, size_t vocab,
-                                  int* call_count) {
-    PositionalModel m{rows, n_pos, vocab, call_count};
+template <size_t N, size_t M>
+static DraftModel make_positional(const double (&rows)[N][M], size_t n_pos,
+                                  size_t vocab, int* call_count) {
+    PositionalModel<N, M> m{rows, n_pos, vocab, call_count};
     return [m](const Tensor& prefix) { return m(prefix); };
 }
 
@@ -205,12 +208,14 @@ static const double B_LOGITS[4][3] = {
 
 // FIXTURE D -- the BOUNDARY fixture. A point-mass draft (the guess is always
 // token 0) and an acceptance probability of EXACTLY 0.5.
-static const double D_P_LOGITS[2][2] = {
+static const double D_P_LOGITS[3][2] = {
+    {-0.6931471805599453, -0.6931471805599453},
     {-0.6931471805599453, -0.6931471805599453},
     {-0.6931471805599453, -0.6931471805599453},
 };
-static const double D_Q_LOGITS[2][2] = {
+static const double D_Q_LOGITS[3][2] = {
     {0.0, -1e300},   // a point mass on token 0
+    {0.0, -1e300},
     {0.0, -1e300},
 };
 
@@ -235,7 +240,7 @@ static void test_guards() {
     bool threw = false;
     try {
         std::mt19937 rng(1);
-        speculative_decode_step(model, model, ids_row({0}), 0, rng);
+        speculative_decode_step(model, model, ids_row({}), 0, rng);
     } catch (const std::invalid_argument&) { threw = true; }
     CHECK(threw, "1a gamma == 0 throws std::invalid_argument");
 
@@ -243,7 +248,7 @@ static void test_guards() {
     try {
         std::mt19937 rng(1);
         DraftModel null_model;
-        speculative_decode_step(null_model, model, ids_row({0}), 2, rng);
+        speculative_decode_step(null_model, model, ids_row({}), 2, rng);
     } catch (const std::invalid_argument&) { threw = true; }
     CHECK(threw, "1b a null DRAFT throws std::invalid_argument");
 
@@ -251,7 +256,7 @@ static void test_guards() {
     try {
         std::mt19937 rng(1);
         DraftModel null_model;
-        speculative_decode_step(model, null_model, ids_row({0}), 2, rng);
+        speculative_decode_step(model, null_model, ids_row({}), 2, rng);
     } catch (const std::invalid_argument&) { threw = true; }
     CHECK(threw, "1c a null TARGET throws std::invalid_argument");
 
@@ -267,8 +272,8 @@ static void test_guards() {
     threw = false;
     try {
         std::mt19937 rng(1);
-        DraftModel narrow = make_positional(D_P_LOGITS, 2, 2, nullptr);
-        speculative_decode_step(narrow, model, ids_row({0}), 2, rng);
+        DraftModel narrow = make_positional(D_P_LOGITS, 3, 2, nullptr);
+        speculative_decode_step(narrow, model, ids_row({}), 2, rng);
     } catch (const std::runtime_error&) { threw = true; }
     CHECK(threw, "1e a vocabulary-width mismatch throws std::runtime_error");
 
@@ -277,7 +282,7 @@ static void test_guards() {
     try {
         DraftModel m2 = make_positional(A_P_LOGITS, 4, A_VOCAB, nullptr);
         std::vector<double> too_few(4, 0.5);   // gamma = 3 needs 7
-        speculative_decode_step_with_uniforms(m2, m2, ids_row({0}), 3, too_few);
+        speculative_decode_step_with_uniforms(m2, m2, ids_row({}), 3, too_few);
     } catch (const std::invalid_argument&) { threw = true; }
     CHECK(threw, "1f too few uniforms throws std::invalid_argument");
 }
@@ -301,7 +306,7 @@ static void test_identical_models() {
 
     for (int trial = 0; trial < 20; ++trial) {
         SpeculativeResult r =
-            speculative_decode_step(model, model, ids_row({0}), 3, rng);
+            speculative_decode_step(model, model, ids_row({}), 3, rng);
         CHECK(r.num_accepted == 3,
               "2a with identical models EVERY guess is accepted");
         CHECK(!r.rejected, "2b with identical models nothing is rejected");
@@ -310,7 +315,7 @@ static void test_identical_models() {
     }
 
     // The emitted tokens must be in the vocabulary.
-    SpeculativeResult r = speculative_decode_step(model, model, ids_row({0}), 3, rng);
+    SpeculativeResult r = speculative_decode_step(model, model, ids_row({}), 3, rng);
     for (int t : to_ids(r.tokens)) {
         CHECK(t >= 0 && t < 3, "2d every emitted token is in the vocabulary");
     }
@@ -332,7 +337,7 @@ static void test_call_counts() {
     DraftModel target = make_positional(A_P_LOGITS, 4, A_VOCAB, &target_calls);
 
     std::mt19937 rng(7);
-    speculative_decode_step(draft, target, ids_row({0}), 3, rng);
+    speculative_decode_step(draft, target, ids_row({}), 3, rng);
 
     CHECK(draft_calls == 3, "3a the DRAFT is called exactly gamma times");
     CHECK(target_calls == 4, "3b the TARGET is called exactly gamma+1 times");
@@ -356,7 +361,7 @@ static void test_worked_example() {
 
     std::vector<double> us = {0.9, 0.1, 0.4, 0.25, 0.6, 0.7, 0.3};
     SpeculativeResult r = speculative_decode_step_with_uniforms(
-        draft, target, ids_row({0}), 3, us);
+        draft, target, ids_row({}), 3, us);
 
     CHECK(r.num_accepted == 0, "4a the worked example has n == 0");
     CHECK(r.rejected, "4b the worked example rejected a guess");
@@ -368,7 +373,7 @@ static void test_worked_example() {
     // uniforms are the only source of randomness.
     std::mt19937 rng(12345);
     SpeculativeResult r2 =
-        speculative_decode_step(draft, target, ids_row({0}), 3, rng);
+        speculative_decode_step(draft, target, ids_row({}), 3, rng);
     CHECK(r2.tokens.cols >= 1 && r2.tokens.cols <= 4,
           "4e the rng-driven step emits between 1 and gamma+1 tokens");
 }
@@ -392,7 +397,7 @@ static void test_emitted_count_is_n_plus_one() {
     for (int seed = 0; seed < 400; ++seed) {
         std::mt19937 rng(static_cast<unsigned>(seed));
         SpeculativeResult r =
-            speculative_decode_step(draft, target, ids_row({0}), 3, rng);
+            speculative_decode_step(draft, target, ids_row({}), 3, rng);
         if (r.tokens.cols != r.num_accepted + 1) all_ok = false;
         if (r.num_accepted < 4) ++hist[r.num_accepted];
         // A rejection must mean n < gamma, and no rejection must mean n == gamma.
@@ -440,7 +445,7 @@ static void test_residual_values() {
     // us[1] = 0.5 > 0.2 -> the guess is REJECTED at position 1.
     std::vector<double> us = {0.9, 0.5, 0.4, 0.25, 0.6, 0.7, 0.3};
     SpeculativeResult r = speculative_decode_step_with_uniforms(
-        draft, target, ids_row({0}), 3, us);
+        draft, target, ids_row({}), 3, us);
 
     CHECK(r.num_accepted == 0, "6a the guess at position 1 was rejected");
     CHECK(r.rejected, "6b the step reports a rejection");
@@ -480,24 +485,35 @@ static void test_residual_values() {
     // acceptance probability there is 0.25/0.5 = 0.5, so us[2] = 0.9 rejects
     // it. The residual at position 1 is norm(max(0, [0.25,0.75]-[0.5,0.5]))
     // = norm([0, 0.25]) = [0, 1] -- the point mass on token 1.
-    const double E2_P[3][2] = {
+    const double E2_P[4][2] = {
         {-0.6931471805599453, -0.6931471805599453},
         {-1.3862943611198906, -0.2876820724517809},
         {-1.3862943611198906, -0.2876820724517809},
+        {-1.3862943611198906, -0.2876820724517809},
     };
-    const double E2_Q[3][2] = {
+    const double E2_Q[4][2] = {
         {0.0, -1e300},
         {-0.6931471805599453, -0.6931471805599453},
         {-0.6931471805599453, -0.6931471805599453},
+        {-0.6931471805599453, -0.6931471805599453},
     };
-    DraftModel d2 = make_positional(E2_Q, 3, 2, nullptr);
-    DraftModel t2 = make_positional(E2_P, 3, 2, nullptr);
-    // us[0] selects the position-0 guess (token 0, the draft is a point
-    // mass); us[1] is the position-0 acceptance draw; us[2] is the
-    // position-1 acceptance draw; us[4] is the final token's draw.
-    std::vector<double> us2 = {0.25, 0.9, 0.9, 0.25, 0.4, 0.6, 0.5};
+    DraftModel d2 = make_positional(E2_Q, 4, 2, nullptr);
+    DraftModel t2 = make_positional(E2_P, 4, 2, nullptr);
+    // The uniforms come from the ORACLE, not from a hand-derived layout:
+    // the oracle reports the exact draw sequence that produces a rejection
+    // at position index 1 (n == 1). A hand-computed layout was WRONG in the
+    // first draft of this test -- the uniform that selects the guess, the
+    // uniform that accepts it and the uniform that rejects the NEXT one are
+    // three different slots, and mixing them up produces a rejection at the
+    // wrong position.
+    //
+    // oracle: us = [0.636962, 0.269787, 0.040974, 0.016528, 0.81327,
+    //               0.912756, 0.606636]
+    //         -> tokens = [0, 1]   n = 1   flags = [True, False, False]
+    std::vector<double> us2 = {0.636962, 0.269787, 0.040974, 0.016528,
+                               0.81327, 0.912756, 0.606636};
     SpeculativeResult r2 = speculative_decode_step_with_uniforms(
-        d2, t2, ids_row({0}), 3, us2);
+        d2, t2, ids_row({}), 3, us2);
     CHECK(r2.num_accepted == 1,
           "6e the guess at position 1 was accepted and the one at position 2 "
           "rejected");
@@ -599,40 +615,41 @@ static void test_residual_sum_divisor() {
 
     // position 0: p = [0.5, 0.5]    q = [1.0, 0.0]     (point mass, ratio 0.5)
     // position 1: p = [0.5, 0.3, 0.2]  q = [0.2, 0.1, 0.7]
-    const double G_P[3][3] = {
+    const double G_P[4][3] = {
         {-0.6931471805599453, -0.6931471805599453, -0.6931471805599453},
         {-0.6931471805599453, -1.2039728043259361, -1.6094379124341003},
         {-0.6931471805599453, -1.2039728043259361, -1.6094379124341003},
+        {-0.6931471805599453, -1.2039728043259361, -1.6094379124341003},
     };
-    const double G_Q[3][3] = {
+    const double G_Q[4][3] = {
         {0.0, -1e300, -1e300},
         {-1.6094379124341003, -2.3025850929940455, -0.35667494393873245},
         {-1.6094379124341003, -2.3025850929940455, -0.35667494393873245},
+        {-1.6094379124341003, -2.3025850929940455, -0.35667494393873245},
     };
-    DraftModel dg = make_positional(G_Q, 3, 3, nullptr);
-    DraftModel tg = make_positional(G_P, 3, 3, nullptr);
+    DraftModel dg = make_positional(G_Q, 4, 3, nullptr);
+    DraftModel tg = make_positional(G_P, 4, 3, nullptr);
 
-    // The guess at position 0 is token 0 (point mass). We want it ACCEPTED
-    // (us[1] = 0.1 <= 0.5) so the run reaches position 1.
-    // The guess at position 1 is drawn from q = [0.2, 0.1, 0.7]; the CDF is
-    // [0.2, 0.3, 1.0], so us[2] = 0.9 selects TOKEN 2. Its acceptance
-    // probability is 0.2/0.7 = 0.2857..., so us[3] = 0.9 REJECTS it.
     // The residual at position 1 is norm(max(0, [0.5,0.3,0.2]-[0.2,0.1,0.7]))
-    // = norm([0.3, 0.2, 0]) = [0.6, 0.4, 0].
-    // The final token's draw is us[6].
+    // = norm([0.3, 0.2, 0]) = [0.6, 0.4, 0] -- TWO surviving coordinates, so
+    // the SUM divisor is what decides the correction's distribution.
+    //
+    // The uniforms come from the ORACLE: it reports the exact draw sequence
+    // that reaches position 1 and rejects there.
+    //   oracle: us = [0.943056, 0.511328, 0.976244, 0.080836, 0.607356,
+    //                 0.376487, 0.801901]
+    //           -> tokens = [0, 1]   n = 1   flags = [True, False, False]
+    // Only the FINAL draw (us[6]) varies across the trials -- it selects
+    // the correction token, and it is the only one that matters for the
+    // measurement.
     int counts[3] = {0, 0, 0};
     const int trials = 4000;
     for (int s = 0; s < trials; ++s) {
-        // us[0] = 0.25 (selects token 0 at position 0)
-        // us[1] = 0.10 (accepts: 0.10 <= 0.5)
-        // us[2] = 0.90 (selects token 2 at position 1)
-        // us[3] = 0.90 (rejects: 0.90 > 0.2857)
-        // us[4], us[5] are unused past the rejection
-        // us[6] = the final token's draw
         double u6 = static_cast<double>(s) / static_cast<double>(trials);
-        std::vector<double> us = {0.25, 0.10, 0.90, 0.90, 0.5, 0.5, u6};
+        std::vector<double> us = {0.943056, 0.511328, 0.976244, 0.080836,
+                                  0.607356, 0.376487, u6};
         SpeculativeResult r =
-            speculative_decode_step_with_uniforms(dg, tg, ids_row({0}), 3, us);
+            speculative_decode_step_with_uniforms(dg, tg, ids_row({}), 3, us);
         if (r.num_accepted == 1 && r.rejected && r.tokens.cols == 2) {
             std::vector<int> ids = to_ids(r.tokens);
             if (ids.size() == 2 && ids[1] >= 0 && ids[1] < 3) ++counts[ids[1]];
@@ -677,8 +694,8 @@ static void test_residual_sum_divisor() {
 static void test_boundary_convention() {
     banner("8 the boundary convention");
 
-    DraftModel draft = make_positional(D_Q_LOGITS, 2, 2, nullptr);
-    DraftModel target = make_positional(D_P_LOGITS, 2, 2, nullptr);
+    DraftModel draft = make_positional(D_Q_LOGITS, 3, 2, nullptr);
+    DraftModel target = make_positional(D_P_LOGITS, 3, 2, nullptr);
 
     // us[0] = 0.25 selects the guess (the draft is a point mass on token 0,
     // so any draw in [0,1) does). us[1] = 0.5 is EXACTLY the acceptance
@@ -686,7 +703,7 @@ static void test_boundary_convention() {
     // = [0.5, 0.5], and 0.25 lands in the first cell -> token 0.
     std::vector<double> us = {0.25, 0.5, 0.25};
     SpeculativeResult r = speculative_decode_step_with_uniforms(
-        draft, target, ids_row({0}), 1, us);
+        draft, target, ids_row({}), 1, us);
 
     CHECK(r.num_accepted == 1,
           "8a a draw EXACTLY on the acceptance boundary ACCEPTS (`<=`)");
@@ -697,7 +714,7 @@ static void test_boundary_convention() {
     // A draw JUST ABOVE the boundary rejects.
     std::vector<double> us_above = {0.25, 0.5000001, 0.25};
     SpeculativeResult r2 = speculative_decode_step_with_uniforms(
-        draft, target, ids_row({0}), 1, us_above);
+        draft, target, ids_row({}), 1, us_above);
     CHECK(r2.num_accepted == 0,
           "8d a draw just ABOVE the acceptance probability REJECTS");
     CHECK(r2.rejected, "8e the step reports the rejection");
@@ -752,15 +769,21 @@ static void test_acceptance_is_probabilistic() {
     for (int s = 0; s < trials; ++s) {
         std::mt19937 rng(static_cast<unsigned>(s));
         SpeculativeResult r =
-            speculative_decode_step(dc, tc, ids_row({0}), 1, rng);
+            speculative_decode_step(dc, tc, ids_row({}), 1, rng);
         if (r.num_accepted == 1) ++accepted;
     }
     double rate = static_cast<double>(accepted) / trials;
     printf("        measured acceptance rate = %.4f (expected ~0.7)\n", rate);
     CHECK(std::fabs(rate - 0.7) < 0.02,
           "9a the acceptance rate matches the probabilistic rule (p/q)");
-    CHECK(std::fabs(rate - 0.7) > std::fabs(rate - 0.5),
-          "9b the rate is far from the deterministic rule's 0.5");
+    // The deterministic rule's rate is 0.5, and the measured rate is ~0.7,
+    // so the measured rate must be FAR from 0.5 -- but "far" here means a
+    // fixed margin, not "the distance to 0.5 is bigger than the distance to
+    // 0.5", which is nonsense. The first draft of this assertion read
+    // `fabs(rate - 0.7) > fabs(rate - 0.5)`, which is TRUE only when the
+    // rate is above 0.6 -- a property of the RATE, not of the rule.
+    CHECK(std::fabs(rate - 0.5) > 0.15,
+          "9b the measured rate is far from the DETERMINISTIC rule's 0.5");
 
     // And the rate must match the measured p/q of the paper's own formula:
     // the acceptance probability at token 1 is exactly 0.4.
@@ -769,7 +792,7 @@ static void test_acceptance_is_probabilistic() {
     for (int s = 0; s < trials; ++s) {
         std::mt19937 rng(static_cast<unsigned>(s));
         SpeculativeResult r =
-            speculative_decode_step(dc, tc, ids_row({0}), 1, rng);
+            speculative_decode_step(dc, tc, ids_row({}), 1, rng);
         // With gamma = 1, a rejection at position 0 means the guess was
         // token 1 (token 0 is always accepted). So the count of REJECTIONS
         // is the count of "token 1 guessed and not accepted".
@@ -799,15 +822,32 @@ static void test_distributional_property() {
     DraftModel draft = make_positional(E_Q_LOGITS, 2, 3, nullptr);
     DraftModel target = make_positional(E_P_LOGITS, 2, 3, nullptr);
 
+    //
+    // THE FIRST EMITTED TOKEN IS THE ONE THAT MUST MATCH p -- not the
+    // correction token. This is a trap the first draft of this test fell
+    // into, and the oracle caught it: on this fixture the residual is
+    // norm(max(0, [0.5,0.3,0.2] - [0.2,0.3,0.5])) = norm([0.3,0,0]) = [1,0,0],
+    // so the CORRECTION token is ALWAYS token 0. A test that counted only
+    // the correction tokens would measure [1,0,0] and fail against a
+    // perfectly correct implementation.
+    //
+    // The paper's claim is about the DISTRIBUTION OF THE EMITTED TOKENS,
+    // which is the first token of the step -- the correction only appears
+    // when a guess was rejected.
     const int trials = 60000;
     int counts[3] = {0, 0, 0};
+    int corrections[3] = {0, 0, 0};
     for (int s = 0; s < trials; ++s) {
         std::mt19937 rng(static_cast<unsigned>(s));
         SpeculativeResult r =
-            speculative_decode_step(draft, target, ids_row({0}), 1, rng);
-        if (r.tokens.cols != 1) continue;
+            speculative_decode_step(draft, target, ids_row({}), 1, rng);
+        if (r.tokens.cols < 1) continue;
         int t = static_cast<int>(r.tokens(0, 0));
         if (t >= 0 && t < 3) ++counts[t];
+        if (r.rejected && r.tokens.cols == 1) {
+            int c = static_cast<int>(r.tokens(0, 0));
+            if (c >= 0 && c < 3) ++corrections[c];
+        }
     }
     int total = counts[0] + counts[1] + counts[2];
     printf("        empirical: %.4f %.4f %.4f  (target 0.5 0.3 0.2)\n",
@@ -821,6 +861,21 @@ static void test_distributional_property() {
           "10c token 1's rate matches the TARGET's p");
     CHECK(std::fabs(static_cast<double>(counts[2]) / total - 0.2) < 0.02,
           "10d token 2's rate matches the TARGET's p");
+
+    // And the CORRECTION token is the residual's point mass on token 0 --
+    // pinned separately, because conflating the two is what the first draft
+    // of this test did.
+    int ctotal = corrections[0] + corrections[1] + corrections[2];
+    CHECK(ctotal > 0, "10e the rejection path produced corrections");
+    if (ctotal > 0) {
+        printf("        corrections: %.4f %.4f %.4f  (residual [1, 0, 0])\n",
+               static_cast<double>(corrections[0]) / ctotal,
+               static_cast<double>(corrections[1]) / ctotal,
+               static_cast<double>(corrections[2]) / ctotal);
+        CHECK(corrections[0] == ctotal,
+              "10f the correction is ALWAYS token 0 -- the residual is the "
+              "point mass [1, 0, 0]");
+    }
 }
 
 // ===========================================================================
@@ -829,10 +884,12 @@ static void test_distributional_property() {
 static void test_shape_and_purity() {
     banner("11 shape and purity");
 
-    DraftModel draft = make_positional(A_Q_LOGITS, 4, A_VOCAB, nullptr);
-    DraftModel target = make_positional(A_P_LOGITS, 4, A_VOCAB, nullptr);
+    DraftModel draft = make_positional(A_Q_LOGITS, 5, A_VOCAB, nullptr);
+    DraftModel target = make_positional(A_P_LOGITS, 5, A_VOCAB, nullptr);
 
-    Tensor prefix = ids_row({1, 2});
+    // A ONE-token prefix, so the purity check has something to look at.
+    // The A fixture has five rows, so positions 1..4 are in range.
+    Tensor prefix = ids_row({1});
     Tensor before = prefix.clone();
     std::mt19937 rng(3);
     SpeculativeResult r = speculative_decode_step(draft, target, prefix, 3, rng);
@@ -850,19 +907,34 @@ static void test_shape_and_purity() {
 // ===========================================================================
 // main
 // ===========================================================================
+// Every test body is wrapped so that a THROWING implementation reports a
+// verdict instead of aborting the binary before the summary line is
+// printed. A binary that dies produces no summary, and the mutation
+// harness has nothing to count -- which is how a crash gets reported as a
+// build failure rather than as a caught mutation.
+template <typename F>
+static void run_guarded(F fn, const char* name) {
+    try {
+        fn();
+    } catch (const std::exception& e) {
+        ++failed;
+        printf("  [FAIL] %s threw: %s\n", name, e.what());
+    }
+}
+
 int main() {
     printf("=== Speculative Decoding Tests ===\n");
-    test_guards();
-    test_identical_models();
-    test_call_counts();
-    test_worked_example();
-    test_emitted_count_is_n_plus_one();
-    test_residual_values();
-    test_residual_sum_divisor();
-    test_boundary_convention();
-    test_acceptance_is_probabilistic();
-    test_distributional_property();
-    test_shape_and_purity();
+    run_guarded(test_guards, "1 the guards");
+    run_guarded(test_identical_models, "2 identical models");
+    run_guarded(test_call_counts, "3 the call counts");
+    run_guarded(test_worked_example, "4 the worked example");
+    run_guarded(test_emitted_count_is_n_plus_one, "5 the emitted count");
+    run_guarded(test_residual_values, "6 the residual");
+    run_guarded(test_residual_sum_divisor, "7 the residual's sum divisor");
+    run_guarded(test_boundary_convention, "8 the boundary convention");
+    run_guarded(test_acceptance_is_probabilistic, "9 the acceptance rate");
+    run_guarded(test_distributional_property, "10 the distribution");
+    run_guarded(test_shape_and_purity, "11 shape and purity");
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

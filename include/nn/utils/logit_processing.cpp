@@ -725,5 +725,279 @@ AutoregressiveResult autoregressive_sample(
     return result;
 }
 
+// ===========================================================================
+// SPECULATIVE DECODING
+//
+// Leviathan, Kalman, Matias, "Fast Inference from Transformers via Speculative
+// Decoding", ICML 2023, arXiv:2211.17192. The implementation follows the
+// paper's Algorithm 1 `SpeculativeDecodingStep`, transcribed from the
+// paper's own HTML (https://arxiv.org/html/2211.17192):
+//
+//     Sample gamma guesses x_1, ..., x_gamma from M_q autoregressively.
+//     Run M_p in parallel: p_1, ..., p_{gamma+1}.
+//     n <- min({i-1 | 1 <= i <= gamma, r_i > p_i(x)/q_i(x)} union {gamma})
+//     p'(x) <- p_{n+1}(x);  if n < gamma: p'(x) <- norm(max(0, p_{n+1} - q_{n+1}))
+//     t ~ p'(x);  return prefix + [x_1, ..., x_n, t]
+//
+// The header's SP1..SP12 comment block states each semantic and names the
+// test that pins it.
+// ===========================================================================
+namespace {
+
+// The acceptance probability min(1, p/q).
+//
+// SP3: the ratio is a PROBABILITY, so it is clamped at 1. The clamp is
+// DEFENSIVE rather than load-bearing: when the rule is written as the
+// threshold comparison `r <= ratio`, a ratio above 1 already accepts every
+// `r in [0,1)`. The oracle MEASURED this (the clamped and unclamped rules
+// agree on 3000/3000 random trials), and the clamp is kept because it says
+// what the quantity is.
+//
+// `q_at <= 0` cannot happen for a real guess -- the guess was DRAWN from q,
+// so q(guess) > 0 by construction -- but the guard keeps a zero from
+// producing a NaN.
+double acceptance_probability(double p_at, double q_at) {
+    if (!(q_at > 0.0)) return 1.0;
+    double ratio = p_at / q_at;
+    return ratio < 1.0 ? ratio : 1.0;
+}
+
+// The residual distribution norm(max(0, p - q)), componentwise, over the
+// FULL vocabulary (SP6).
+//
+// The componentwise max(0, .) is MATHEMATICALLY load-bearing, not merely a
+// different number: p and q are both distributions, so sum(p - q) == 0
+// EXACTLY, and without the clamp the normalisation divides by zero.
+//
+// SP11: when a rejection has happened, the residual is never all-zero --
+// the rejected guess has q(x) > p(x), so p - q is strictly positive there.
+// The guard is a belt-and-braces backstop for a caller that supplies
+// inconsistent rows; it falls back to `p` rather than returning NaNs.
+std::vector<double> residual_distribution(const std::vector<double>& p,
+                                           const std::vector<double>& q) {
+    size_t v = p.size();
+    std::vector<double> r(v, 0.0);
+    double sum = 0.0;
+    for (size_t j = 0; j < v; ++j) {
+        double d = p[j] - q[j];
+        if (d > 0.0) {
+            r[j] = d;
+            sum += d;
+        }
+    }
+    if (!(sum > 0.0) || !std::isfinite(sum)) {
+        // The residual carries no mass. Rather than divide by zero, fall back
+        // to the target's own distribution -- a wrong-but-finite token beats a
+        // NaN that silently corrupts the sequence.
+        return p;
+    }
+    for (size_t j = 0; j < v; ++j) r[j] /= sum;
+    return r;
+}
+
+// The inverse-CDF draw used by the file's existing `sample_from_logits`:
+// the cumulative sum is compared with `u < acc` (STRICT) and the last index
+// is the fallback. Kept in ONE place so the step and the sampler cannot
+// drift apart.
+int draw_from_probs(const std::vector<double>& probs, double u) {
+    double acc = 0.0;
+    for (size_t j = 0; j < probs.size(); ++j) {
+        acc += probs[j];
+        if (u < acc) return static_cast<int>(j);
+    }
+    return static_cast<int>(probs.size()) - 1;
+}
+
+// Turn a model's LOGIT row into a probability row.
+//
+// The model's row is converted with the file's existing max-subtracting
+// softmax (S10): `exp(1000)` is inf and `inf/inf` is NaN, so the
+// max-subtraction is load-bearing, not a nicety.
+//
+// The model's LOGITS are never mutated -- the row is copied out first.
+std::vector<double> model_probs(const DraftModel& model, const Tensor& prefix,
+                                const char* who) {
+    Tensor logits = model(prefix);
+    if (logits.rows == 0 || logits.cols == 0) {
+        throw std::runtime_error(
+            std::string(who) + ": the model returned an empty row");
+    }
+    if (logits.rows != 1 && logits.cols != 1) {
+        throw std::runtime_error(
+            std::string(who) + ": the model must return a single row of "
+            "logits, got a " + std::to_string(logits.rows) + "x" +
+            std::to_string(logits.cols) + " tensor");
+    }
+    std::vector<double> lg = to_vec(logits);
+    return probabilities(lg);
+}
+
+// Append a token id to the prefix, producing the next prefix.
+Tensor grow(const Tensor& prefix, int token) {
+    Tensor out(1, prefix.cols + 1);
+    for (size_t j = 0; j < prefix.cols; ++j) out(0, j) = prefix(0, j);
+    out(0, prefix.cols) = static_cast<double>(token);
+    return out;
+}
+
+}  // namespace
+
+SpeculativeResult speculative_decode_step_with_uniforms(
+    const DraftModel& draft, const DraftModel& target, const Tensor& prefix,
+    size_t gamma, const std::vector<double>& uniforms) {
+    if (gamma == 0) {
+        throw std::invalid_argument("speculative_decode_step: gamma must be > 0");
+    }
+    if (!draft) {
+        throw std::invalid_argument(
+            "speculative_decode_step: the draft model must not be null");
+    }
+    if (!target) {
+        throw std::invalid_argument(
+            "speculative_decode_step: the target model must not be null");
+    }
+    if (prefix.rows != 1) {
+        throw std::invalid_argument(
+            "speculative_decode_step: the prefix must have exactly one row");
+    }
+    // The step consumes 2*gamma+1 uniforms: gamma to select the guesses,
+    // gamma for the acceptance test, and one for the final token.
+    if (uniforms.size() != 2 * gamma + 1) {
+        throw std::invalid_argument(
+            "speculative_decode_step: expected " + std::to_string(2 * gamma + 1) +
+            " uniform draws, got " + std::to_string(uniforms.size()));
+    }
+    for (size_t i = 0; i < uniforms.size(); ++i) {
+        if (!(uniforms[i] >= 0.0) || !(uniforms[i] < 1.0)) {
+            throw std::invalid_argument(
+                "speculative_decode_step: uniform " + std::to_string(i) +
+                " is outside [0, 1)");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Sample gamma guesses from the draft, autoregressively (SP1).
+    //
+    // The draft's row at each position is RECORDED, because the residual
+    // needs q_{n+1} and that row must be the one that PRODUCED the guess.
+    // ---------------------------------------------------------------------
+    std::vector<std::vector<double>> q_rows;
+    std::vector<int> guesses;
+    size_t vocab = 0;
+    Tensor cur = prefix;
+    for (size_t i = 0; i < gamma; ++i) {
+        std::vector<double> qi = model_probs(draft, cur, "the draft model");
+        if (i == 0) {
+            // The vocabulary width comes from the draft's first row.
+            vocab = qi.size();
+        } else if (qi.size() != vocab) {
+            throw std::runtime_error(
+                "speculative_decode_step: the draft model returned a row of "
+                "width " + std::to_string(qi.size()) +
+                " at position " + std::to_string(i) + " but width " +
+                std::to_string(vocab) + " at position 0");
+        }
+        q_rows.push_back(qi);
+        int x = draw_from_probs(qi, uniforms[i]);
+        guesses.push_back(x);
+        cur = grow(cur, x);
+    }
+
+    // ---------------------------------------------------------------------
+    // Score the target at gamma+1 positions (SP2).
+    //
+    // The target's rows are p_1..p_{gamma+1}: p_i is the target's
+    // distribution at prefix + [x_1..x_{i-1}], and p_{gamma+1} is at the
+    // full guessed sequence.
+    // ---------------------------------------------------------------------
+    std::vector<std::vector<double>> p_rows;
+    for (size_t i = 0; i <= gamma; ++i) {
+        Tensor at = prefix;
+        for (size_t j = 0; j < i; ++j) at = grow(at, guesses[j]);
+        std::vector<double> pi = model_probs(target, at, "the target model");
+        if (pi.size() != vocab) {
+            throw std::runtime_error(
+                "speculative_decode_step: the draft and target models "
+                "disagree about the vocabulary width (" +
+                std::to_string(vocab) + " vs " + std::to_string(pi.size()) +
+                ")");
+        }
+        p_rows.push_back(pi);
+    }
+
+    // ---------------------------------------------------------------------
+    // Determine the number of accepted guesses n (SP3, SP4).
+    //
+    // The paper: n <- min({i-1 | 1 <= i <= gamma, r_i > p_i(x)/q_i(x)}
+    //                    union {gamma})
+    //
+    // which is the number of LEADING accepted guesses: the first rejection
+    // ends the run.
+    // ---------------------------------------------------------------------
+    size_t n = gamma;
+    for (size_t i = 0; i < gamma; ++i) {
+        double pi = p_rows[i][static_cast<size_t>(guesses[i])];
+        double qi = q_rows[i][static_cast<size_t>(guesses[i])];
+        double ratio = acceptance_probability(pi, qi);
+        // `<=`, not `<`: a draw that lands EXACTLY on the acceptance
+        // probability accepts. (The boundary is observable only when the
+        // draw is supplied at exactly that value -- a random uniform is
+        // continuous, so it never lands there.)
+        if (!(uniforms[gamma + i] <= ratio)) {
+            n = i;
+            break;
+        }
+    }
+    bool rejected = (n < gamma);
+
+    // ---------------------------------------------------------------------
+    // Adjust the distribution from M_p if needed (SP6, SP7).
+    // ---------------------------------------------------------------------
+    std::vector<double> p_prime;
+    if (rejected) {
+        // The residual at index n+1 (1-based) == index n (0-based). Both
+        // rows are among the ones already computed.
+        p_prime = residual_distribution(p_rows[n], q_rows[n]);
+    } else {
+        // EVERY guess was accepted: the bonus token comes from p_{gamma+1}
+        // UNMODIFIED. Using the residual here would lose the bonus token and
+        // cost the entire speedup -- and for identical models the residual
+        // is all-zero, so it would also divide by zero.
+        p_prime = p_rows[gamma];
+    }
+
+    // ---------------------------------------------------------------------
+    // Return one token from M_p, and n tokens from M_q (SP9).
+    // ---------------------------------------------------------------------
+    int t = draw_from_probs(p_prime, uniforms[2 * gamma]);
+
+    SpeculativeResult result;
+    result.tokens = Tensor(1, n + 1);
+    for (size_t i = 0; i < n; ++i) {
+        result.tokens(0, i) = static_cast<double>(guesses[i]);
+    }
+    result.tokens(0, n) = static_cast<double>(t);
+    result.num_accepted = n;
+    result.rejected = rejected;
+    return result;
+}
+
+SpeculativeResult speculative_decode_step(const DraftModel& draft,
+                                           const DraftModel& target,
+                                           const Tensor& prefix, size_t gamma,
+                                           std::mt19937& rng) {
+    if (gamma == 0) {
+        throw std::invalid_argument("speculative_decode_step: gamma must be > 0");
+    }
+    // The uniforms are drawn in the order the step consumes them: first the
+    // gamma draws that SELECT the guesses, then the gamma acceptance draws,
+    // then the draw that selects the final token.
+    std::vector<double> uniforms(2 * gamma + 1);
+    std::uniform_real_distribution<double> unif(0.0, 1.0);
+    for (size_t i = 0; i < uniforms.size(); ++i) uniforms[i] = unif(rng);
+    return speculative_decode_step_with_uniforms(draft, target, prefix, gamma,
+                                                uniforms);
+}
+
 }  // namespace utils
 }  // namespace nn
