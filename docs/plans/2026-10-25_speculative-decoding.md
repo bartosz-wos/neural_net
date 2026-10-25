@@ -8,6 +8,42 @@
 
 **Tech Stack:** C++17, the repo's `Tensor` class, the existing `logit_processing.cpp` helpers (`softmax`, `probabilities`), a numpy float64 oracle, and the repo's mutation harness.
 
+> **PLAN REVISION (2026-10-25, after the oracle ran).** The oracle
+> (`tests/speculative_decoding_oracle.py`, 3074 self-checks, green) corrected
+> **four** things in this plan before a line of C++ was written. Two of them
+> change the API and the test matrix, so they are recorded here rather than
+> silently dropped:
+>
+> 1. **SP3's CLAMP IS MEASURED INERT.** The plan asserted that clamping the
+>    acceptance ratio at 1 is "required by the maths" and built a foil to
+>    prove it. The foil was **VACUOUS**: the clamped and unclamped rules
+>    produced identical output on 3000/3000 trials. The reason is a fact about
+>    the *rule's shape*: when the acceptance is written as a threshold
+>    comparison `r <= p/q` and `p > q`, the ratio exceeds 1 and every
+>    `r in [0,1)` satisfies it automatically — which is exactly the correct
+>    behaviour. **The clamp is DEFENSIVE, not load-bearing**, and the C++
+>    harness must score a drop-the-clamp mutation with an **inverted** verdict
+>    (it fails if the mutation ever starts to matter), not as a coverage gap.
+> 2. **THE `<=` vs `<` BOUNDARY IS ALSO UNOBSERVABLE BY A RANDOM FIXTURE.**
+>    The two differ only when the uniform draw lands *exactly* on the
+>    acceptance probability — a measure-zero event for a continuous draw. The
+>    C++ test must therefore **supply** the draw at exactly the boundary, on a
+>    **dyadic** acceptance probability of 0.5, or the convention is untestable.
+>    (The repo's top-p fixture already learned the general lesson: a fixture
+>    whose discriminating value is only correct to within a rounding error
+>    does not discriminate anything. Here the value must be exactly
+>    representable *and* supplied.)
+> 3. **THE FIXTURE MUST VARY BY POSITION.** The plan's first fixture used the
+>    same distribution at every position, which made the SP6 wrong-index foil
+>    **VACUOUS** (`p_n == p_{n+1}` for every `n`, so the wrong index computes
+>    the same distribution). The shipped fixture gives every position a
+>    *different* pair of distributions.
+> 4. **`max(0, ·)` IS MATHEMATICALLY LOAD-BEARING, NOT MERELY A DIFFERENT
+>    NUMBER.** `p` and `q` are both distributions, so `sum(p - q) == 0`
+>    exactly. Dropping the componentwise clamp leaves a zero-sum vector, and
+>    the normalisation **divides by zero** — the residual is not merely
+>    different, it is *undefined*.
+
 ---
 
 ## 0. The gap, measured (not assumed)
