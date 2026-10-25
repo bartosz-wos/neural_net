@@ -285,6 +285,54 @@ static void test_guards() {
         speculative_decode_step_with_uniforms(m2, m2, ids_row({}), 3, too_few);
     } catch (const std::invalid_argument&) { threw = true; }
     CHECK(threw, "1f too few uniforms throws std::invalid_argument");
+
+    // A uniform outside [0, 1) is a caller error, not a silent clamp.
+    threw = false;
+    try {
+        DraftModel m2 = make_positional(A_P_LOGITS, 5, A_VOCAB, nullptr);
+        std::vector<double> bad(7, 0.5);
+        bad[3] = 1.0;
+        speculative_decode_step_with_uniforms(m2, m2, ids_row({}), 3, bad);
+    } catch (const std::invalid_argument&) { threw = true; }
+    CHECK(threw, "1g a uniform of exactly 1.0 throws std::invalid_argument");
+
+    // A model that returns an EMPTY row.
+    //
+    // THIS TEST WAS MISSING, and the mutation harness found it: removing the
+    // empty-row guard left the suite GREEN. The gap was real -- nothing
+    // exercised the guard, so nothing could see it removed. An empty row is
+    // not reachable from a real model, but the guard exists precisely to
+    // turn a malformed callback into a diagnosable error rather than an
+    // out-of-bounds read.
+    threw = false;
+    try {
+        DraftModel empty = [](const Tensor&) { return Tensor(1, 0); };
+        std::mt19937 rng(1);
+        speculative_decode_step(empty, empty, ids_row({}), 2, rng);
+    } catch (const std::runtime_error&) { threw = true; }
+    CHECK(threw, "1h a model returning an EMPTY row throws std::runtime_error");
+
+    // A model that returns a MULTI-ROW tensor.
+    threw = false;
+    try {
+        DraftModel multi = [](const Tensor&) { return Tensor(3, 4); };
+        std::mt19937 rng(1);
+        speculative_decode_step(multi, multi, ids_row({}), 2, rng);
+    } catch (const std::runtime_error&) { threw = true; }
+    CHECK(threw, "1i a model returning a MULTI-ROW tensor throws std::runtime_error");
+
+    // A draft whose WIDTH changes between positions -- the model's shape is
+    // not constant, which is a caller error rather than something to
+    // tolerate.
+    threw = false;
+    try {
+        DraftModel wobbly = [](const Tensor& prefix) {
+            return prefix.cols == 0 ? Tensor(1, 4) : Tensor(1, 2);
+        };
+        std::mt19937 rng(1);
+        speculative_decode_step(wobbly, model, ids_row({}), 2, rng);
+    } catch (const std::runtime_error&) { threw = true; }
+    CHECK(threw, "1j a draft whose width CHANGES throws std::runtime_error");
 }
 
 // ===========================================================================
