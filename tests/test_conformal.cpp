@@ -248,6 +248,39 @@ section("S3. AN INSUFFICIENT CALIBRATION SET GIVES +inf");
                            "space");
 }
 
+// S3g. THE MULTI-COLUMN CASE, WHICH IS WHERE THE `k > n` GUARD IS LOAD-BEARING.
+//
+//      The mutation harness found this: removing the `k > n` early return
+//      left the suite GREEN, because every other fixture used a ONE-COLUMN
+//      score tensor, for which `v.size() == n` and the two guards (`k > n`
+//      and `v.size() < k`) are equivalent.
+//
+//      They DIVERGE for a MULTI-COLUMN tensor: `v.size() == n * cols`
+//      exceeds `n`, so the `v.size() < k` guard never fires and `k > n` is
+//      the only thing that returns +inf. Without it, a (4, 3) calibration
+//      tensor at alpha = 0.1 returns a FINITE threshold where the theorem
+//      says +infinity -- which does not break a test, it BREAKS THE
+//      COVERAGE GUARANTEE while looking perfectly healthy.
+//
+//      A TEST THAT ONLY EXERCISES ONE SHAPE CANNOT SEE A SHAPE-DEPENDENT
+//      BRANCH. This is the same lesson the repo's NumPy-1-ULP and the
+//      "v.size() == n*cols" fixture share: the discriminating fixture has to
+//      VARY IN THE DIMENSION THE MUTATION TARGETS.
+{
+    Tensor wide = mat(4, 3, {0.1, 0.2, 0.3,
+                             0.4, 0.5, 0.6,
+                             0.7, 0.8, 0.9,
+                             1.0, 1.1, 1.2});
+    check(conformal_quantile_is_infinite(4, 0.1),
+          "S3g. a (4, 3) calibration tensor at alpha=0.1 is flagged infinite");
+    check(std::isinf(conformal_quantile(wide, 0.1)),
+          "S3h. and the quantile IS +inf (not a finite threshold)");
+    // The boundary: n=9 rows of 3 columns -> k=9 <= 9 -> finite.
+    Tensor wide9 = mat(9, 3, std::vector<double>(27, 0.5));
+    check(!std::isinf(conformal_quantile(wide9, 0.1)),
+          "S3i. the multi-column boundary case is finite");
+}
+
 // =============================================================================
 section("S4. APS: THE SCORE IS THE CUMULATIVE MASS THROUGH THE TRUE CLASS");
 

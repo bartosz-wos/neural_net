@@ -213,8 +213,12 @@ run_mutation M06 "$SRC" "return v[k - 1];" \
 run_mutation M07 "$SRC" "score = running;" "score = probs(i, order[r]);"
 
 # M08 scores the mass BEFORE the true class (drops the true class itself).
-run_mutation M08 "$SRC" "if (order[r] == static_cast<size_t>(y)) { score = running; found = true; }" \
-    "if (order[r] == static_cast<size_t>(y)) { score = running - probs(i, order[r]); found = true; }"
+run_mutation M08 "$SRC" "            if (order[r] == static_cast<size_t>(y)) {
+                score = running;
+            }" \
+    "            if (order[r] == static_cast<size_t>(y)) {
+                score = running - probs(i, order[r]);
+            }"
 
 # M09 breaks the tie-break: sorts ASCENDING by probability instead of
 #      descending. The tie fixture (S4h/S4i) pins the descending rule.
@@ -267,7 +271,11 @@ run_mutation M18 "$SRC" "if (!std::isfinite(s)) {
 # M19 removes the alpha range check.
 run_mutation M19 "$SRC" "if (alpha < 0.0 || alpha > 1.0) {" "if (false) {"
 
-# M20 removes the label range check.
+# M20 removes the label RANGE check. The dead `!found` throw that used to
+#      mask this was removed after the harness proved it unreachable -- so
+#      this mutation now has to be caught by the range check ITSELF, which is
+#      the only guard left. (Two guards for one condition is one too many:
+#      the dead one made the live one untested.)
 run_mutation M20 "$SRC" "if (y < 0 || y >= static_cast<long long>(K)) {" "if (false) {"
 
 # M21 removes the row-count shape check in aps_score.

@@ -139,6 +139,19 @@ double conformal_quantile(const Tensor& scores, double alpha) {
     if (k > n) {
         // Not enough calibration data to certify the requested coverage: the
         // `inf{...}` form of the theorem is +infinity.
+        //
+        // THIS GUARD IS NOT REDUNDANT WITH THE `v.size() < k` ONE BELOW, and
+        // the mutation harness proved it: removing THIS line left the suite
+        // GREEN, because every fixture used a ONE-COLUMN score tensor, for
+        // which `v.size() == n` and the two guards are equivalent.
+        //
+        // They DIVERGE for a MULTI-COLUMN tensor, where `v.size() == n*cols`
+        // exceeds `n`: the `v.size() < k` guard then never fires, and this
+        // one is the ONLY thing that returns +inf. Without it, a (4, 3)
+        // calibration tensor at alpha = 0.1 would return a FINITE threshold
+        // where the theorem says +infinity -- silently breaking the coverage
+        // guarantee instead of reporting that the calibration set is too
+        // small.
         return std::numeric_limits<double>::infinity();
     }
     if (v.size() < k) {
@@ -190,19 +203,24 @@ Tensor aps_score(const Tensor& probs, const Tensor& labels) {
 
         // The cumulative mass THROUGH each class; the score is the mass
         // through the TRUE class.
+        //
+        // The `order` vector is a PERMUTATION of {0..K-1}, so an in-range
+        // label is ALWAYS present in it. The range check above has already
+        // rejected every out-of-range label, so there is no "not found" case
+        // to handle here -- an earlier draft carried a `found` flag and a
+        // `!found` throw, and the mutation harness proved that flag was
+        // UNREACHABLE (removing the range guard M20 left the suite green,
+        // because the dead `!found` throw caught the bad label instead).
+        // Two guards for one condition is one guard too many: the dead one
+        // made the live one untested.
         double running = 0.0;
         double score = 0.0;
-        bool found = false;
         for (size_t r = 0; r < K; ++r) {
             running += probs(i, order[r]);
             cum[r] = running;
             if (order[r] == static_cast<size_t>(y)) {
                 score = running;
-                found = true;
             }
-        }
-        if (!found) {
-            throw std::invalid_argument("conformal: aps_score label out of range");
         }
         out(i, 0) = score;
     }
