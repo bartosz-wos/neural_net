@@ -103,14 +103,32 @@ log p(y|X)  = -½ yᵀ α - Σ_i log L_ii - (n/2) log 2π    eq. (2.30)
 
 **The `½` and the `tr` are the whole formula.** GPML's own footnote 5 states the computation must be organised as vector-by-matrix first and **only the diagonal terms of the product** — computing the full `(ααᵀ - K⁻¹) ∂K` matrix is O(n³) per hyperparameter and is what makes the naive implementation unusable.
 
-### LOO (eq. 5.12)
+### The LOO (eq. 5.12)
 
 ```
-μ_i  = y_i - [K⁻¹y]_i / [K⁻¹]_ii
-σ_i² = 1 / [K⁻¹]_ii
+mu_i  = y_i - [K^-1 y]_i / [K^-1]_ii
+s2_i  = 1 / [K^-1]_ii
 ```
 
-**`K` here is the NOISE-FREE `K_f`, not `K_y`** — eq. (5.12) is stated for the noise-free covariance. GPML's own text: "careful inspection reveals that the mean µ_i is in fact independent of y_i as indeed it should be" — a property a suite can pin, because it is an *observable* consequence of the formula.
+**WHICH MATRIX? `Ky`, THE NOISY ONE.** The book writes "K", which is ambiguous — eq. (5.8) had just introduced `Ky = Kf + sn²I` as a *distinct* object from `Kf`. The book's own tie-breaker sentence ("the mean µ_i is in fact independent of y_i") does NOT decide it, because that identity is pure algebra and holds for EITHER matrix. **The oracle resolves it by exact refit**: drop point `i`, fit on the remaining `n-1` points, predict `i`. Measured on the 6-point fixture:
+
+| reading | max abs diff vs exact refit (mean) | (variance) |
+|---|---|---|
+| `Ky` (noisy) | **3.331e-16** | **2.220e-16** |
+| `Kf` (noise-free) | 1.007476 | 0.427904 |
+
+So `Ky` is right and `Kf` is wrong by a **decisive** margin. The C++ suite must use `Ky`.
+
+**THE INDEPENDENCE IS PER-`i`, NOT GLOBAL.** From the algebra,
+
+```
+[K^-1 y]_i = sum_j [K^-1]_ij y_j = [K^-1]_ii y_i + sum_{j != i} [K^-1]_ij y_j
+mu_i = y_i - y_i - sum_{j != i} [K^-1]_ij y_j / [K^-1]_ii
+```
+
+the two `y_i` terms cancel exactly — so `mu_i` is independent of `y_i`, **while the other `mu_j` legitimately move** (for them, `y_i` is a training target). The oracle's first draft perturbed `y_2` and took a **global** max, which caught the legitimate movement of `mu_0`, `mu_1`, … and FAILED against a correct implementation. The check now perturbs each `y_i` in turn and asserts on the **diagonal** of the change matrix only, plus asserts that the **off-diagonal** is non-zero (a constant LOO would be a different, equally wrong model). Measured: diagonal max **1.110e-16**, off-diagonal max **3.164e+00**.
+
+**`s2_i` is independent of `y` entirely** (measured max diff **0.000e+00**) and **depends on `sn`** (max diff **0.427904** between `sn = 0` and `sn = 0.4`) — the observable consequence of `Ky` rather than `Kf`.
 
 ---
 
@@ -179,13 +197,49 @@ The harness is `tests/mutate_gp.sh`, following `tests/mutate_crf.sh` / `tests/mu
 | M6 | SE exponent `/(ℓ²)` → `/ℓ` | P7, P9 |
 | M7 | `σf²` → `σf` in the kernel amplitude | P7, P8 |
 | M8 | hyperparameter gradient: drop the `½` | P8 |
-| M9 | hyperparameter gradient: `tr` → `sum of all entries` | P8 |
+| M9 | hyperparameter gradient: `tr` → `sum of all entries of the PRODUCT` | P8 |
 | M10 | hyperparameter gradient: `ααᵀ - K⁻¹` → `ααᵀ` (drop the `-K⁻¹` term) | P8 |
-| M11 | LOO: use `K_y` instead of `K_f` | P11 |
-| M12 | LOO: `σ_i² = 1/[K⁻¹]_ii` → `1/[K⁻¹]_ii` without the `K_f` swap, or drop the `y_i` term | P10, P11 |
+| M11 | LOO: use `K_f` instead of `K_y` | P10, P11 |
+| M12 | LOO: drop the `y_i` term from `mu_i = y_i - [K⁻¹y]_i/[K⁻¹]_ii` | P10 |
 | M13 | the `½ log 2π` constant term dropped | P6 |
 | M14 | the singular-Cholesky detection removed (return `nan` silently) | P14 |
 | M15 | the `σn²` addition to the noisy-target predictive variance dropped | P5 |
+
+---
+
+## THE ORACLE'S THREE CORRECTIONS TO THIS PLAN (2026-10-27)
+
+The oracle (`tests/gp_oracle.py`, **53/53 green**) ran BEFORE any C++ existed and found three defects — **two in this plan and one in the oracle's own first draft**. They are recorded here because the plan was written from the book, and the book is ambiguous in two places.
+
+**CORRECTION 1 — the LOO matrix is `Ky`, the NOISY one, not `K_f`.** This plan originally asserted `K_f`, on the reading that eq. (5.12) is stated for the noise-free covariance. That reading is **WRONG**, and the plan's own P11 was built on it. Resolved by exact refit (drop point `i`, fit on the remaining `n-1`, predict `i`): the `Ky` reading agrees to **3.331e-16** (mean) and **2.220e-16** (variance); the `K_f` reading differs by **1.007476** and **0.427904**. The plan's tie-breaker reasoning was also wrong: the book's sentence "µ_i is independent of y_i" is pure algebra and holds for **either** matrix, so it cannot decide the question. **M11 was therefore also backwards** and is corrected above.
+
+**CORRECTION 2 — the "sum of all entries" mutation (M9) IS INERT, AND THE ORACLE MEASURED IT.** The plan's M9 read "replace the trace with the sum of all entries". For **symmetric** `M` and `dK` — which they always are here — `tr(M dK)` and the **elementwise** sum `Σ M_ij dK_ij` are **IDENTICAL**:
+
+```
+trace(M dK)   = -8.028646365323734
+sum(M .* dK)  = -8.028646365323732   <-- IDENTICAL, so this reading is UNOBSERVABLE
+sum(M @ dK)   = -5.009491637812283   <-- the genuinely different thing
+```
+
+So M9 as originally written **would have SURVIVED**, and the harness would have reported a coverage gap that did not exist. The mutation is now written against the **matrix product** (`Σ_ij (M dK)_ij`), which differs. The implementation must compute the trace as `Σ_ij M_ij dK_ji` — correct for any `dK`, and not silently reliant on symmetry.
+
+**CORRECTION 3 — the oracle's own first draft of the LOO-independence check was WRONG, and the implementation was right.** It perturbed `y_2` and took the **global** max over all `i`, which caught the legitimate movement of `mu_0`, `mu_1`, … (for those, `y_2` is a training target) and FAILED against a correct implementation. The independence is **per-`i`**: the algebra in the LOO section above shows the two `y_i` terms cancel exactly in `mu_i` alone. The check now asserts on the **diagonal** of the change matrix (max **1.110e-16**) and separately asserts the **off-diagonal** is non-zero (max **3.164e+00**).
+
+**AND ONE HAND-ARITHMETIC SLIP, the same class this repo keeps hitting.** The oracle's first draft of the SE length-scale fixture expected `exp(-0.25)` at `r = 2, l = 2` — which is `-r²/(4l²)`, **neither** the correct `-r²/(2l²)` nor the wrong `-r²/(2l)`. It FAILED against a correct kernel; the kernel was right and the derivation was wrong. The corrected fixture expects `exp(-0.5) = 0.606531` and separately pins that the `/l` reading gives a **different** number (`exp(-1.0) = 0.367879`).
+
+**THE USABLE FINITE-DIFFERENCE EPSILON WAS MEASURED, NOT ASSUMED** (the repo's rule: a fixture whose discriminating value is only correct to within a rounding error does not discriminate anything):
+
+| eps | max rel err vs the closed form |
+|---|---|
+| 1e-2 | 2.522e-04 |
+| 1e-3 | 2.521e-06 |
+| 1e-4 | **2.529e-08** |
+| 1e-5 | 7.084e-10 |
+| 1e-6 | 1.481e-09 |
+| 1e-7 | 9.467e-09 |
+| 1e-8 | 1.000e-07 |
+
+The sweet spot is **eps = 1e-5** (7.084e-10) — below 1e-6 the round-off term takes over, above 1e-3 the truncation term does. The C++ suite uses **1e-5** with a tolerance of **1e-6** relative, which is comfortably inside the measured window.
 
 ---
 
