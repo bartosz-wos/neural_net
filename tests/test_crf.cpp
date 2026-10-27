@@ -336,6 +336,40 @@ int main() {
     }
 
     // =============================================================================
+    section("S6f. THE VITERBI TIE-BREAK IS DETERMINISTIC");
+    // =============================================================================
+    // FOUND BY THE MUTATION HARNESS, NOT BY THE SUITE. Changing the tie-break
+    // from `cand > best` to `cand >= best` left the suite GREEN -- because no
+    // fixture had a TIE. The two rules differ only when two predecessors score
+    // EXACTLY the same, so a fixture that never ties cannot see them.
+    //
+    // **A FIXTURE THAT DOES NOT VARY IN THE DIMENSION THE MUTATION TARGETS
+    // CANNOT CATCH IT.** An all-zero fixture makes every predecessor tie at
+    // every position, and the mutation's effect is then visible directly:
+    //   `>`  picks the SMALLEST index at each step, giving [0, 0, ...]
+    //   `>=` picks the LARGEST index at each step, giving [1, 1, ...]
+    {
+        const Tensor e = mat(2, 2, {0.0, 0.0, 0.0, 0.0});
+        const Tensor a = mat(2, 2, {0.0, 0.0, 0.0, 0.0});
+        Tensor path;
+        const double vscore = crf_viterbi(e, a, &path);
+        check(std::fabs(vscore - 0.0) < 1e-12,
+              "S6f.a. an all-zero fixture has viterbi score 0");
+        check(path(0, 0) == 0.0 && path(1, 0) == 0.0,
+              "S6f.b. ties are broken by the SMALLEST label index ([0,0])");
+
+        // And a three-position version, so the FINAL position's tie-break is
+        // covered too -- the backtrace and the final argmax are two different
+        // tie-breaks and a two-position fixture only exercises the first.
+        const Tensor e3 = mat(3, 2, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+        const Tensor a3 = mat(2, 2, {0.0, 0.0, 0.0, 0.0});
+        Tensor path3;
+        crf_viterbi(e3, a3, &path3);
+        check(path3(0, 0) == 0.0 && path3(1, 0) == 0.0 && path3(2, 0) == 0.0,
+              "S6f.c. the three-position tie-break is also the smallest index");
+    }
+
+    // =============================================================================
     section("S7. THE JOINT NLL GRADIENT: EXACT CLOSED FORM");
     // =============================================================================
     {
@@ -627,6 +661,28 @@ int main() {
             crf_joint_nll_grad(em, tr, mat(4, 1, {0.0, 2.0, 1.0, 0.5}), nullptr, nullptr);
         } catch (const std::invalid_argument&) { threw = true; }
         check(threw, "S13f. a non-integer label throws");
+
+        // FOUND BY THE MUTATION HARNESS: removing the `g` finiteness check
+        // left the suite GREEN, because no fixture had a non-finite weight.
+        // Without the guard a NaN in `g` propagates silently into the
+        // gradient -- MEASURED: grad_emissions(0,0) came back as NaN with no
+        // error at all, so a corrupted upstream weight would look like a
+        // converged training run.
+        threw = false;
+        try {
+            Tensor gbad = mat(4, 3, std::vector<double>(12, 0.0));
+            gbad(0, 0) = std::numeric_limits<double>::quiet_NaN();
+            crf_marginal_log_likelihood_grad(em, tr, gbad, nullptr, nullptr);
+        } catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "S13g. a non-finite g throws");
+
+        threw = false;
+        try {
+            Tensor gbad = mat(4, 3, std::vector<double>(12, 0.0));
+            gbad(2, 1) = std::numeric_limits<double>::infinity();
+            crf_marginal_log_likelihood_grad(em, tr, gbad, nullptr, nullptr);
+        } catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "S13h. an infinite g throws");
     }
 
     // =============================================================================
