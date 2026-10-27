@@ -281,6 +281,9 @@ $(BUILD_DIR)/test_weight_std: $(LIB_OBJS) $(BUILD_DIR)/test_weight_std.o
 $(BUILD_DIR)/test_conformal: $(LIB_OBJS) $(BUILD_DIR)/test_conformal.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_crf: $(LIB_OBJS) $(BUILD_DIR)/test_crf.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_sinkhorn: $(LIB_OBJS) $(BUILD_DIR)/test_sinkhorn.o
 	$(CXX) $^ -o $@
 
@@ -898,7 +901,7 @@ $(BUILD_DIR)/test_lion $(BUILD_DIR)/test_sophia $(BUILD_DIR)/test_sam \
 $(BUILD_DIR)/test_gradient_check \
 $(BUILD_DIR)/test_randomized_smoothing $(BUILD_DIR)/test_rmsnorm $(BUILD_DIR)/test_spectral_norm $(BUILD_DIR)/test_dynamic_tanh $(BUILD_DIR)/test_layer_scale $(BUILD_DIR)/test_wgan_gp $(BUILD_DIR)/test_flash_attention $(BUILD_DIR)/test_flash_attention_v2 \
 $(BUILD_DIR)/test_vit $(BUILD_DIR)/test_distribution_losses $(BUILD_DIR)/test_self_supervised_losses $(BUILD_DIR)/test_mmd_loss $(BUILD_DIR)/test_contrastive_losses \
-$(BUILD_DIR)/test_weight_std $(BUILD_DIR)/test_conformal $(BUILD_DIR)/test_speculative_decoding $(BUILD_DIR)/test_ngram_lm $(BUILD_DIR)/test_bpe_tokenizer $(BUILD_DIR)/test_tokenizer $(BUILD_DIR)/test_pixelcnn_decode $(BUILD_DIR)/test_logit_processing $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_ptq $(BUILD_DIR)/test_mup $(BUILD_DIR)/test_curriculum $(BUILD_DIR)/test_lr_multiplier $(BUILD_DIR)/test_hutchinson $(BUILD_DIR)/test_sinkhorn $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_ortho_penalty $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
+$(BUILD_DIR)/test_weight_std $(BUILD_DIR)/test_crf $(BUILD_DIR)/test_conformal $(BUILD_DIR)/test_speculative_decoding $(BUILD_DIR)/test_ngram_lm $(BUILD_DIR)/test_bpe_tokenizer $(BUILD_DIR)/test_tokenizer $(BUILD_DIR)/test_pixelcnn_decode $(BUILD_DIR)/test_logit_processing $(BUILD_DIR)/test_siglip_loss $(BUILD_DIR)/test_ptq $(BUILD_DIR)/test_mup $(BUILD_DIR)/test_curriculum $(BUILD_DIR)/test_lr_multiplier $(BUILD_DIR)/test_hutchinson $(BUILD_DIR)/test_sinkhorn $(BUILD_DIR)/test_tta $(BUILD_DIR)/test_ortho_penalty $(BUILD_DIR)/test_metrics $(BUILD_DIR)/test_calibration_diagnostics $(BUILD_DIR)/test_ranking_metrics $(BUILD_DIR)/test_temperature_scaling $(BUILD_DIR)/test_knowledge_distillation $(BUILD_DIR)/test_adversarial $(BUILD_DIR)/test_vat $(BUILD_DIR)/test_vq_vae $(BUILD_DIR)/test_vqcodebook $(BUILD_DIR)/test_model_ema $(BUILD_DIR)/test_integrated_gradients $(BUILD_DIR)/test_shapley $(BUILD_DIR)/test_lime $(BUILD_DIR)/test_partial_dependence $(BUILD_DIR)/test_deeplift $(BUILD_DIR)/test_gradcam $(BUILD_DIR)/test_early_stopping $(BUILD_DIR)/test_training_history $(BUILD_DIR)/test_model_checkpoint $(BUILD_DIR)/test_dataloader $(BUILD_DIR)/test_cross_validation $(BUILD_DIR)/test_lightgbm_style $(BUILD_DIR)/test_label_smoothing $(BUILD_DIR)/test_clip_grad_norm $(BUILD_DIR)/test_mixup_cutmix $(BUILD_DIR)/test_elastic_net \
 $(BUILD_DIR)/test_activations $(BUILD_DIR)/test_legacy_adaptive $(BUILD_DIR)/test_gat_gradient $(BUILD_DIR)/test_gat_verify \
 $(BUILD_DIR)/test_gat_attention $(BUILD_DIR)/test_coord_network $(BUILD_DIR)/test_avgpool2d $(BUILD_DIR)/test_gin \
 $(BUILD_DIR)/test_ddpm $(BUILD_DIR)/test_nystrom_attention $(BUILD_DIR)/test_deep_gcn $(BUILD_DIR)/test_lightgcn \
@@ -1064,6 +1067,7 @@ run_tests: tests
 	@echo "=== Running test_hutchinson ==="; if ./$(BUILD_DIR)/test_hutchinson; then :; else echo "test_hutchinson" >> .run_tests_failed; fi
 	@echo "=== Running test_weight_std ==="; if ./$(BUILD_DIR)/test_weight_std; then :; else echo "test_weight_std" >> .run_tests_failed; fi
 	@echo "=== Running test_conformal ==="; if ./$(BUILD_DIR)/test_conformal; then :; else echo "test_conformal" >> .run_tests_failed; fi
+	@echo "=== Running test_crf ==="; if ./$(BUILD_DIR)/test_crf; then :; else echo "test_crf" >> .run_tests_failed; fi
 	@echo "=== Running test_sinkhorn ==="; if ./$(BUILD_DIR)/test_sinkhorn; then :; else echo "test_sinkhorn" >> .run_tests_failed; fi
 	@echo "=== Running test_logit_processing ==="; if ./$(BUILD_DIR)/test_logit_processing; then :; else echo "test_logit_processing" >> .run_tests_failed; fi
 	@echo "=== Running test_speculative_decoding ==="; if ./$(BUILD_DIR)/test_speculative_decoding; then :; else echo "test_speculative_decoding" >> .run_tests_failed; fi

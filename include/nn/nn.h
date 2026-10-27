@@ -89,6 +89,7 @@
 #include "utils/hutchinson.h"
 #include "utils/weight_std.h"
 #include "utils/conformal.h"
+#include "utils/crf.h"
 #include "utils/ngram_lm.h"
 #include "utils/sinkhorn.h"
 #include "utils/logit_processing.h"
