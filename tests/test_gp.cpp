@@ -74,16 +74,6 @@ static void check(bool ok, const std::string& name) {
 
 static void section(const char* name) { printf("\n=== %s ===\n", name); }
 
-// Max abs difference between two tensors of the same shape.
-static double max_abs_diff(const Tensor& a, const Tensor& b) {
-    if (a.rows != b.rows || a.cols != b.cols) return std::numeric_limits<double>::infinity();
-    double worst = 0.0;
-    for (size_t i = 0; i < a.rows; ++i)
-        for (size_t j = 0; j < a.cols; ++j)
-            worst = std::max(worst, std::abs(a(i, j) - b(i, j)));
-    return worst;
-}
-
 // Relative error with a floor, so a zero-valued reference does not divide.
 static double rel_err(double got, double want) {
     double denom = std::max(std::abs(got), std::abs(want));
@@ -125,8 +115,23 @@ static bool throws_with(F fn, const std::string& needle) {
 static const Tensor kX1 = mat({{0.0}, {1.0}, {2.0}});
 static const Tensor ky1 = vec({0.5, -0.25, 1.0});
 
-// G2: 6 points in 2-D -- the general case. Values from the numpy oracle
-// (rng default_rng(20261027), 6 x 2 normals and 6 normals for the targets).
+// G2: 6 points in 2-D -- the oracle's SECTION 2 fixture.
+//
+// **THE ORACLE DRAWS FROM `default_rng(20261027)` AS A SINGLE STREAM, AND
+// THE TEST SUITE'S FIRST DRAFT MIXED THE TWO DRAWS.** Section 2 draws at the
+// top of the file; section 7 draws AGAIN from the SAME stream, so Fixture G2
+// is a DIFFERENT point set. The C++ test took the section-7 point values with
+// the section-7 EXPECTATIONS while pairing them against the section-2
+// expectations -- which is why 2.1 failed with `got -8.581207865412960` and
+// `want -28.106415341649299`. **The implementation was right and the fixture
+// was wrong.** The two draws are now pinned separately:
+//
+//   section 2 draw:  lml =  -8.581207865412969
+//                     grad = [-4.014323182661865, -0.16225668073969912,
+//                             7.8071987704327555]
+//   section 7 draw:  lml = -28.1064153416493
+//                     grad = [-17.026058498503797, 8.021456491555767,
+//                             109.08350528386435]
 static const Tensor kX2 = mat({{-1.1963457657789600, -0.6536906109147205},
                                { 0.3224547589899239, -0.8969828736650786},
                                { 0.1104936716793826, -0.3322025950718564},
@@ -136,15 +141,37 @@ static const Tensor kX2 = mat({{-1.1963457657789600, -0.6536906109147205},
 static const Tensor ky2 = vec({-0.4528889801801853,  0.5919389745155560,  1.1864140711667581,
                                -0.4900594376288359,  0.0634003597008746,  0.6368712939949029});
 
+// G2b: the oracle's SECTION 7 fixture (Fixture G2) -- the SECOND draw from
+// the same stream. The log marginal likelihood and the gradient are pinned
+// against THIS draw, and the finite-difference check runs on it.
+//
+// **TWO INDEPENDENT FIXTURES ARE A FEATURE, NOT REDUNDANCY.** A single
+// fixture cannot catch its own expectations being swapped for another
+// fixture's; two can.
+static const Tensor kX2b = mat({{ 1.2820243464672794, -0.8567408406605158},
+                                { 0.3792205247085875, -1.5282080043381598},
+                                {-0.27025646174165396, -0.8635915897761975},
+                                {-1.9742601274681530, -0.8497654463082102},
+                                {-0.5415392409502984, -0.14393386188823995},
+                                {-0.29271353331857414, 0.10012061436303275}});
+static const Tensor ky2b = vec({ 0.8393675885848502, -0.4375230595287431, -2.4303328537922138,
+                                 0.0319156117991037,  0.9586377890347773, -1.2464376988530120});
+
 // G3: the LOO fixture.
 static const Tensor kX3 = mat({{0.0}, {0.6}, {1.3}, {2.0}, {2.8}, {3.5}});
 static const Tensor ky3 = vec({0.1, 0.7, -0.2, 0.4, 0.9, 0.3});
 
-// The oracle's G2 values, to 12 significant digits.
-static const double kG2_logml = -28.106415341649299;
-static const double kG2_grad_l = -17.026058498504;
-static const double kG2_grad_sf = 8.021456491556;
-static const double kG2_grad_sn = 109.083505283864;
+// The oracle's SECTION 2 expectations (the FIRST draw).
+static const double kG2_logml = -8.581207865412969;
+static const double kG2_grad_l = -4.014323182661865;
+static const double kG2_grad_sf = -0.16225668073969912;
+static const double kG2_grad_sn = 7.8071987704327555;
+
+// The oracle's SECTION 7 expectations (Fixture G2, the SECOND draw).
+static const double kG2b_logml = -28.1064153416493;
+static const double kG2b_grad_l = -17.026058498503797;
+static const double kG2b_grad_sf = 8.021456491555767;
+static const double kG2b_grad_sn = 109.08350528386435;
 
 // The oracle's G1 values.
 static const double kG1_logml = -4.363474273761598;
@@ -242,6 +269,15 @@ int main() {
     }
 
     {
+        // THE SECOND FIXTURE, INDEPENDENTLY. A single fixture cannot catch its
+        // own expectations being swapped for another fixture's; two can.
+        double lml = gp_log_marginal_likelihood(kX2b, ky2b, 1.2, 1.1, 0.3, GP_KERNEL_SE);
+        check(rel_err(lml, kG2b_logml) < 1e-9,
+              "2.1b the log marginal likelihood matches the oracle on the SECOND fixture");
+        printf("    got %.15f  want %.15f\n", lml, kG2b_logml);
+    }
+
+    {
         // THE n = 1 CASE, HAND-DERIVED: Ky = [[2]], so
         //   log p = -1/2 (1/2) - 1/2 log 2 - 1/2 log(2 pi).
         Tensor X = mat({{0.0}});
@@ -329,22 +365,21 @@ int main() {
 
     {
         // A FAR-AWAY TEST POINT: the predictive variance approaches sf^2.
-        GPPosterior p = gp_posterior(kX1, ky1, 1.0, 1.0, 0.25, GP_KERNEL_SE);
         Tensor far = mat({{100.0}});
-        double vfar = p.predict(far).variance(0, 0);
+        GPPosterior p = gp_predict(kX1, ky1, far, 1.0, 1.0, 0.25, GP_KERNEL_SE);
+        double vfar = p.variance(0, 0);
         check(std::abs(vfar - 1.0) < 1e-6, "3.6 a far test point has predictive variance -> sf^2");
         printf("    var at x=100: %.9f (sf^2 = 1.0)\n", vfar);
     }
 
     {
         // THE NOISY TARGET'S VARIANCE IS THE LATENT VARIANCE PLUS sn^2 -- exactly.
-        GPPosterior p = gp_posterior(kX1, ky1, 1.0, 1.0, 0.25, GP_KERNEL_SE);
-        Tensor Xs = kX1;
+        GPPosterior latent = gp_predict(kX1, ky1, kX1, 1.0, 1.0, 0.25, GP_KERNEL_SE);
+        GPPosterior noisy = gp_predict_noisy(kX1, ky1, kX1, 1.0, 1.0, 0.25, GP_KERNEL_SE);
         double worst = 0.0;
         for (size_t i = 0; i < 3; ++i) {
-            double noisy = p.predict(Xs).variance(i, 0);
-            double latent = p.variance(i, 0);
-            worst = std::max(worst, std::abs((noisy - latent) - 0.0625));
+            double diff = noisy.variance(i, 0) - latent.variance(i, 0);
+            worst = std::max(worst, std::abs(diff - 0.0625));
         }
         check(worst < 1e-15, "3.7 the noise addition to the variance is EXACTLY sn^2");
         printf("    max|(var_noisy - var_latent) - sn^2| = %.3e\n", worst);
@@ -352,11 +387,11 @@ int main() {
 
     {
         // THE LATENT VARIANCE IS BOUNDED BY sf^2 EVERYWHERE.
-        GPPosterior p = gp_posterior(kX1, ky1, 1.0, 1.0, 0.25, GP_KERNEL_SE);
         Tensor grid = mat({{0.0}, {0.5}, {1.0}, {1.5}, {2.0}, {2.5}, {3.0}, {3.5}, {4.0}});
+        GPPosterior p = gp_predict(kX1, ky1, grid, 1.0, 1.0, 0.25, GP_KERNEL_SE);
         double vmax = 0.0;
         for (size_t i = 0; i < grid.rows; ++i)
-            vmax = std::max(vmax, p.predict(grid).variance(i, 0));
+            vmax = std::max(vmax, p.variance(i, 0));
         check(vmax <= 1.0 + 1e-12, "3.8 the latent predictive variance is bounded by sf^2");
         printf("    max variance over the grid = %.12f\n", vmax);
     }
@@ -368,13 +403,13 @@ int main() {
 
     {
         // The oracle's closed-form gradient on the G2 fixture.
-        GPHypergradient g = gp_hyperparameter_gradient(kX2, ky2, 1.2, 1.1, 0.3, GP_KERNEL_SE);
-        check(rel_err(g.d_lengthscale, kG2_grad_l) < 1e-8, "4.1 dL/dl matches the oracle");
-        check(rel_err(g.d_sigma_f, kG2_grad_sf) < 1e-8, "4.2 dL/dsf matches the oracle");
-        check(rel_err(g.d_sigma_n, kG2_grad_sn) < 1e-8, "4.3 dL/dsn matches the oracle");
-        printf("    dL/dl = %.12f (want %.12f)\n", g.d_lengthscale, kG2_grad_l);
-        printf("    dL/dsf = %.12f (want %.12f)\n", g.d_sigma_f, kG2_grad_sf);
-        printf("    dL/dsn = %.12f (want %.12f)\n", g.d_sigma_n, kG2_grad_sn);
+        GPHypergradient g = gp_hyperparameter_gradient(kX2b, ky2b, 1.2, 1.1, 0.3, GP_KERNEL_SE);
+        check(rel_err(g.d_lengthscale, kG2b_grad_l) < 1e-8, "4.1 dL/dl matches the oracle");
+        check(rel_err(g.d_sigma_f, kG2b_grad_sf) < 1e-8, "4.2 dL/dsf matches the oracle");
+        check(rel_err(g.d_sigma_n, kG2b_grad_sn) < 1e-8, "4.3 dL/dsn matches the oracle");
+        printf("    dL/dl = %.12f (want %.12f)\n", g.d_lengthscale, kG2b_grad_l);
+        printf("    dL/dsf = %.12f (want %.12f)\n", g.d_sigma_f, kG2b_grad_sf);
+        printf("    dL/dsn = %.12f (want %.12f)\n", g.d_sigma_n, kG2b_grad_sn);
     }
 
     {
@@ -390,14 +425,14 @@ int main() {
         double l0 = 1.2, s0 = 1.1, n0 = 0.3;
 
         auto lml_at = [&](double l, double sf, double sn) {
-            return gp_log_marginal_likelihood(kX2, ky2, l, sf, sn, GP_KERNEL_SE);
+            return gp_log_marginal_likelihood(kX2b, ky2b, l, sf, sn, GP_KERNEL_SE);
         };
 
         double fd_l = (lml_at(l0 + eps, s0, n0) - lml_at(l0 - eps, s0, n0)) / (2.0 * eps);
         double fd_sf = (lml_at(l0, s0 + eps, n0) - lml_at(l0, s0 - eps, n0)) / (2.0 * eps);
         double fd_sn = (lml_at(l0, s0, n0 + eps) - lml_at(l0, s0, n0 - eps)) / (2.0 * eps);
 
-        GPHypergradient g = gp_hyperparameter_gradient(kX2, ky2, l0, s0, n0, GP_KERNEL_SE);
+        GPHypergradient g = gp_hyperparameter_gradient(kX2b, ky2b, l0, s0, n0, GP_KERNEL_SE);
         check(rel_err(g.d_lengthscale, fd_l) < tol, "4.4 dL/dl matches a central finite difference");
         check(rel_err(g.d_sigma_f, fd_sf) < tol, "4.5 dL/dsf matches a central finite difference");
         check(rel_err(g.d_sigma_n, fd_sn) < tol, "4.6 dL/dsn matches a central finite difference");
@@ -425,8 +460,8 @@ int main() {
     {
         // THE HALF AND THE TRACE. Dropping the 1/2 doubles the gradient; the
         // oracle measured -8.028646365 against -4.014323183.
-        GPHypergradient g = gp_hyperparameter_gradient(kX2, ky2, 1.2, 1.1, 0.3, GP_KERNEL_SE);
-        check(std::abs(2.0 * g.d_lengthscale - kG2_grad_l) > 1e-6,
+        GPHypergradient g = gp_hyperparameter_gradient(kX2b, ky2b, 1.2, 1.1, 0.3, GP_KERNEL_SE);
+        check(std::abs(2.0 * g.d_lengthscale - kG2b_grad_l) > 1e-6,
               "4.8 dropping the 1/2 gives a DIFFERENT gradient");
         // Dropping the -K^-1 term changes it too: the oracle measured
         // -6.078549707 against -4.014323183.
@@ -577,8 +612,18 @@ int main() {
                           "target"), "7.6 a y with the wrong number of rows throws");
         check(throws_with([&]() { gp_log_marginal_likelihood(X, y, 1.0, 1.0, -0.1, GP_KERNEL_SE); },
                           "noise"), "7.7 a negative noise variance throws");
-        check(throws_with([&]() { gp_log_marginal_likelihood(X, y, 1.0, 1.0, 0.1, GP_KERNEL_SE); },
-                          "should not"), "7.8 the valid call does NOT throw");
+
+        // 7.8: THE VALID CALL MUST NOT THROW. **THE FIRST DRAFT OF THIS CHECK
+        // USED `throws_with`, WHICH ASSERTS THAT A THROW HAPPENED -- so it
+        // FAILED against a correct implementation.** The negative case needs a
+        // different shape: catch and record whether anything was thrown.
+        bool valid_threw = false;
+        try {
+            gp_log_marginal_likelihood(X, y, 1.0, 1.0, 0.1, GP_KERNEL_SE);
+        } catch (...) {
+            valid_threw = true;
+        }
+        check(!valid_threw, "7.8 the valid call does NOT throw");
     }
 
     // ===========================================================================
