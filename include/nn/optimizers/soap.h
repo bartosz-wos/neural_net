@@ -140,6 +140,27 @@ private:
     // On entry, A is a symmetric (n × n) Tensor. On exit, Q holds the
     // orthogonal matrix of eigenvectors (columns) and eigenvalues is
     // filled with the eigenvalues of A. Q is initialized to identity.
+    //
+    // **THE ROTATION ANGLE'S SIGN IS LOAD-BEARING.** The general branch
+    // must be
+    //
+    //     theta = 0.5 * atan2(2 * apq, app - aqq)
+    //
+    // and NOT `aqq - app`. With the wrong sign the routine still returns an
+    // ORTHOGONAL matrix and still drives A to a diagonal matrix, but the
+    // reported eigenvalues are NOT the eigenvalues of A and Q's columns are
+    // NOT eigenvectors -- the preconditioner is then built from a
+    // similarity that has nothing to do with the matrix's spectrum.
+    //
+    // **THE `app == aqq` DEGENERATE BRANCH IS CORRECT AND MUST STAY** (it
+    // computes theta = ±π/4 directly). It is the proof that the general
+    // branch was the wrong one.
+    //
+    // **THE INVARIANT IS PINNED BY tests/test_jacobi_eig.cpp** through the
+    // PUBLIC accessors: A·Q == Q·Λ. Orthonormality and Frobenius-norm
+    // preservation are NOT sufficient -- both hold for a product of
+    // rotations that is not an eigenbasis, which is why the defect survived
+    // every pre-existing test.
     static void jacobi_eigendecompose(Tensor& A,
                                       Tensor& Q,
                                       Tensor& eigenvalues,

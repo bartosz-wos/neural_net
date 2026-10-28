@@ -190,6 +190,28 @@ private:
     // On entry, A is a symmetric (k × k) Tensor. On exit, Q holds the
     // orthogonal matrix of eigenvectors (columns) and eigenvalues is
     // filled with the eigenvalues of A. Q is initialized to identity.
+    //
+    // **THE ROTATION ANGLE'S SIGN IS LOAD-BEARING.** The general branch
+    // must be
+    //
+    //     theta = 0.5 * atan2(2 * apq, app - aqq)
+    //
+    // and NOT `aqq - app`. With the wrong sign the routine still returns an
+    // ORTHOGONAL matrix and still drives A to a diagonal matrix, but the
+    // reported eigenvalues are NOT the eigenvalues of A and Q's columns are
+    // NOT eigenvectors. **For GaLore that is especially damaging: P is
+    // supposed to span the DOMINANT EIGENSPACE of G_EMAᵀ·G_EMA, and a
+    // wrong eigenbasis projects the gradient onto a subspace that is not
+    // the dominant one -- while Pᵀ·P is still the identity, so the
+    // orthonormality check cannot see it.**
+    //
+    // **THE `app == aqq` DEGENERATE BRANCH IS CORRECT AND MUST STAY** (it
+    // computes theta = ±π/4 directly). It is the proof that the general
+    // branch was the wrong one.
+    //
+    // **THE INVARIANT IS PINNED BY tests/test_jacobi_eig.cpp** through the
+    // PUBLIC accessors: every column of P must be an eigenvector of
+    // G_EMAᵀ·G_EMA.
     static void jacobi_eigendecompose(Tensor& A,
                                       Tensor& Q,
                                       Tensor& eigenvalues,
