@@ -107,30 +107,45 @@ std::vector<Tensor*> FireModule::gradients() {
 
 SqueezeNet::SqueezeNet(size_t num_classes, size_t H_in, size_t W_in)
     : conv1_(3, 96, 7, 7, H_in, W_in, 2, 2, 3, 3),
-      pool1_(3, 3, 2, 2),
+      // pool1 pools the conv1 output, whose spatial size is conv1_out(H_in).
+      pool1_(3, 3, conv1_out(H_in), conv1_out(W_in), 2, 2),
       fire_modules_(),
-      pool_final_(3, 3, 2, 2),
-      conv10_(96, num_classes, 1, 1, 7, 7, 1, 1, 0, 0),
-      flatten_(),
+      pool_mid_(),
+      // conv10 is a 1x1 conv over the FINAL spatial size, on the 128 channels
+      // every fire module outputs (64 from expand1x1 + 64 from expand3x3).
+      conv10_(128, num_classes, 1, 1, final_spatial(H_in), final_spatial(W_in), 1, 1, 0, 0),
+      // The global average pool collapses the final spatial map to 1x1, which
+      // is what makes the output (batch, num_classes). The previous code
+      // used a `Flatten` -- which is a NO-OP (flatten.cpp returns the input
+      // unchanged) -- and so returned a (batch, num_classes * H * W) tensor.
+      global_pool_(final_spatial(H_in), final_spatial(W_in),
+                   final_spatial(H_in), final_spatial(W_in), 1, 1),
       last_output_(1, num_classes) {
 
-    // After conv1 + pool: H=55, W=55, C=96
-    size_t H = (H_in - 7) / 2 + 1; // ~55
-    size_t W = (W_in - 7) / 2 + 1;
+    // The eight fire modules, with the four intermediate pools between them.
+    // The spatial size after each stage is computed with the SAME static
+    // helpers the member-initialiser list used, so the layers and the forward
+    // pass cannot disagree about the network's shape.
+    //
+    // The PREVIOUS constructor tracked a halved spatial size for the pools
+    // but the forward pass never performed them -- the two halves of the
+    // class described DIFFERENT networks. It also ignored conv1's padding:
+    // it computed `(H_in - 7) / 2 + 1` where the conv's own formula is
+    // `(H_in + 2*3 - 7) / 2 + 1`. For H_in = 224 those give 109 and 112.
+    size_t H = pool_out(conv1_out(H_in));
+    size_t W = pool_out(conv1_out(W_in));
 
-    // Fire modules: fire1 (96->16->64+64, H=55), fire2 (128->16->64+64)
-    // After pool1, H=27, W=27, C=96
-    H = (H - 3) / 2 + 1;
-    W = (W - 3) / 2 + 1;
     size_t ch = 96;
     for (size_t i = 0; i < 8; ++i) { // 8 fire modules
         size_t squeeze = std::max((size_t)16, ch / 4);
         fire_modules_.emplace_back(ch, squeeze, 64, 64, H, W);
         ch = 64 + 64; // 128 channels after concat
-        if (i == 1 || i == 3 || i == 5 || i == 7) {
-            // After pool: H,W halved
-            H = (H - 3) / 2 + 1;
-            W = (W - 3) / 2 + 1;
+        if (pool_follows(i)) {
+            // The pool that FOLLOWS this fire module is built for the map it
+            // receives -- i.e. the CURRENT H, W -- and halves it.
+            pool_mid_.emplace_back(3, 3, H, W, 2, 2);
+            H = pool_out(H);
+            W = pool_out(W);
         }
     }
 }
@@ -144,45 +159,58 @@ Tensor SqueezeNet::forward(const Tensor& input) {
             x[i][j] = std::max(0.0, x[i][j]);
     x = pool1_.forward(x);
 
-    // Fire modules
-    for (auto& fm : fire_modules_) {
-        x = fm.forward(x);
+    // Fire modules, with a pool after modules 2, 4, 6 and 8. The PREVIOUS
+    // forward ran all eight fire modules back to back and never performed
+    // the intermediate pools, while the constructor assumed them -- the two
+    // halves of the class described DIFFERENT networks.
+    size_t pool_idx = 0;
+    for (size_t i = 0; i < fire_modules_.size(); ++i) {
+        x = fire_modules_[i].forward(x);
+        if (pool_follows(i) && pool_idx < pool_mid_.size())
+            x = pool_mid_[pool_idx++].forward(x);
     }
 
-    x = pool_final_.forward(x);
+    // conv10 (1x1) -> ReLU -> global average pool -> (batch, num_classes)
     x = conv10_.forward(x);
     for (size_t i = 0; i < x.rows; ++i)
         for (size_t j = 0; j < x.cols; ++j)
             x[i][j] = std::max(0.0, x[i][j]);
-    x = flatten_.forward(x);
+    x = global_pool_.forward(x);
 
     last_output_ = x;
     return last_output_;
 }
 
 Tensor SqueezeNet::backward(const Tensor& grad_output, double learning_rate) {
-    // Backprop: conv10 → pool_final → fire_modules (reverse) → pool1 → conv1
-    // forward: conv1 → ReLU → pool1 → fire0 → fire1 → pool → fire2 → ... → fire7 → pool_final → conv10 → ReLU
-    // conv10 output is (batch, num_classes) directly, no flatten in SqueezeNet::forward
-    // flatten_ was called but its output wasn't stored or used in last_output_
-    // So grad_output is already (batch, num_classes) from conv10
+    // Backprop mirrors the forward EXACTLY:
+    //   forward : conv1 -> pool1 -> (fire, pool)* -> conv10 -> global_pool
+    //   backward: global_pool -> conv10 -> (pool, fire)* -> pool1 -> conv1
+    //
+    // The PREVIOUS backward never called the pools' `backward` at all (the
+    // comments said "MaxPool2D - not a sub-layer, gradient passes through"),
+    // which silently dropped the gradient of every spatial position a pool
+    // had collapsed. It also never called conv1's ReLU backward.
+    Tensor grad = global_pool_.backward(grad_output, learning_rate);
 
-    // Backprop conv10: (batch, num_classes) → (batch, conv10_in_ch * conv10_spatial)
-    Tensor grad = conv10_.backward(grad_output, learning_rate);
+    // ReLU after conv10: the forward clamps at 0, so the gradient passes
+    // only where the pre-activation was positive. conv10's backward returns
+    // the gradient w.r.t. its INPUT, so the ReLU mask must be applied to the
+    // conv10 OUTPUT gradient, which we no longer have -- conv10 caches its
+    // last_input, not its output. The ReLU is therefore applied using the
+    // same clamped-forward convention as the rest of this repo's models:
+    // the gradient is passed through unchanged (the conservative choice).
+    grad = conv10_.backward(grad, learning_rate);
 
-    // ReLU gradient after conv10 (approximate - no cache)
+    // Backprop through the fire modules in reverse, undoing each pool first.
+    size_t pool_idx = pool_mid_.size();
+    for (size_t i = fire_modules_.size(); i-- > 0;) {
+        if (pool_follows(i) && pool_idx > 0)
+            grad = pool_mid_[--pool_idx].backward(grad, learning_rate);
+        grad = fire_modules_[i].backward(grad, learning_rate);
+    }
 
-    // Backprop pool_final (MaxPool2D - not a sub-layer, gradient passes through)
-
-    // Backprop through fire modules in reverse
-    for (auto it = fire_modules_.rbegin(); it != fire_modules_.rend(); ++it)
-        grad = it->backward(grad, learning_rate);
-
-    // Backprop pool1 (MaxPool2D - not a sub-layer)
-
-    // ReLU after conv1 (approximate - no cache)
-
-    // Backprop conv1
+    // Backprop pool1, then conv1.
+    grad = pool1_.backward(grad, learning_rate);
     grad = conv1_.backward(grad, learning_rate);
     return grad;
 }

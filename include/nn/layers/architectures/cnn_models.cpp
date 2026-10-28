@@ -5,7 +5,17 @@
 
 VGGBlock::VGGBlock(size_t in_channels, size_t filters[], size_t n_layers,
                    bool use_bn, size_t pool_stride)
-    : use_bn_(use_bn), pool_(2, 2, pool_stride, pool_stride), n_layers_(n_layers) {
+    // The pooling layers are SHAPE-STATIC (`MaxPool2D(kH, kW, H_in, W_in,
+    // stride_h, stride_w)` bakes the spatial dims in at construction). The
+    // conv stack below is built at a fixed 224x224 input with 3x3 kernels and
+    // pad 1, so the spatial size is PRESERVED through the convs and the pool
+    // receives a 224x224 map. The previous
+    // `pool_(2, 2, pool_stride, pool_stride)` passed the STRIDE in the
+    // H_in/W_in slots, which built a pool over a `pool_stride x pool_stride`
+    // map -- for the default stride 2 that is a 2x2 input with a 2x2 kernel,
+    // i.e. a 1x1 output.
+    // See docs/plans/2026-10-28-pooling-geometry.md.
+    : use_bn_(use_bn), pool_(2, 2, 224, 224, pool_stride, pool_stride), n_layers_(n_layers) {
     size_t ch = in_channels;
     for (size_t i = 0; i < n_layers; ++i) {
         convs_.emplace_back(ch, filters[i], 3, 3, 224, 224, 1, 1, 1, 1);
@@ -114,9 +124,30 @@ std::vector<Tensor*> VGGBlock::gradients() {
 // === LeNet-5 ===
 
 LeNet5::LeNet5(size_t num_classes)
-    : conv1_(1, 6, 5, 5, 32, 32, 1, 1, 2, 2),
+    // The spatial chain, derived from the layers' own declared shapes:
+    //   conv1 (5x5, pad 0, stride 1) on 32x32 -> 28x28 -> pool1 (2x2, s2) -> 14x14
+    //   conv2 (5x5, pad 0, stride 1) on 14x14 -> 10x10 -> pool2 (2x2, s2) ->  5x5
+    //   flatten -> 16 * 5 * 5 = 400  ->  fc1 (400, 120)
+    // The `fc1_(16 * 5 * 5, 120)` below is the CROSS-CHECK: it is only
+    // consistent with conv1 having pad 0 (28x28 -> 14x14 -> 10x10 -> 5x5).
+    // With pad 2 the chain gives 32x32 -> 16x16 -> 12x12 -> 6x6 -> 576, which
+    // contradicts fc1's declared 400. conv1's pad was 2, which made the whole
+    // network inconsistent -- and the network could never run, because it was
+    // ABSTRACT (fixed in commit 9fae6e3) and its pools were built with the
+    // stride in the H_in/W_in slots (fixed in the pooling commit).
+    : conv1_(1, 6, 5, 5, 32, 32, 1, 1, 0, 0),
       conv2_(6, 16, 5, 5, 14, 14, 1, 1, 0, 0),
-      pool1_(2, 2, 2, 2), pool2_(2, 2, 2, 2),
+      // The pooling layers are SHAPE-STATIC: `MaxPool2D(kH, kW, H_in, W_in,
+      // stride_h, stride_w)` bakes the spatial dims in at construction, and
+      // `forward` asserts `input.cols % (H * W) == 0`. The dims below are the
+      // spatial size of the map EACH pool actually receives:
+      //   pool1: conv1 output -> 28x28, pooled to 14x14
+      //   pool2: conv2 output -> 10x10, pooled to  5x5
+      // The previous `pool1_(2, 2, 2, 2), pool2_(2, 2, 2, 2)` passed the
+      // STRIDE in the H_in/W_in slots, which collapsed both pools to a 2x2
+      // input and a 1x1 output.
+      // See docs/plans/2026-10-28-pooling-geometry.md.
+      pool1_(2, 2, 28, 28, 2, 2), pool2_(2, 2, 10, 10, 2, 2),
       fc1_(16 * 5 * 5, 120), fc2_(120, 84), fc3_(84, num_classes) {}
 
 Tensor LeNet5::forward(const Tensor& input) {
@@ -189,13 +220,36 @@ std::vector<Tensor*> LeNet5::gradients() {
 // === AlexNet ===
 
 AlexNet::AlexNet(size_t num_classes, bool use_lrbn)
+    // The spatial chain, derived from the layers' own declared shapes:
+    //   conv1 (11x11, s4, pad3) on 224x224 -> 55x55 -> pool1 (3x3, s2) -> 27x27
+    //   conv2 (5x5, s1, pad2)   on 27x27   -> 27x27 -> pool2 (3x3, s2) -> 13x13
+    //   conv3/4/5 (3x3, s1, pad1) on 13x13 -> 13x13 -> pool3 (3x3, s2) ->  6x6
+    //   flatten -> 6 * 6 * 256 = 9216  ->  fc1 (9216, 4096)
+    // `conv1_` was declared with H_in = W_in = 55, but 55x55 is conv1's
+    // OUTPUT size, not its input: with an 11x11 kernel, stride 4 and pad 3,
+    // the OUTPUT of a 224x224 input is exactly 55x55. Declaring the input as
+    // 55 made conv1 expect `3 * 55 * 55` columns while the chain fed it
+    // `3 * 224 * 224`, and the forward died on Conv2D's shape assertion.
+    // The `fc1_(6 * 6 * 256, 4096)` below is the CROSS-CHECK that pins the
+    // whole chain: only a 6x6 spatial map reaching fc1 gives 9216.
     : use_lrbn_(use_lrbn),
-      conv1_(3, 96, 11, 11, 55, 55, 4, 4, 3, 3),
+      conv1_(3, 96, 11, 11, 224, 224, 4, 4, 3, 3),
       conv2_(96, 256, 5, 5, 27, 27, 1, 1, 2, 2),
       conv3_(256, 384, 3, 3, 13, 13, 1, 1, 1, 1),
       conv4_(384, 384, 3, 3, 13, 13, 1, 1, 1, 1),
       conv5_(384, 256, 3, 3, 13, 13, 1, 1, 1, 1),
-      pool1_(3, 3, 2, 2), pool2_(3, 3, 2, 2), pool3_(3, 3, 2, 2),
+      // The pooling layers are SHAPE-STATIC (`MaxPool2D(kH, kW, H_in, W_in,
+      // stride_h, stride_w)` bakes the spatial dims in at construction). The
+      // dims below are the spatial size of the map EACH pool actually
+      // receives, from the 224x224 input:
+      //   pool1: conv1 output (11x11, s4, pad3) -> 55x55, pooled to 27x27
+      //   pool2: conv2 output (5x5, s1, pad2)  -> 27x27, pooled to 13x13
+      //   pool3: conv5 output (3x3, s1, pad1)  -> 13x13, pooled to  6x6
+      // The previous `pool1_(3, 3, 2, 2), ...` passed the STRIDE in the
+      // H_in/W_in slots, giving H_out = (2 - 3) / 1 + 1 = 0 and throwing
+      // "MaxPool2D: output dimensions non-positive" at construction.
+      // See docs/plans/2026-10-28-pooling-geometry.md.
+      pool1_(3, 3, 55, 55, 2, 2), pool2_(3, 3, 27, 27, 2, 2), pool3_(3, 3, 13, 13, 2, 2),
       flatten_(),
       fc1_(6 * 6 * 256, 4096), fc2_(4096, 4096), fc3_(4096, num_classes) {}
 

@@ -48,12 +48,48 @@ public:
     Tensor get_gradients() const override { return Tensor(); }
 
 private:
+    // -------------------------------------------------------------------------
+    // THE SPATIAL CHAIN, AND WHY IT IS COMPUTED BY STATIC HELPERS.
+    //
+    // Every layer here is SHAPE-STATIC: `Conv2D` and `MaxPool2D` bake their
+    // spatial dims in at construction. The constructor therefore has to know
+    // the spatial size of every stage BEFORE it can size the layers, and the
+    // member-initialiser list runs BEFORE the constructor body -- so the sizes
+    // must come from functions callable in the initialiser list. These three
+    // static helpers ARE the chain, and they are the single source of truth:
+    // the constructor body uses them too, so the layers and the forward pass
+    // cannot drift apart.
+    //
+    //   conv1  (7x7, stride 2, pad 3)  on H_in      -> conv1_out
+    //   pool1  (3x3, stride 2)                       -> pool_out
+    //   fire0, fire1, POOL, fire2, fire3, POOL, ...   -> 4 intermediate pools
+    //   conv10 (1x1)                                 -> final spatial
+    //   global average pool                          -> (batch, num_classes)
+    // -------------------------------------------------------------------------
+    static size_t conv1_out(size_t h) { return (h + 6 - 7) / 2 + 1; }
+    static size_t pool_out(size_t h) { return (h - 3) / 2 + 1; }
+    // The spatial size after fire8's pool -- the size conv10 and the global
+    // average pool are built for.
+    static size_t final_spatial(size_t h) {
+        size_t s = pool_out(conv1_out(h));
+        for (size_t i = 0; i < 8; ++i)
+            if (i == 1 || i == 3 || i == 5 || i == 7) s = pool_out(s);
+        return s;
+    }
+    // True when a pool follows fire module `i` (0-indexed).
+    static bool pool_follows(size_t i) { return i == 1 || i == 3 || i == 5 || i == 7; }
+
     Conv2D conv1_;  // initial conv
     MaxPool2D pool1_;
     std::vector<FireModule> fire_modules_;
-    MaxPool2D pool_final_;
-    Conv2D conv10_; // final 1x1 conv (1x1 or 1x1 conv to num_classes)
-    Flatten flatten_;
+    // The four pools that follow fire modules 2, 4, 6 and 8. The PREVIOUS
+    // constructor tracked a halved spatial size for these pools but the
+    // forward pass never performed them, so the two halves of the class
+    // disagreed about the shape of the network and the class could not even
+    // be constructed.
+    std::vector<MaxPool2D> pool_mid_;
+    Conv2D conv10_; // final 1x1 conv to num_classes
+    AvgPool2D global_pool_;  // global average pool -> (batch, num_classes)
     Tensor last_output_;
 };
 
