@@ -189,11 +189,18 @@ void GaLore::jacobi_eigendecompose(Tensor& A,
                 const double app = A(p, p);
                 const double aqq = A(q, q);
 
+                // Compute the rotation angle.
+                // Standard Jacobi formula: theta = (app - aqq) / (2 * apq),
+                // i.e. theta = 0.5 * atan2(2*apq, app - aqq). The SIGN of the
+                // second argument matters: with `aqq - app` the rotation
+                // roughly DOUBLES the off-diagonal instead of annihilating
+                // it, and the routine returns an orthogonal similarity that
+                // is NOT an eigendecomposition. See the note in the header.
                 double theta;
                 if (std::abs(app - aqq) < 1e-30) {
                     theta = (apq >= 0.0) ? M_PI / 4.0 : -M_PI / 4.0;
                 } else {
-                    theta = 0.5 * std::atan2(2.0 * apq, aqq - app);
+                    theta = 0.5 * std::atan2(2.0 * apq, app - aqq);
                 }
                 const double c = std::cos(theta);
                 const double s = std::sin(theta);
