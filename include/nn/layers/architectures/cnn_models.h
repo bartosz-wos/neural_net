@@ -20,6 +20,13 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // MANY parameter tensors (a conv stack plus optional BN), so no single
+    // weight matrix to expose; the empty tensor is this repo's established
+    // answer for a multi-parameter layer (see `architectures/resnet.h:15-16`).
+    // WITHOUT THESE TWO OVERRIDES THE CLASS IS ABSTRACT, because `Layer`
+    // declares `get_weights`/`get_gradients` pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
 private:
     std::vector<Conv2D> convs_;
@@ -43,6 +50,13 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // MANY parameter tensors (two convs, two pools, three FCs), so no single
+    // weight matrix to expose; the empty tensor is this repo's established
+    // answer for a multi-parameter layer (see `architectures/resnet.h:15-16`).
+    // WITHOUT THESE TWO OVERRIDES THE CLASS IS ABSTRACT, because `Layer`
+    // declares `get_weights`/`get_gradients` pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
 private:
     Conv2D conv1_, conv2_;
@@ -66,6 +80,14 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // MANY parameter tensors (five convs, three pools, three FCs), so no
+    // single weight matrix to expose; the empty tensor is this repo's
+    // established answer for a multi-parameter layer (see
+    // `architectures/resnet.h:15-16`). WITHOUT THESE TWO OVERRIDES THE CLASS
+    // IS ABSTRACT, because `Layer` declares `get_weights`/`get_gradients`
+    // pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
 private:
     Conv2D conv1_, conv2_, conv3_, conv4_, conv5_;

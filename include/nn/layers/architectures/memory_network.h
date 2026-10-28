@@ -23,6 +23,13 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // MANY parameter tensors, so no single weight matrix to expose; the empty
+    // tensor is this repo's established answer for a multi-parameter layer
+    // (see `architectures/resnet.h:15-16`). WITHOUT THESE TWO OVERRIDES THE
+    // CLASS IS ABSTRACT, because `Layer` declares `get_weights`/`get_gradients`
+    // pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
     // Set the knowledge base (list of memory sentences)
     void set_memory(const std::vector<std::vector<size_t>>& memory);
@@ -69,6 +76,13 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // MANY parameter tensors, so no single weight matrix to expose; the empty
+    // tensor is this repo's established answer for a multi-parameter layer
+    // (see `architectures/resnet.h:15-16`). WITHOUT THESE TWO OVERRIDES THE
+    // CLASS IS ABSTRACT, because `Layer` declares `get_weights`/`get_gradients`
+    // pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
     void set_vocab_embedding(const Tensor& embedding) { embeddings_ = embedding; }
 
 private:

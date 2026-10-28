@@ -16,6 +16,14 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // A BiLSTM has MANY parameter tensors (two directions x four gates), so
+    // there is no single weight matrix to expose; the empty tensor is this
+    // repo's established answer for a multi-parameter layer (see
+    // `architectures/resnet.h:15-16`). WITHOUT THESE TWO OVERRIDES THE CLASS
+    // IS ABSTRACT, because `Layer` declares `get_weights`/`get_gradients`
+    // pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
 private:
     Tensor last_output_;

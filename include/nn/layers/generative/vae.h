@@ -17,6 +17,14 @@ public:
     void zero_grad() override;
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
+    // A VAE has MANY parameter tensors (encoder fc1, encoder mu, encoder
+    // logvar, decoder fc1, decoder out), so there is no single weight matrix
+    // to expose. The empty tensor is this repo's established answer for a
+    // multi-parameter layer -- see `architectures/resnet.h:15-16`. WITHOUT
+    // THESE TWO OVERRIDES THE CLASS IS ABSTRACT, because `Layer` declares
+    // `get_weights`/`get_gradients` pure virtual.
+    Tensor get_weights() const override { return Tensor(); }
+    Tensor get_gradients() const override { return Tensor(); }
 
     // Sample from latent space (encoder -> reparameterize -> decoder)
     Tensor sample(const Tensor& input);
