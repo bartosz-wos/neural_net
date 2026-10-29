@@ -93,6 +93,7 @@
 #include "utils/gaussian_process.h"
 #include "utils/ngram_lm.h"
 #include "utils/sinkhorn.h"
+#include "utils/linear_algebra.h"
 #include "utils/logit_processing.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
