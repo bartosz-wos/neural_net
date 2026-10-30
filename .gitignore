@@ -1,4 +1,10 @@
 build/
+# Sanitizer build directories. A sanitizer run needs its OWN object tree --
+# linking an ASan-instrumented .o against a non-sanitizer link set fails with
+# a wall of `undefined reference to __asan_report_*`, which looks like a
+# source bug and is not one. `make BUILD_DIR=build_asan ...` is the
+# convention; this keeps it out of the tree.
+build_asan/
 *.o
 __pycache__/
 *.pyc
