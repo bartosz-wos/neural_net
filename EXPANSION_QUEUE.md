@@ -4,6 +4,14 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-29] SLICED WASSERSTEIN DISTANCE SHIPPED. 40/40 + oracle
+#     22/22, 7 mutations caught / 0 survived / 0 broken / 0 crashed / 0 noop,
+#     ASan+UBSan CLEAN, zero new full-suite failures. Do not re-pop.
+# [DONE 2026-10-29] PUBLIC SYMMETRIC LINEAR ALGEBRA (eigendecomposition +
+#     matrix square root + Frechet distance) SHIPPED, and the three
+#     optimizers' private Jacobi copies DE-DUPLICATED into it. 53/53 +
+#     oracle, 9 mutations caught / 0 survived / 1 measured-inert, ASan+UBSan
+#     CLEAN. Do not re-pop.
 # [DONE 2026-10-27] GAUSSIAN PROCESS REGRESSION SHIPPED. 59/59 + oracle 53/53,
 #     25 mutations caught / 0 survived / 0 broken / 0 noop, ASan+UBSan
 #     CLEAN, zero new full-suite failures. Do not re-pop.
@@ -1164,6 +1172,57 @@ After completing an item, move it to the "Done" section.
      (cols = C*H*W), which for a flattened feature map mixes channels with
      space, and ConvNeXt needs per-spatial-position channel normalization. -->
 
+<!-- 2026-10-29: sliced Wasserstein SHIPPED (see ## Done). The list is drained
+     a SEVENTEENTH time, and the docs-gap grep returned its 23 familiar hits
+     for the SEVENTH consecutive run -- all accounted for in shipped headers.
+
+     THE FRESH LIST BELOW IS THE VERIFIED-ABSENT SWEEP FROM THIS SESSION. Each
+     entry was measured BY CONTENT, and the grep lines are recorded so a
+     future session can see what the absence actually looked like. **THE
+     ORDER IS LIFO: THE LAST BULLET IS THE NEXT TO POP.**
+
+     - **AN INFERENCE-TIME KV CACHE.** `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/`
+       -> **3 hits, ALL COMMENTS** (`mla.h:33`, `sliding_window.h:17`,
+       `megalodon.h:67` -- the last says "No KV cache or incremental
+       decoding"). **ZERO IMPLEMENTATION.** Many attention layers cache for
+       BACKWARD (`last_k_`, `last_v_`), which is NOT an inference-time cache.
+       **THE TRAP**: a `grep -ril 'kv_cache'` will hit those backward caches
+       and report the feature as PRESENT. PRINT THE MATCHING LINES.
+     - **A STANDALONE ELBO / VI UTILITY.** `grep -rinE 'elbo|variational.inference|kullback' include/`
+       -> only `utils/distribution_losses.h`'s "KL Divergence" comment and
+       `gaussian_process.h`'s "variational GPs" out-of-scope note. The repo's
+       VAE computes its KL inline (`vae.cpp:53`), and NOT_FIXED.md records
+       that the KL is a SUM while the reconstruction loss is a MEAN -- so a
+       standalone ELBO utility would also settle that convention.
+     - **AN ORDINAL-REGRESSION LAYER.** `grep -rinE 'ordinal.regress|cumulative.link|probit' include/`
+       -> only `gaussian_process.h`'s prose mention of "Bernoulli-probit
+       GPs". A cumulative-link model over K ordered classes.
+     - **EDIT DISTANCE / DYNAMIC TIME WARPING.** `grep -rinE 'levenshtein|edit.distance|dynamic.time.warp' include/`
+       -> **0 hits**.
+     - **ISOTONIC REGRESSION.** `grep -rinE 'isotonic|monotone.calib' include/`
+       -> **0 hits** (only `temperature_scaling.h`'s prose mention of
+       "Platt scaling"). The repo has temperature scaling and a full
+       calibration-diagnostics suite but NO monotone calibration map, which
+       is the standard non-parametric alternative to Platt and temperature
+       scaling -- and it composes with the shipped conformal prediction.
+     - **A SELF-NORMALISED IMPORTANCE-SAMPLING ESTIMATOR.** `grep -rinE 'importance.sampl|self.normaliz' include/`
+       -> **0 content hits** (only SELU's "self-normalizing" prose).
+     - **RANK CORRELATION / COPULA UTILITIES.** `grep -rinE 'copula|rank.?correl|spearman|kendall' include/`
+       -> **0 hits**.
+     - **OFF-POLICY EVALUATION.** `grep -rinE '\bsnr\b|off.?policy|behavior.polic' include/`
+       -> **0 hits**.
+
+     **DO NOT RE-POP**: `sliced.?wasserstein`, `weight.?standard`,
+     `learnable.?lip`, `ngram`, `jelinek`, `mercer`, `stupid.?backoff`,
+     `katz`, `nystrom`, `crf`, `gaussian.?process`, `matrix.?sqrt`,
+     `frechet`, `fid` -- all CLOSED or measured present.
+
+     **THE CONSTRUCTIBILITY SWEEP SHOULD RUN EVERY SESSION** (the script is
+     quoted in the 2026-10-28 `## Done` entry). It costs seconds and found
+     eight UNUSABLE public classes on that date -- classes that LOOKED
+     present and could not be instantiated. **A CLASS THAT CANNOT BE
+     INSTANTIATED IS NOT EVIDENCE OF ABSENCE EITHER.**
+
 <!-- Next ideas to consider (suggestions from recent research / repo gaps):
      - General note: pick whichever paper is clean to implement AND genuinely
        missing (check via `grep -ril <keyword> include/`). Recent additions
@@ -1178,6 +1237,56 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **The sliced Wasserstein distance SHIPPED, and with it the repo's first sample-quality metric that needs NO pretrained feature extractor** (2026-10-29). `include/nn/utils/sliced_wasserstein.{h,cpp}`, 40/40 in `test_sliced_wasserstein`, 7/7 mutations caught, ASan+UBSan CLEAN, zero new full-suite failures.
+
+  **THE `## Ideas` LIST WAS DRAINED a SEVENTEENTH TIME** (the docs-gap grep returned its 23 familiar hits, all accounted for in shipped headers), so the session fell back to the queue's own documented method -- a verified-absent concept sweep -- and the sweep was done by asking the question the last session's entry had ALREADY ANSWERED: **"fifteen generative models ship and nothing measures the quality of their samples."** The 2026-10-28 entry had closed the FID route (the Frechet distance shipped on 2026-10-29, but FID itself needs an Inception network this repo does not ship), so the sweep looked for the metric that does NOT need one.
+
+  **THE ABSENCE WAS TOTAL, AND MEASURED BY CONTENT, NOT BY FILENAME.**
+
+  ```
+  grep -rinE 'wasserstein' include/ tests/  ->  2 hits, BOTH in comments
+      include/nn/utils/linear_algebra.h:117  (the Inception-Score paper's TITLE)
+      tests/sinkhorn_oracle.py:31             ("the true (Wasserstein-1) optimal transport cost")
+  grep -rinE 'sliced.?wasserman|energy.?distance' include/  ->  0 hits
+  ```
+
+  **SO THE REPO HAD NO WASSERSTEIN MACHINERY OF ANY KIND**, and the three things it did have are all DIFFERENT objects: `utils/sinkhorn.h` is an entropic transport PLAN (the regularised cost, an O(n*m) cost matrix, not a metric); `utils/mmd_loss.h` is a KERNEL two-sample statistic (no geometry, needs a bandwidth, says nothing about WHICH samples differ); and `utils/linear_algebra.h`'s Frechet distance is the FID building block (needs an Inception network the repo does not ship). **THE SLICED WASSERSTEIN DISTANCE NEEDS NONE OF THE THREE PRECONDITIONS**, which is exactly what makes it usable on the generative models' own output space here.
+
+  **THE ORACLE CAUGHT FOUR DEFECTS IN ITS OWN FIRST DRAFT, AND TWO OF THEM ARE THE KIND THAT SHIP A CONFIDENT WRONG NUMBER.**
+
+  1. **A TRANSPOSED MATMUL.** `points @ directions.T` has shape (n, k); the caller read it as (k, n), so `pj[k]` was the projection of POINT k onto every direction rather than every point onto DIRECTION k. **The symptom was decisive and the diagnosis took one probe**: the 1-D fixture's SWD came out 10.0 where the 1-D Wasserstein distance is 9.5, and 10.0 is exactly |0 - 10| -- the metric had silently become a metric on one point at a time.
+  2. **THE SORTING CLAIM WAS BACKWARDS.** The draft asserted that omitting the sort makes the metric SMALLER. Measured over 20000 random pairs: the unsorted value was smaller in ZERO of them. **SORTING MINIMISES the sum of absolute differences** -- that is what optimal 1-D transport IS -- so a missing sort OVERESTIMATES. The oracle now asserts the minimising property over 2000 random pairs, and the C++ harness's M1 mutation confirms it.
+  3. **A WRONG HOMOGENEITY CLAIM.** The draft asserted that dilating ONE side doubles the distance. It does not: W1(P, 2P) = 1.5 for P = [0,1,2,3], not 2.0. The property that IS true -- dilating BOTH sides -- is what the C++ must satisfy.
+  4. **A FIXTURE WHOSE SYMMETRY MADE THE TWO QUANTITIES AGREE.** The mean-vs-max fixture placed two points symmetrically about the origin, so BOTH directions saw the same 1-D W1 and the mean EQUALLED the max. **A FIXTURE WHOSE SYMMETRY MAKES THE TWO QUANTITIES AGREE IS NOT A FIXTURE FOR THAT DISTINCTION.**
+
+  **THE THREE DECISIONS THE METRIC MAKES, AND HOW EACH IS PINNED.** (1) The projections are SORTED -- the general (unequal-n) 1-D W1 form, walked over the merged support, is used throughout, because the `mean(|sorted_p - sorted_q|)` shortcut is valid only for equal counts (measured 4.5 vs 0.0 on a fixture). (2) The directions are UNIT, and a non-unit direction is **REJECTED rather than silently rescaled** -- the oracle measured that scaling a direction by 2 scales the answer by exactly 2, so a normalising implementation would be a DIFFERENT metric from the one the definition names, and the caller could not tell. (3) The seed is part of the contract: the same seed gives the same answer, and a different seed generally gives a different one, so an implementation that ignores the seed cannot pass by accident.
+
+  **`max_sliced_wasserstein_distance` IS A MAXIMUM OVER A FIXED SET, NOT AN OPTIMISATION OVER THE SPHERE, and the header says so.** The continuous optimisation is a non-convex problem the literature solves with projected gradient ascent over many restarts; a function named `max_...` that secretly ran an optimiser would be a different object from the one a caller expects.
+
+  **ONE HARNESS DEFECT AND ONE TEST DEFECT, BOTH FOUND BY THIS SESSION'S OWN HARNESS.** The first draft of the M6 mutation removed the direction normalisation entirely, which made the library's own unit guard fire -- correctly -- and the resulting exception **ESCAPED main**: the binary aborted with rc=134 and the suite's verdict count was LOST. **THE HARNESS WAS RIGHT TO REFUSE TO CALL IT A VERDICT (MUT-CRASH IS A THIRD CLASS) AND THE TEST WAS WRONG.** Every call that can throw is now inside `call_guarded`. And M6 itself did not test what it claimed: "the directions are not normalised" is not observable through the metric's VALUE, only through their LENGTH, so it now normalises to a length of 1.05 and is caught by the suite's own unit-vector check.
+
+  **CITATIONS VERIFIED BY TITLE, THEN BY SCRAPING THE abs PAGE's citation_title / citation_author META TAGS:** `1803.11188` = "Generative Modeling using the Sliced Wasserstein Distance" (Deshpande, Zhang, Schwing -- three author tags, in order) and `1904.05877` = "Max-Sliced Wasserstein Distance and its use for GANs" (Deshpande, Hu, Sun, Pyrros, Siddiqui, Koyejo, Zhao, Forsyth -- eight author tags, in order). **THE 2015 KARRAS et al. PAPER IS DELIBERATELY NOT CITED**: two identifiers typed from memory for it were checked against their abs pages on 2026-10-29 and BOTH were wrong (one is a galactic-plane survey paper, the other an equivariant topological quantum field theory paper). This queue has produced FOURTEEN wrong arXiv IDs and every one was a plausible-looking neighbour of the right paper, so no identifier is asserted for it. **A citation that cannot be located is not a citation.**
+
+  **SHIPPED: `test(utils): float64 oracle for the sliced Wasserstein distance` (06804f7), `test(utils): RED test for the sliced Wasserstein distance` (07629ab), `feat(utils): the sliced Wasserstein distance, a sample-quality metric that needs no feature extractor` (03a5e25), `test(utils): mutation harness for the sliced Wasserstein distance` (13af1d0).**
+
+  **THE SAME SESSION ALSO CLOSED THE PREVIOUS SESSION'S PLAN.** The 2026-10-28 entry's last paragraph said the Jacobi routine should be promoted to public form and that "the three copies are why a one-character defect was in three places at once, and DE-DUPLICATING THEM IS WHAT PREVENTS THE NEXT ONE". That happened: `Shampoo::jacobi_eigendecompose`, `SOAP::jacobi_eigendecompose` and `GaLore::jacobi_eigendecompose` are DELETED and all three optimizers now call the one public `nn::utils::symmetric_eigendecompose` (commit `7c2c2a3`). **THE DE-DUPLICATION IS WHAT MADE THE SORT CONTRACT OBSERVABLE AT ALL**: the three private copies returned the cyclic sweep's unsorted diagonal, and GaLore took "the top-r" by copying the FIRST r COLUMNS -- so on `G = diag(1,5,1,1)`, whose Gram matrix `diag(1,25,1,1)` is ALREADY DIAGONAL (so no rotation happens at all), the old code kept the eigenvector of the SMALLEST eigenvalue. `P'P` was still the identity, so the orthonormality test could not see it.
+
+  **AND THE DE-DUPLICATION BROKE THE OLD MUTATION HARNESS'S ANCHORS -- THE RECORDED "ANCHORS ARE INVALIDATED BY ADDING A FEATURE" TRAP, CAUGHT IN THE ACTUAL TREE.** `tests/mutate_jacobi_eig.sh` mutated the rotation angle inside the three optimizers' private copies; after the promotion its anchor occurs ZERO times in all three sources, and its first run reported `M1..M4 MUT-NOOP/AMBIGUOUS (ANCHOR_COUNT=0)` and `FINAL: 0 caught / -1 survived / 1 measured-inert / ... / 4 noop`. **The "-1 survived" is the interesting part: the inverted-verdict block ran UNCONDITIONALLY and decremented a counter that was already 0, so it scored a mutation that had never applied.** That harness now REFUSES TO RUN (exit 99) with an explanation instead of reporting four noops as if they were verdicts, and `tests/mutate_linear_algebra.sh` replaces it.
+
+  **THE NEW LINEAR-ALGEBRA HARNESS FOUND TWO REAL COVERAGE GAPS IN A SUITE THAT HAD BEEN GREEN.** (1) **EVERY FIXTURE WAS SYMMETRIC, so the asymmetric-input contract was untested** -- the mutation "drop the input symmetrisation" survived, because every fixture in the file is a Gram matrix `G'G`, which is EXACTLY symmetric, and on a symmetric input the averaging and the mirroring are bit-identical. New section 7 uses `A = [[1,2],[4,3]]` and pins the answer against an independent closed-form reference. (2) **THE NEEDLE WAS MATCHED BY A SECOND GUARD'S MESSAGE** -- the mean-dimension guard was tested with the bare word "dimension", and the guard that fires NEXT produces "the second covariance's dimension does not match the mean", which ALSO contains "dimension". **THE DISCRIMINATOR IS THE MESSAGE, NOT THE THROW.** Each guard now asserts its own full message. **AND THE HEADER WAS WRONG ABOUT THE SYMMETRISATION**: it said the routine "uses only the lower triangle's mirrored values", which is NOT what the code does -- the code AVERAGES the two triangles.
+
+  **STILL UNBUILT, verified absent BY CONTENT this session (re-measure before taking):**
+    - `grep -rinE 'elbo|variational.inference|kullback' include/` -> only `utils/distribution_losses.h`'s "KL Divergence" comment and `gaussian_process.h`'s "variational GPs" out-of-scope note. **A standalone ELBO / VI utility is genuinely absent; the repo's VAE computes its KL inline.**
+    - `grep -rinE 'ordinal.regress|cumulative.link|probit' include/` -> only `gaussian_process.h`'s prose mention of "Bernoulli-probit GPs". An ordinal-regression layer.
+    - `grep -rinE 'levenshtein|edit.distance|dynamic.time.warp' include/` -> **0 hits**. Edit distance / DTW.
+    - `grep -rinE 'isotonic|monotone.calib' include/` -> **0 hits**. Isotonic regression (the repo has temperature scaling and calibration diagnostics, but no monotone calibration map).
+    - `grep -rinE 'importance.sampl|self.normaliz' include/` -> **0 content hits** (only SELU's "self-normalizing" prose). A self-normalised importance-sampling estimator.
+    - `grep -rinE 'copula|rank.?correl|spearman|kendall' include/` -> **0 hits**. Rank correlation / copula utilities.
+    - `grep -rinE '\bsnr\b|off.?policy|behavior.polic' include/` -> **0 hits**. Off-policy evaluation.
+    - `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/` -> only COMMENTS (`mla.h`, `sliding_window.h`, `megalodon.h`). **ZERO implementation of an inference-time KV cache.** Many attention layers cache for BACKWARD (`last_k_`, `last_v_`), which is NOT one.
+    - `weight.?standard`, `learnable.?lip`, `ngram`, `jelinek`, `mercer`, `stupid.?backoff`, `katz`, `nystrom`, `crf`, `gaussian.?process`, `sliced.?wasserstein` are all CLOSED or measured present. Do not re-pop.
+    - **THE CONSTRUCTIBILITY SWEEP SHOULD RUN EVERY SESSION** -- it costs seconds and found eight unusable classes on 2026-10-28.
 
 - **The Jacobi eigendecomposition in Shampoo, SOAP and GaLore was NOT AN EIGENDECOMPOSITION: the rotation angle had a flipped sign, so all three optimizers built their preconditioners from a spectrum that was not the matrix's spectrum** (fixed 2026-10-28). **THE `## Ideas` LIST WAS DRAINED a SIXTEENTH TIME** (the docs-gap grep returned its 19 familiar hits for the SIXTH consecutive run, and the constructibility sweep that last session added returned **ZERO** findings -- the eight abstract classes it found are still fixed), so the session fell back to the queue's own documented method, a verified-absent concept sweep. **THE ABSENCE THAT MATTERED WAS A REAL ONE: FIFTEEN GENERATIVE MODELS SHIP AND THERE IS NO SAMPLE-QUALITY METRIC.** `grep -rinE '\bfid\b|fr[eé]chet|inception.?score' include/ tests/` -> **0 hits in the entire tree**; the repo has DDPM, consistency models, flow matching, RealNVP, neural spline flows, VQ-VAE, VAE, WGAN-GP, PixelCNN, CapsNet and DiT, and **nothing anywhere measures whether the samples are good.** The nearest shipped things are `utils/mmd_loss.h` (a kernel two-sample statistic with no plan and no geometry) and `utils/sinkhorn.h` (an entropic transport plan). **FID needs a symmetric eigendecomposition and a matrix square root -- and the repo has NEITHER in public API**, which is how the session was led to the defect below.
 
