@@ -5,7 +5,54 @@
 # was written for. A green suite proves nothing on its own; the mutation has
 # to fail.
 #
-# THE MUTATIONS are the three ways the rotation angle can be wrong:
+# =============================================================================
+# THIS HARNESS WAS SUPERSEDED ON 2026-10-29, AND IT NOW SAYS SO.
+# =============================================================================
+#
+# The three OPTIMIZERS' private copies of the cyclic Jacobi were deleted and
+# the routine was promoted to ONE public function,
+# `nn::utils::symmetric_eigendecompose` (include/nn/utils/linear_algebra.h).
+# The rotation angle -- the thing this harness mutates -- therefore NO LONGER
+# EXISTS in shampoo.cpp, soap.cpp or galore.cpp, and every anchor below
+# reports ANCHOR_COUNT=0.
+#
+# **THAT IS THE RECORDED HARNESS-DEFECT CLASS: "a mutation harness's ANCHORS
+# are invalidated by adding a feature, and the failure is quiet."** The first
+# run of this harness after the refactor reported:
+#
+#     M1  MUT-NOOP/AMBIGUOUS  (ANCHOR_COUNT=0 )
+#     M2  MUT-NOOP/AMBIGUOUS  (ANCHOR_COUNT=0 )
+#     M3  MUT-NOOP/AMBIGUOUS  (ANCHOR_COUNT=0 )
+#     M4  MUT-NOOP/AMBIGUOUS  (ANCHOR_COUNT=0 )
+#     ----
+#     MUTATION SUMMARY: 0 caught / 0 survived / 0 broken / 0 crashed / 4 noop
+#     ----
+#     FINAL: 0 caught / -1 survived / 1 measured-inert / 0 broken / 0 crashed / 4 noop
+#
+# Note the "-1 survived": the inverted-verdict block decremented a SURVIVED
+# counter that was already 0, because it ran UNCONDITIONALLY even though the
+# mutation it was scoring had never applied. **A verdict about a mutation
+# that did not run is not a verdict at all.**
+#
+# THE REPLACEMENT is tests/mutate_linear_algebra.sh, which mutates the ONE
+# file that now holds the routine and runs all THREE affected suites
+# (test_linear_algebra, test_jacobi_eig, test_galore_projection). It scores
+# the same degenerate-branch mutation (as its M8) with the same inverted
+# verdict, and it applies the check CONDITIONALLY.
+#
+# This file is KEPT, rather than deleted, for two reasons:
+#   1. `git log -- tests/mutate_jacobi_eig.sh` is the record of the 2026-10-28
+#      session's measurement, and the repo's convention is to keep the
+#      history of a harness that found a real defect.
+#   2. It documents, in place, the exact ANCHOR_COUNT=0 signature that the
+#      refactor produced -- which is the thing a future session needs to
+#      recognise when it re-anchors something.
+#
+# It now REFUSES TO RUN rather than reporting four noops, because a harness
+# that cannot detect anything is not evidence of a weak suite; it is evidence
+# of a broken harness.
+#
+# The historical mutation list, for the record:
 #   M1  shampoo: restore the original `aqq - app` sign
 #   M2  soap:    restore the original `aqq - app` sign
 #   M3  galore:  restore the original `aqq - app` sign
@@ -27,6 +74,43 @@ set -u
 
 REPO=/home/stefan/neural_net
 cd "$REPO" || exit 99
+
+# -----------------------------------------------------------------------------
+# REFUSE TO RUN: the anchors this harness mutates no longer exist.
+#
+# The check is by CONTENT, not by filename, and it is the same check the
+# replacement harness uses. It refuses BEFORE reporting any verdict, because
+# reporting four MUT-NOOP rows as if they were verdicts is how a broken
+# harness gets mistaken for a strong one.
+# -----------------------------------------------------------------------------
+ANCHOR='theta = 0.5 * std::atan2(2.0 * apq, app - aqq);'
+FOUND=0
+for f in include/nn/optimizers/shampoo.cpp include/nn/optimizers/soap.cpp \
+         include/nn/optimizers/galore.cpp; do
+    n=$(python3 -c 'import sys; print(open(sys.argv[1],encoding="utf8").read().count(sys.argv[2]))' "$f" "$ANCHOR")
+    [ "$n" -gt 0 ] && FOUND=$((FOUND+1))
+done
+if [ "$FOUND" -eq 0 ]; then
+    echo "HARNESS DEFECT: this harness's anchors no longer exist."
+    echo ""
+    echo "  The three optimizers' private Jacobi copies were DELETED on 2026-10-29 and the"
+    echo "  routine was promoted to ONE public function:"
+    echo "      nn::utils::symmetric_eigendecompose  (include/nn/utils/linear_algebra.h)"
+    echo ""
+    echo "  The rotation angle -- which is what this harness mutates -- is now in"
+    echo "  include/nn/utils/linear_algebra.cpp, and the anchor"
+    echo "      $ANCHOR"
+    echo "  occurs 0 times in all three optimizer sources."
+    echo ""
+    echo "  RUN tests/mutate_linear_algebra.sh INSTEAD. It mutates the shared file and"
+    echo "  runs all three affected suites (test_linear_algebra, test_jacobi_eig,"
+    echo "  test_galore_projection)."
+    echo ""
+    echo "  Refusing to report four MUT-NOOP rows as if they were verdicts."
+    exit 99
+fi
+
+echo "anchors found in $FOUND optimizer source(s) -- the old harness is still valid."
 
 BAK_DIR=$(mktemp -d)
 BUILD_DIR=$BAK_DIR/build
