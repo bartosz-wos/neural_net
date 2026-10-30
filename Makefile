@@ -313,6 +313,9 @@ $(BUILD_DIR)/test_linear_algebra: $(LIB_OBJS) $(BUILD_DIR)/test_linear_algebra.o
 $(BUILD_DIR)/test_sliced_wasserstein: $(LIB_OBJS) $(BUILD_DIR)/test_sliced_wasserstein.o
 	$(CXX) $^ -o $@
 
+$(BUILD_DIR)/test_off_policy_eval: $(LIB_OBJS) $(BUILD_DIR)/test_off_policy_eval.o
+	$(CXX) $^ -o $@
+
 $(BUILD_DIR)/test_vae: $(LIB_OBJS) $(BUILD_DIR)/test_vae.o
 	$(CXX) $^ -o $@
 
