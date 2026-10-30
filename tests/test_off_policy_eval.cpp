@@ -649,6 +649,37 @@ int main() {
               "7.4 DM with an EXACT reward model is exactly unbiased");
         check(std::abs(dm_wrong - v_pi1) > 1e-6,
               "7.5 DM with a WRONG reward model is measurably biased");
+
+        // -------------------------------------------------------------------
+        // WHY THE TWO ARMS ARE NOT INTERCHANGEABLE -- PINNED, NOT ASSUMED.
+        //
+        // **THE MUTATION HARNESS MEASURED THIS**: flipping the correction's
+        // sign, or dropping the correction's weight, breaks ONLY ARM A.
+        // The reason is that in ARM B the reward model is EXACT, so
+        // r_i - q_i is IDENTICALLY ZERO for every sample -- and a term that
+        // is identically zero cannot be changed by anything done to it.
+        // **ARM B IS THEREFORE STRUCTURALLY INSENSITIVE TO THE CORRECTION
+        // TERM**, and ARM A is the arm that pins it. The arms are
+        // complementary: ARM A pins the correction, ARM B pins the Vhat term.
+        //
+        // This check pins the STRUCTURE (the correction vanishes in ARM B),
+        // so the asymmetry is a property of the fixture rather than a lucky
+        // accident of which mutations happen to be caught.
+        // -------------------------------------------------------------------
+        {
+            double max_residual = 0.0;
+            for (size_t a = 0; a < b.mu.size(); ++a)
+                max_residual = std::max(max_residual,
+                                        std::abs(b.mu[a] - rhat_exact[a]));
+            check(max_residual == 0.0,
+                  "7.6 in ARM B the reward model is EXACT, so r - q is "
+                  "IDENTICALLY ZERO for every sample (which is why ARM B "
+                  "cannot see a defect in the correction term)");
+            check(std::abs(std::abs(dm_wrong - v_pi1) - std::abs(dm_exact - v_pi1)) > 1e-6,
+                  "7.7 the two arms really are different regimes: the WRONG "
+                  "model's direct method is biased and the EXACT model's is "
+                  "not");
+        }
     }
 
     // -----------------------------------------------------------------------

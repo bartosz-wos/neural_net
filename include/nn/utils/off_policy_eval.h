@@ -245,6 +245,16 @@ double ope_direct_method_estimate(const Tensor& model_target_values);
 // are exact OR the reward model is exact -- see the header's cancellation
 // derivation.
 //
+// **THE TWO ARMS ARE NOT INTERCHANGEABLE, AND THE MEASUREMENT SHOWS WHY.**
+// Dropping the Vhat term breaks BOTH arms. But flipping the correction's
+// sign, or dropping the correction's weight, breaks ONLY ARM A -- because
+// in ARM B the reward model is EXACT, which makes r_i - q_i identically
+// ZERO for every sample, and a term that is identically zero cannot be
+// changed by anything done to it. **ARM B IS THEREFORE STRUCTURALLY
+// INSENSITIVE TO THE CORRECTION TERM**, and ARM A is the arm that pins it.
+// The two arms are complementary: ARM A pins the correction, ARM B pins the
+// Vhat term.
+//
 // Throws std::invalid_argument on: an empty input; a mismatch in the number
 // of samples between any two of the four vectors; a negative weight.
 // ---------------------------------------------------------------------------
