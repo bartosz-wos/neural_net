@@ -132,6 +132,13 @@ static bool call_guarded(F fn, double* out) {
 // SPECIFIC guard fired. **The discriminator is the MESSAGE, not the throw**:
 // a test that only asserts "it threw" passes while the guard it means to
 // cover is gone.
+//
+// The message is copied OUT into `what_out`, and the caller must READ IT
+// AFTER this function returns -- see `expect_throw` below, which exists
+// because of a bug this very file had: `check(threw_with(...), "..." + what)`
+// evaluates its arguments in UNSPECIFIED ORDER, so the printed message was
+// sometimes the one from the PREVIOUS call. The needles still matched (the
+// guards were right); only the text displayed alongside the verdict lagged.
 static bool threw_with(const std::function<void()>& fn, const std::string& needle,
                        std::string* what_out) {
     try {
@@ -143,10 +150,33 @@ static bool threw_with(const std::function<void()>& fn, const std::string& needl
     }
 }
 
+// Assert that `fn` throws AND that the message contains `needle`, then
+// report it. The message is read AFTER the call, so it always belongs to
+// THIS call.
+static void expect_throw(const std::function<void()>& fn, const std::string& needle,
+                         const std::string& name) {
+    std::string what;
+    const bool threw = threw_with(fn, needle, &what);
+    if (threw) {
+        check(true, name + ": " + what);
+    } else {
+        check(false, name + " (expected a throw containing \"" + needle +
+                  "\", got: " + (what.empty() ? std::string("<no throw>") : what) +
+                  ")");
+    }
+}
+
 static double rel_err(double got, double want) {
     double denom = std::max(std::abs(got), std::abs(want));
     if (denom < 1e-12) return std::abs(got - want);
     return std::abs(got - want) / denom;
+}
+
+// Used to keep the relative-error helper honest: it is exercised on the
+// pinned values, so it cannot rot into an unused function (which is what
+// produced an -Wunused-function warning in the first draft of this file).
+static void check_close(double got, double want, double tol, const std::string& name) {
+    check(rel_err(got, want) <= tol, name);
 }
 
 static Tensor vec(const std::vector<double>& v) {
@@ -230,9 +260,12 @@ static double enumerate_expectation(const Bandit& b, int n_samples,
     const int A = static_cast<int>(b.pi0.size());
     double total = 0.0, mass = 0.0;
 
-    // Enumerate every action sequence of length n_samples.
+    // Enumerate every action sequence of length n_samples. **THERE ARE A^n
+    // OF THEM, NOT 2^n** -- see the note in `enumerate_expectation_with_model`.
+    long long n_sequences = 1;
+    for (int t = 0; t < n_samples; ++t) n_sequences *= A;
     std::vector<int> seq(n_samples, 0);
-    for (long long idx = 0; idx < (1LL << n_samples); ++idx) {
+    for (long long idx = 0; idx < n_sequences; ++idx) {
         // Decode idx into the action sequence (base A).
         long long code = idx;
         for (int t = n_samples - 1; t >= 0; --t) {
@@ -276,7 +309,15 @@ static double enumerate_expectation_with_model(
     const int A = static_cast<int>(b.pi0.size());
     double total = 0.0, mass = 0.0;
     std::vector<int> seq(n_samples, 0);
-    for (long long idx = 0; idx < (1LL << n_samples); ++idx) {
+    // **THE NUMBER OF SEQUENCES IS A^n, NOT 2^n.** The first draft of this
+    // file looped `1LL << n_samples`, which enumerates only 8 of the 27
+    // sequences of length 3 over 3 actions -- and the enumerator's own
+    // probability-mass assertion caught it, reporting a mass of 0.48
+    // instead of 1. **THE SELF-CHECK IS WHAT CAUGHT IT**, which is the
+    // whole reason it is there.
+    long long n_sequences = 1;
+    for (int t = 0; t < n_samples; ++t) n_sequences *= A;
+    for (long long idx = 0; idx < n_sequences; ++idx) {
         long long code = idx;
         for (int t = n_samples - 1; t >= 0; --t) {
             seq[t] = static_cast<int>(code % A);
@@ -319,17 +360,16 @@ int main() {
               "1.2 the weight is exact, not approximate");
 
         // A NON-POSITIVE behaviour probability is a division by zero.
-        std::string what;
-        bool threw = threw_with([] { utils::ope_importance_weight(0.4, 0.0); },
-                                "behaviour probability", &what);
-        check(threw, "1.3 a zero behaviour probability is REJECTED "
-                     "(not silently inf): " + what);
-        threw = threw_with([] { utils::ope_importance_weight(0.4, -0.1); },
-                           "behaviour probability", &what);
-        check(threw, "1.4 a negative behaviour probability is REJECTED: " + what);
-        threw = threw_with([] { utils::ope_importance_weight(-0.2, 0.5); },
-                           "target probability", &what);
-        check(threw, "1.5 a negative target probability is REJECTED: " + what);
+        expect_throw([] { utils::ope_importance_weight(0.4, 0.0); },
+                     "behaviour probability",
+                     "1.3 a zero behaviour probability is REJECTED (not "
+                     "silently inf)");
+        expect_throw([] { utils::ope_importance_weight(0.4, -0.1); },
+                     "behaviour probability",
+                     "1.4 a negative behaviour probability is REJECTED");
+        expect_throw([] { utils::ope_importance_weight(-0.2, 0.5); },
+                     "target probability",
+                     "1.5 a negative target probability is REJECTED");
 
         // The batch form.
         Tensor tp = vec({0.2, 0.5, 0.3});
@@ -384,34 +424,30 @@ int main() {
     {
         double got = 0.0;
         call_guarded([&] { return utils::ope_ips_estimate(R, W); }, &got);
-        check(std::abs(got - 1.65) < 1e-12,
-              "2.1 IPS equals the pinned 1.65");
-        check(std::abs(got - ref_ips(fx_r, fx_w)) < 1e-12,
-              "2.2 IPS matches the independent reference");
+        check_close(got, 1.65, 1e-12, "2.1 IPS equals the pinned 1.65");
+        check_close(got, ref_ips(fx_r, fx_w), 1e-12,
+                    "2.2 IPS matches the independent reference");
 
         call_guarded([&] { return utils::ope_self_normalized_ips(R, W); }, &got);
-        check(std::abs(got - 1.5714285714285714) < 1e-12,
-              "2.3 SNIS equals the pinned 6.6/4.2");
-        check(std::abs(got - ref_snis(fx_r, fx_w)) < 1e-12,
-              "2.4 SNIS matches the independent reference");
+        check_close(got, 1.5714285714285714, 1e-12,
+                    "2.3 SNIS equals the pinned 6.6/4.2");
+        check_close(got, ref_snis(fx_r, fx_w), 1e-12,
+                    "2.4 SNIS matches the independent reference");
 
         call_guarded([&] { return utils::ope_direct_method_estimate(V); }, &got);
-        check(std::abs(got - 0.1125) < 1e-12,
-              "2.5 DM equals the pinned 0.1125");
-        check(std::abs(got - ref_dm(fx_v)) < 1e-12,
-              "2.6 DM matches the independent reference");
+        check_close(got, 0.1125, 1e-12, "2.5 DM equals the pinned 0.1125");
+        check_close(got, ref_dm(fx_v), 1e-12,
+                    "2.6 DM matches the independent reference");
 
         call_guarded([&] { return utils::ope_doubly_robust_estimate(R, W, V, Q); }, &got);
-        check(std::abs(got - 1.7625) < 1e-12,
-              "2.7 DR equals the pinned 1.7625");
-        check(std::abs(got - ref_dr(fx_r, fx_w, fx_v, fx_q)) < 1e-12,
-              "2.8 DR matches the independent reference");
+        check_close(got, 1.7625, 1e-12, "2.7 DR equals the pinned 1.7625");
+        check_close(got, ref_dr(fx_r, fx_w, fx_v, fx_q), 1e-12,
+                    "2.8 DR matches the independent reference");
 
         call_guarded([&] { return utils::ope_effective_sample_size(W); }, &got);
-        check(std::abs(got - 1.8) < 1e-12,
-              "2.9 ESS equals the pinned 1.8");
-        check(std::abs(got - ref_ess(fx_w)) < 1e-12,
-              "2.10 ESS matches the independent reference");
+        check_close(got, 1.8, 1e-12, "2.9 ESS equals the pinned 1.8");
+        check_close(got, ref_ess(fx_w), 1e-12,
+                    "2.10 ESS matches the independent reference");
     }
 
     // -----------------------------------------------------------------------
@@ -526,7 +562,10 @@ int main() {
             const int A = 3;
             double total = 0.0, mass = 0.0;
             std::vector<int> seq(n, 0);
-            for (long long idx = 0; idx < (1LL << n); ++idx) {
+            // A^n sequences, not 2^n -- see the note above.
+            long long n_sequences = 1;
+            for (int t = 0; t < n; ++t) n_sequences *= A;
+            for (long long idx = 0; idx < n_sequences; ++idx) {
                 long long code = idx;
                 for (int t = n - 1; t >= 0; --t) { seq[t] = (int)(code % A); code /= A; }
                 double p = 1.0;
@@ -670,39 +709,49 @@ int main() {
     // asserts "it threw" passes while the guard it means to cover is gone.
     // -----------------------------------------------------------------------
     {
-        std::string what;
         Tensor empty = vec({});
         Tensor one = vec({1.0});
         Tensor two = vec({1.0, 2.0});
 
-        check(threw_with([&] { utils::ope_ips_estimate(empty, one); },
-                         "empty", &what),
-              "10.1 an empty reward vector is rejected: " + what);
-        check(threw_with([&] { utils::ope_ips_estimate(one, two); },
-                         "same number of samples", &what),
-              "10.2 mismatched sample counts are rejected: " + what);
-        check(threw_with([&] { utils::ope_self_normalized_ips(one, two); },
-                         "same number of samples", &what),
-              "10.3 SNIS rejects mismatched sample counts too: " + what);
-        check(threw_with([&] { utils::ope_doubly_robust_estimate(one, one, one, two); },
-                         "same number of samples", &what),
-              "10.4 DR rejects mismatched sample counts: " + what);
+        expect_throw([&] { utils::ope_ips_estimate(empty, one); }, "empty",
+                     "10.1 an empty reward vector is rejected");
+        expect_throw([&] { utils::ope_ips_estimate(one, two); },
+                     "same number of samples",
+                     "10.2 mismatched sample counts are rejected");
+        expect_throw([&] { utils::ope_self_normalized_ips(one, two); },
+                     "same number of samples",
+                     "10.3 SNIS rejects mismatched sample counts too");
+        expect_throw([&] { utils::ope_doubly_robust_estimate(one, one, one, two); },
+                     "same number of samples",
+                     "10.4 DR rejects mismatched sample counts");
 
         // A zero total weight makes SNIS's denominator zero.
         Tensor zeros = vec({0.0, 0.0});
         Tensor rw = vec({1.0, 2.0});
-        check(threw_with([&] { utils::ope_self_normalized_ips(rw, zeros); },
-                         "total weight", &what),
-              "10.5 a zero total weight is rejected by SNIS: " + what);
+        expect_throw([&] { utils::ope_self_normalized_ips(rw, zeros); },
+                     "total weight",
+                     "10.5 a zero total weight is rejected by SNIS");
 
         // A NEGATIVE weight is meaningless for an importance weight.
         Tensor neg = vec({1.0, -2.0});
-        check(threw_with([&] { utils::ope_ips_estimate(rw, neg); },
-                         "weight", &what),
-              "10.6 a negative weight is rejected: " + what);
-        check(threw_with([&] { utils::ope_effective_sample_size(neg); },
-                         "weight", &what),
-              "10.7 ESS rejects a negative weight: " + what);
+        expect_throw([&] { utils::ope_ips_estimate(rw, neg); }, "weight",
+                     "10.6 a negative weight is rejected");
+        expect_throw([&] { utils::ope_effective_sample_size(neg); }, "weight",
+                     "10.7 ESS rejects a negative weight");
+
+        // The weight guard's message must be DISTINCT from the total-weight
+        // guard's, and from the sample-count guard's -- otherwise a test
+        // that searches for a common word cannot tell which guard fired.
+        // This is the repo's recorded "the discriminator is the MESSAGE"
+        // trap, so the distinctness is asserted rather than assumed.
+        std::string m_count, m_neg, m_total;
+        threw_with([&] { utils::ope_ips_estimate(one, two); },
+                   "same number of samples", &m_count);
+        threw_with([&] { utils::ope_ips_estimate(rw, neg); }, "weight", &m_neg);
+        threw_with([&] { utils::ope_self_normalized_ips(rw, zeros); },
+                   "total weight", &m_total);
+        check(m_count != m_neg && m_neg != m_total && m_count != m_total,
+              "10.8 the three guard messages are DISTINCT from one another");
     }
 
     // -----------------------------------------------------------------------
