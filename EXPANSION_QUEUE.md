@@ -4,6 +4,11 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-30] OFF-POLICY EVALUATION SHIPPED. 64/64 + oracle 38/38 +
+#     oracle-mutation 8/8, 12 mutations caught / 0 survived / 0 broken /
+#     0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures.
+#     The SELF-NORMALISED IMPORTANCE-SAMPLING ESTIMATOR bullet is closed by
+#     the same work (SNIS is one of its four estimators). Do not re-pop.
 # [DONE 2026-10-29] THE VAE'S KL SCALE AND ITS KL-GRADIENT SIGN FIXED. 23/23 +
 #     17/17, 5 mutations caught / 0 survived, ASan+UBSan CLEAN, zero new
 #     full-suite failures. The plain VAE had NO test file at all. Do not
@@ -1211,9 +1216,42 @@ After completing an item, move it to the "Done" section.
        scaling -- and it composes with the shipped conformal prediction.
      - **A SELF-NORMALISED IMPORTANCE-SAMPLING ESTIMATOR.** `grep -rinE 'importance.sampl|self.normaliz' include/`
        -> **0 content hits** (only SELU's "self-normalizing" prose).
+       --> SHIPPED 2026-10-30 as part of `utils/off_policy_eval.{h,cpp}` (SNIS
+       is one of its four estimators). Do not re-pop.
      - **RANK CORRELATION / COPULA UTILITIES.** `grep -rinE 'copula|rank.?correl|spearman|kendall' include/`
        -> **0 hits**.
      - **OFF-POLICY EVALUATION.** `grep -rinE '\bsnr\b|off.?policy|behavior.polic' include/`
+       -> **0 hits**.
+       --> SHIPPED 2026-10-30 as `utils/off_policy_eval.{h,cpp}`. Do not re-pop.
+       **AND THE `\bsnr\b` HALF OF THAT GREP WAS A BAD LEAD, NOW CORRECTED:
+       an arXiv title search for "sample noise ratio" returns 0 entries and
+       a scan of all 1233 PMLR v162 titles finds no such paper. NO `snr`
+       FUNCTION AND NO DEFINITION WERE SHIPPED, because there was nothing
+       verifiable to ship. If a future session finds a real "sample noise
+       ratio" metric, it must be pinned to a scraped citation first.**
+
+     **STILL UNBUILT, re-measured BY CONTENT on 2026-10-30 (the grep lines
+     are recorded so a future session can see what the absence looked like):**
+     - **AN INFERENCE-TIME KV CACHE.** `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/`
+       -> **3 hits, ALL COMMENTS** (`mla.h:33`, `sliding_window.h:17`,
+       `megalodon.h:67`). **ZERO IMPLEMENTATION.** Many attention layers cache
+       for BACKWARD (`last_k_`, `last_v_`), which is NOT an inference-time
+       cache. **THE TRAP**: a `grep -ril 'kv_cache'` will hit those backward
+       caches and report the feature as PRESENT. PRINT THE MATCHING LINES.
+     - **A STANDALONE ELBO / VI UTILITY.** `grep -rinE 'elbo|variational.inference|kullback' include/`
+       -> **1 hit**, a comment (`utils/distribution_losses.h:8`, "KL
+       Divergence (Kullback-Leibler)"). The repo's VAE computes its KL
+       inline.
+     - **AN ORDINAL-REGRESSION LAYER.** `grep -rinE 'ordinal.regress|cumulative.link|probit|ordered.logit' include/`
+       -> **1 hit**, a comment (`utils/gaussian_process.h:141`, "Bernoulli-probit
+       GPs"). A cumulative-link model over K ordered classes.
+     - **EDIT DISTANCE / DYNAMIC TIME WARPING.** `grep -rinE 'levenshtein|edit.distance|dynamic.time.warp' include/`
+       -> **0 hits**.
+     - **ISOTONIC REGRESSION.** `grep -rinE 'isotonic|monotone.calib' include/`
+       -> **0 hits**. The repo has temperature scaling and a full
+       calibration-diagnostics suite but NO monotone calibration map, which
+       composes with the shipped conformal prediction.
+     - **RANK CORRELATION / COPULA UTILITIES.** `grep -rinE 'copula|rank.?correl|spearman|kendall' include/`
        -> **0 hits**.
 
      **DO NOT RE-POP**: `sliced.?wasserstein`, `weight.?standard`,
@@ -1241,6 +1279,63 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Off-policy evaluation SHIPPED: the importance-weighting, direct-method and doubly-robust estimators, plus the effective sample size** (2026-10-30). `include/nn/utils/off_policy_eval.{h,cpp}`, 64/64 in `test_off_policy_eval`, oracle 38/38, oracle-mutation 8/8, 12 mutations caught / 0 survived / 0 broken / 0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures. **The `## Ideas` LIST WAS DRAINED an EIGHTEENTH TIME** (the docs-gap grep returned its 23 familiar hits for the EIGHTH consecutive run, all accounted for in shipped headers, and **the constructibility sweep the 2026-10-28 entry added returned ZERO findings** -- the eight abstract classes it found are still fixed), so the session fell back to the queue's own documented method, a verified-absent concept sweep, and popped the LAST bullet: off-policy evaluation.
+
+  **THE ABSENCE WAS TOTAL, AND MEASURED BY CONTENT, NOT BY FILENAME.**
+
+  ```
+  grep -rinE '\bsnr\b|off.?policy|behavior.?polic|importance.?sampl|self.normaliz' include/ tests/
+  -> 0 hits
+  ```
+
+  **AND THERE IS NO `reward` CONCEPT ANYWHERE IN `include/nn` EITHER** (the same grep for `reward` over the headers returns 0 hits) -- which is what decided the SHAPE of the feature. Off-policy evaluation could have been an RL layer, an environment, or a replay buffer; none of those fit a repo with no reward concept and no trajectory storage. So it shipped as what it actually is: **MODEL-FREE ARITHMETIC OVER LOGGED DATA**, free functions over `Tensor` in `nn::utils`, the same shape as `utils/sinkhorn.h`, `utils/crf.h`, `utils/conformal.h` and `utils/gaussian_process.h`. Four estimators (IPS, SNIS, DM, DR), the importance weight, the effective sample size, and a bundled report.
+
+  **THE SAME WORK CLOSES A SECOND BULLET.** The "SELF-NORMALISED IMPORTANCE-SAMPLING ESTIMATOR" bullet (`grep -rinE 'importance.sampl|self.normaliz' include/` -> 0 content hits) is closed by the same module -- SNIS is one of its four estimators. **THE TWO BULLETS WERE ONE PIECE OF WORK ALL ALONG**, which is worth noting because the queue's LIFO order had them adjacent and the split was an artefact of how the absence was phrased.
+
+  **THE CITATIONS WERE SCRAPED, AND ONE OF THE QUEUE'S OWN LEADS WAS CORRECTED.** Five papers, each verified by an arXiv TITLE search and then by scraping the abs page's `citation_title` / `citation_author` meta tags: `1604.00923` (Thomas & Brunskill, one-step OPE; the DM and DR baselines), `1511.03722` (Jiang & Li, **whose own LaTeX source was read** -- the bandit DR estimator `DR_I = V(s_I) + rho_I (r_I - R(s_I,a_I))` with `rho = pi_1(a|s)/pi_0(a|s)` and `V(s) = sum_a pi_1(a|s) R(s,a)` was transcribed from `eq:dr` rather than recalled), `2006.10460` (Kuzborskij et al., self-normalised weighting), `1910.12809` (Uehara et al., why ESS is the diagnostic that matters), `2104.12820` (Chandak et al.).
+
+  **THE QUEUE'S `snr` LEAD WAS WRONG, AND IT IS CORRECTED RATHER THAN PAPERED OVER.** The bullet's grep included `\bsnr\b`, but **an arXiv title search for "sample noise ratio" returns 0 entries and a scan of all 1233 PMLR v162 titles finds no such paper** -- so NO identifier and NO DEFINITION is claimed for it, and no `snr` function was written on the strength of a guess. The header says so explicitly, so the next session does not re-derive it from memory. **A KEYWORD IN A GREP PATTERN IS NOT A CITATION.**
+
+  ---------------------------------------------------------------------------
+  **THE ORACLE WAS GREEN ON ITS FIRST EXECUTION, AND THAT IS NOT A RESULT.**
+  ---------------------------------------------------------------------------
+
+  `tests/off_policy_eval_oracle.py` printed **38 passed, 0 failed on the first run of a 900-line specification**. **A GREEN ORACLE ON ITS FIRST RUN PROVES NOTHING ABOUT ITS OWN SENSITIVITY** -- it may simply be asserting things that are true of whatever it was written alongside. The oracle's first draft header claimed it had caught two defects in itself; **it had caught NEITHER, and that claim was deleted rather than kept as flavour.**
+
+  So the oracle's discriminating power is **MEASURED**, not narrated: `tests/off_policy_eval_mutate_oracle.py` breaks the oracle in seven specific ways and requires that it FAIL each time (OM1 the enumeration draws from the target policy instead of the logging policy; OM2 IPS sums instead of averaging; OM3 SNIS divides by N; OM4 the DR estimator drops the Vhat term; OM5 the DR correction's sign is flipped; OM6 the ESS is inverted; OM7 the importance weight is inverted). **ALL SEVEN ARE CAUGHT.** This is the same discipline the C++ mutation harness applies to the C++ suite, applied one level up, to the SPECIFICATION.
+
+  ---------------------------------------------------------------------------
+  **THE UNBIASEDNESS CHECKS ARE EXACT, NOT MONTE CARLO.**
+  ---------------------------------------------------------------------------
+
+  The suite computes the expectation of each estimator over the LOGGING distribution by **enumerating every logged action sequence with its exact probability** -- over a finite 3-action bandit, so the expectation is an identity rather than an estimate. **A MONTE-CARLO VERSION OF THIS CHECK WOULD BE STRICTLY WEAKER**, and would also be the kind of test that can pass for the wrong reason (a loose tolerance covering a real bias).
+
+  **THE ENUMERATOR IS VALIDATED FIRST, ON ITS OWN** -- against a hand-computed value and by asserting its own total probability mass is exactly 1. **THAT SELF-CHECK EARNED ITS PLACE IMMEDIATELY**: the first draft of the C++ enumerator looped `1LL << n_samples`, which enumerates 2^n sequences rather than the A^n the base-A decoding needs, so it covered only 8 of the 27 sequences of length 3. The mass assertion caught it, reporting a mass of 0.48 instead of 1. **A BROKEN ENUMERATOR WOULD HAVE MADE EVERY DOWNSTREAM CHECK MEANINGLESS**, and the suite would have reported a confident, wrong verdict about the implementation.
+
+  ---------------------------------------------------------------------------
+  **THE TWO ARMS OF DOUBLE ROBUSTNESS ARE NOT INTERCHANGEABLE, AND THE MEASUREMENT SHOWS WHY.**
+  ---------------------------------------------------------------------------
+
+  The cancellation that makes DR unbiased is
+  `E[ Vhat(s) + rho(a)(r(a) - Rhat(s,a)) ] = Vhat(s) + sum_a pi_1(a)(E[r|s,a] - Rhat(s,a)) = V_pi1`,
+  so DR is unbiased when EITHER the propensities are exact OR the reward model is exact. Both arms are checked exactly (7.1 and 7.2), and ARM C -- both wrong -- is measurably biased, so the fixture discriminates.
+
+  **BUT THE MUTATION HARNESS MEASURED THAT M4 (the correction's sign flipped) AND M5 (the correction's weight dropped) BREAK ARM A ONLY.** The reason is structural, not accidental: **in ARM B the reward model is EXACT, which makes `r_i - q_i` IDENTICALLY ZERO for every sample, and a term that is identically zero cannot be changed by anything done to it.** ARM B is therefore STRUCTURALLY INSENSITIVE to the correction term, and ARM A is the arm that pins it. The header's first draft claimed each of the three DR mutations "breaks ONE of the two arms", which is wrong -- M3 breaks both. **The claim was corrected to the measurement, and the asymmetry is now PINNED by the suite itself (check 7.6), so it is a property of the fixture rather than a lucky accident of which mutations happen to be caught.**
+
+  ---------------------------------------------------------------------------
+  **THE SHARPEST DISCRIMINATOR IS SCALE INVARIANCE, AND IT NEEDS A FIXTURE THAT VARIES THE SCALE.**
+  ---------------------------------------------------------------------------
+
+  `SNIS(c*rho) == SNIS(rho)` for any c > 0 (the scale cancels between numerator and denominator), while `IPS(c*rho) == c * IPS(rho)`. **A FIXTURE THAT DOES NOT VARY THE SCALE OF THE WEIGHTS CANNOT TELL SNIS FROM IPS AT ALL**, and the fixture's weights are scaled by 0.25, 3.0 and 100.0 precisely to make that difference visible. ESS is scale invariant too, which is checked the same way.
+
+  ---------------------------------------------------------------------------
+  **TWO TEST BUGS IN THIS SESSION'S OWN NEW SUITE, BOTH CAUGHT BY THE FIXTURE RATHER THAN BY REASONING.**
+  ---------------------------------------------------------------------------
+
+  (1) The enumerator's `2^n` vs `A^n` bug above. (2) **A STALE MESSAGE CAUSED BY UNSPECIFIED ARGUMENT EVALUATION ORDER**: the guard assertions were written `check(threw_with(...), "..." + what)`, and C++ evaluates a function call's arguments in UNSPECIFIED order, so the message printed beside the verdict was sometimes the one from the PREVIOUS call. The needles still matched -- the guards were right -- but the text displayed alongside the verdict lagged. The assertions now go through an `expect_throw` helper that reads the message AFTER the call. **THE DISCRIMINATOR IS THE MESSAGE, NOT THE THROW, AND A MESSAGE THAT IS PRINTED FROM THE WRONG CALL IS WORSE THAN NO MESSAGE AT ALL.**
+
+  **SHIPPED: `test(utils): float64 oracle for the off-policy evaluation estimators` (a275e68), `test(utils): RED test for the off-policy evaluation estimators` (61d6612), `feat(utils): the off-policy evaluation estimators and the effective sample size` (ae1d464), `test(utils): mutation harness for the off-policy evaluation estimators` (617f747).** Plan: `docs/plans/2026-10-30-off-policy-evaluation.md`.
 
 - **The plain VAE's KL was a SUM over the batch while its reconstruction loss was a MEAN -- and its KL GRADIENT had an INVERTED SIGN, so the KL term was actively pushing the encoder AWAY from the prior** (fixed 2026-10-29). **THE CLASS HAD NO TEST FILE AT ALL**, and it is reachable from the public umbrella `include/nn/nn.h`.
 

@@ -246,6 +246,46 @@ struct Bandit {
     std::vector<double> mu;       // the true (deterministic) reward per action
 };
 
+// The number of actions, and a check that every per-action table the
+// enumerator indexes has EXACTLY that many entries.
+//
+// **THIS GUARD EXISTS BECAUSE ADDRESSSANITIZER FOUND A REAL
+// HEAP-BUFFER-OVERFLOW IN THIS FILE.** The first draft of section 5 passed a
+// two-element `rho` to a three-action bandit, and the enumerator indexed it
+// as `rho[seq[t]]` with `seq[t]` in {0,1,2}. **AT -O2 THAT READ WENT PAST
+// THE END OF THE VECTOR AND INTO THE ALLOCATOR'S SLACK SPACE, PRODUCING A
+// PLAUSIBLE-LOOKING RESULT AND A GREEN SUITE** -- the read is only visible
+// under a sanitizer, because the bytes it returned were never used by the
+// control estimator (which ignores the weights).
+//
+// The general rule this instance of: **DERIVE LOOP BOUNDS FROM THE BUFFER,
+// NEVER FROM A SIBLING QUANTITY, AND ASSERT THE BOUND.** A per-action table
+// indexed by an action index must be CHECKED to have one entry per action.
+//
+// Returns false and prints a diagnostic if the sizes disagree.
+static bool validate_action_tables(const Bandit& b,
+                                    const std::vector<double>& rho,
+                                    const std::vector<double>* rhat) {
+    const size_t A = b.pi0.size();
+    bool ok = true;
+    if (b.mu.size() != A) {
+        printf("    [ENUMERATOR DEFECT] the reward table has %zu entries, "
+               "expected %zu\n", b.mu.size(), A);
+        ok = false;
+    }
+    if (rho.size() != A) {
+        printf("    [ENUMERATOR DEFECT] the weight table has %zu entries, "
+               "expected %zu (one per action)\n", rho.size(), A);
+        ok = false;
+    }
+    if (rhat != nullptr && rhat->size() != A) {
+        printf("    [ENUMERATOR DEFECT] the model table has %zu entries, "
+               "expected %zu (one per action)\n", rhat->size(), A);
+        ok = false;
+    }
+    return ok;
+}
+
 // The exact expectation of `estimator` over the logging distribution.
 // `estimator` takes the per-sample rewards, weights, model target values
 // and logged action values, and returns the estimator's value.
@@ -258,6 +298,7 @@ static double enumerate_expectation(const Bandit& b, int n_samples,
                                     const std::vector<double>& rho,
                                     double vhat_const) {
     const int A = static_cast<int>(b.pi0.size());
+    if (!validate_action_tables(b, rho, nullptr)) return std::nan("");
     double total = 0.0, mass = 0.0;
 
     // Enumerate every action sequence of length n_samples. **THERE ARE A^n
@@ -307,6 +348,7 @@ static double enumerate_expectation_with_model(
         const std::vector<double>& rho,
         double vhat_const, const std::vector<double>& rhat) {
     const int A = static_cast<int>(b.pi0.size());
+    if (!validate_action_tables(b, rho, &rhat)) return std::nan("");
     double total = 0.0, mass = 0.0;
     std::vector<int> seq(n_samples, 0);
     // **THE NUMBER OF SEQUENCES IS A^n, NOT 2^n.** The first draft of this
@@ -530,8 +572,15 @@ int main() {
             for (double x : r) s += x;
             return s / static_cast<double>(r.size());
         };
-        double got = enumerate_expectation(b, 2, plain_mean,
-                                           std::vector<double>{1.0, 1.0}, 0.0);
+        // **THE `rho` TABLE MUST HAVE ONE ENTRY PER ACTION.** The first
+        // draft passed a two-element vector to a three-action bandit, and
+        // the enumerator indexed it by action -- a heap-buffer-overflow
+        // that AddressSanitizer found and -O2 hid. The control estimators
+        // below IGNORE the weights, so the bad read never changed a result;
+        // it was invisible without a sanitizer.
+        const std::vector<double> rho_per_action =
+            std::vector<double>(b.pi0.size(), 1.0);
+        double got = enumerate_expectation(b, 2, plain_mean, rho_per_action, 0.0);
         check(std::abs(got - 0.9) < 1e-12,
               "5.1 the enumerator reproduces a hand-computed expectation");
 
@@ -541,11 +590,20 @@ int main() {
             for (double x : r) s += x;
             return s;
         };
-        double got_sum = enumerate_expectation(b, 2, plain_sum,
-                                                std::vector<double>{1.0, 1.0}, 0.0);
+        double got_sum = enumerate_expectation(b, 2, plain_sum, rho_per_action, 0.0);
         check(std::abs(got_sum - 1.8) < 1e-12,
               "5.2 the enumerator's SUM control is exactly N times the mean "
               "control (so a mean/sum confusion is visible)");
+
+        // The per-action-table guard must actually FIRE on a mis-sized table
+        // -- otherwise it is a comment, not a check.
+        {
+            const std::vector<double> too_short(b.pi0.size() - 1, 1.0);
+            double bad = enumerate_expectation(b, 2, plain_mean, too_short, 0.0);
+            check(std::isnan(bad),
+                  "5.3 the enumerator REJECTS a weight table that is not one "
+                  "entry per action (the heap-buffer-overflow guard)");
+        }
     }
 
     // -----------------------------------------------------------------------
