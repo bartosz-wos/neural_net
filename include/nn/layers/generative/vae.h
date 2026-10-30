@@ -8,6 +8,60 @@
 // Variational Autoencoder — encoder maps input to latent mean+logvar,
 // reparameterization trick samples latent, decoder reconstructs.
 // Loss = reconstruction_loss + KL_divergence
+//
+// ---------------------------------------------------------------------------
+// THE LOSS CONVENTIONS, AND WHY THEY ARE WHAT THEY ARE
+// ---------------------------------------------------------------------------
+//
+// **BOTH COMPONENTS OF `total_loss()` ARE PER-SAMPLE MEANS.** The
+// reconstruction loss is the mean over the batch of the per-row squared
+// error, and the KL is the mean over the batch of the per-row KL. This was
+// NOT true of the KL until 2026-10-29: it was a SUM over the batch while
+// the reconstruction loss was a MEAN, so the two components of
+// `total_loss()` were on different scales AND the total loss changed with
+// the batch size even for fixed data -- which made the effective beta (the
+// KL's weight, hard-coded to 1.0 here) a property of the BATCH SIZE rather
+// than of the loss.
+//
+// The argument is not a matter of taste:
+//
+//   * The repo's own convention agrees. `utils/losses.h` documents that the
+//     mean reduction divides by `numel`, NOT by `rows` (D7), and
+//     `utils/contrastive_losses.cpp` divides its total by `X.rows`. **A
+//     LOSS THAT SCALES WITH THE BATCH SIZE IS NOT A PER-SAMPLE QUANTITY.**
+//   * The KL is a function of `mu` and `logvar` ONLY -- the
+//     reparameterisation's noise does not enter it (measured: two forwards
+//     of the same input give a BIT-IDENTICAL KL while the reconstruction
+//     loss differs). So the reconstruction term is a MEAN over a
+//     STOCHASTIC quantity and the KL was a SUM over a DETERMINISTIC one.
+//
+// Pinned by tests/test_vae.cpp: a 2-row batch of identical rows must give
+// the SAME KL as a 1-row batch of one of them.
+//
+// **THE GRADIENT MATCHES THE LOSS.** `backward()`'s KL contribution is
+// `(+mu) / N` and `0.5*(exp(logvar) - 1) / N`. The mu term's SIGN was also
+// wrong until 2026-10-29 -- the closed form's `- mu^2` carries a minus, so
+// the derivative is POSITIVE, and the code used `-mu` with a comment
+// asserting the sign was negative. **A COMMENT THAT ASSERTS A SIGN IS NOT
+// EVIDENCE OF ONE.** With the sign inverted, gradient descent moved `mu`
+// AWAY from zero -- the direction that INCREASES the KL -- so the KL term
+// was actively pushing the encoder away from the prior.
+//
+// Pinned by tests/test_vae_grad.cpp, against finite differences on the
+// encoder's BIAS (which shifts mu and logvar directly, so no weight path or
+// ReLU is confounded with the KL's own contribution).
+//
+// ---------------------------------------------------------------------------
+// THE FINITE-DIFFERENCE CAVEAT, STATED SO A FUTURE READER DOES NOT WASTE
+// A SESSION ON IT
+// ---------------------------------------------------------------------------
+//
+// **THE FINITE DIFFERENCE OF `total_loss()` IS NOT A VALID DERIVATIVE.** The
+// reparameterisation draws a fresh `eps ~ N(0,1)` on every forward, so the
+// central difference of `total_loss()` compares two UNCORRELATED noisy
+// outputs. The finite difference of `kl_loss()` alone IS valid, because the
+// KL does not depend on the noise. This is the repo's recorded
+// "stochastic forward" trap.
 class VAE : public Layer {
 public:
     VAE(size_t input_dim, size_t hidden_dim, size_t latent_dim);
