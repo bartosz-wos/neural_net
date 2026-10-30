@@ -136,36 +136,22 @@ private:
                       double b1_correction,
                       double b2_correction);
 
-    // Symmetric eigendecomposition via cyclic Jacobi rotations.
-    // On entry, A is a symmetric (n × n) Tensor. On exit, Q holds the
-    // orthogonal matrix of eigenvectors (columns) and eigenvalues is
-    // filled with the eigenvalues of A. Q is initialized to identity.
+    // The symmetric eigendecomposition (L = Q_L·diag(λ_L)·Q_Lᵀ and
+    // R = Q_R·diag(λ_R)·Q_Rᵀ) comes from the SHARED public utility
+    // `nn::utils::symmetric_eigendecompose` (include/nn/utils/
+    // linear_algebra.h) -- there is no private copy here any more.
     //
-    // **THE ROTATION ANGLE'S SIGN IS LOAD-BEARING.** The general branch
-    // must be
-    //
-    //     theta = 0.5 * atan2(2 * apq, app - aqq)
-    //
-    // and NOT `aqq - app`. With the wrong sign the routine still returns an
-    // ORTHOGONAL matrix and still drives A to a diagonal matrix, but the
-    // reported eigenvalues are NOT the eigenvalues of A and Q's columns are
-    // NOT eigenvectors -- the preconditioner is then built from a
-    // similarity that has nothing to do with the matrix's spectrum.
-    //
-    // **THE `app == aqq` DEGENERATE BRANCH IS CORRECT AND MUST STAY** (it
-    // computes theta = ±π/4 directly). It is the proof that the general
-    // branch was the wrong one.
+    // That routine returns the eigenpairs SORTED DESCENDING by eigenvalue,
+    // with column j of the eigenvector matrix paired with eigenvalues(0, j).
+    // SOAP rotates the gradient into the eigenbasis (Q_Lᵀ·G·Q_R) and runs
+    // Adam there; it does not use the eigenvalues at all, and the rotation
+    // is invariant to a consistent permutation of the eigenpairs, so the
+    // descending sort changes nothing about the update.
     //
     // **THE INVARIANT IS PINNED BY tests/test_jacobi_eig.cpp** through the
-    // PUBLIC accessors: A·Q == Q·Λ. Orthonormality and Frobenius-norm
-    // preservation are NOT sufficient -- both hold for a product of
-    // rotations that is not an eigenbasis, which is why the defect survived
-    // every pre-existing test.
-    static void jacobi_eigendecompose(Tensor& A,
-                                      Tensor& Q,
-                                      Tensor& eigenvalues,
-                                      int max_sweeps = 100,
-                                      double tol = 1e-12);
+    // PUBLIC accessors (get_Q_L / get_Q_R): A·Q == Q·Λ. Orthonormality and
+    // Frobenius-norm preservation are NOT sufficient -- both hold for a
+    // product of rotations that is not an eigenbasis.
 
     // Convenience: at step t, should we recompute the preconditioner?
     bool should_precondition(int step) const {

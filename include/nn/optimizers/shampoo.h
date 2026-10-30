@@ -124,44 +124,22 @@ private:
                       Tensor* grad,
                       ParameterState& st);
 
-    // Symmetric eigendecomposition via cyclic Jacobi rotations.
-    // On entry, A is a symmetric (n × n) Tensor. On exit, Q holds the
-    // orthogonal matrix of eigenvectors (columns) and eigenvalues is
-    // filled with the eigenvalues of A. Q is initialized to identity.
+    // The symmetric eigendecomposition (L = U_L·diag(λ_L)·U_Lᵀ and
+    // R = U_R·diag(λ_R)·U_Rᵀ) comes from the SHARED public utility
+    // `nn::utils::symmetric_eigendecompose` (include/nn/utils/
+    // linear_algebra.h) -- there is no private copy here any more.
     //
-    // **THE ROTATION ANGLE'S SIGN IS LOAD-BEARING.** The general branch
-    // must be
-    //
-    //     theta = 0.5 * atan2(2 * apq, app - aqq)
-    //
-    // and NOT `aqq - app`. The second argument's sign decides whether the
-    // rotation ANNIHILATES the off-diagonal (correct) or roughly DOUBLES
-    // it (wrong). With the wrong sign the routine still returns an
-    // ORTHOGONAL matrix and still drives A to a diagonal matrix -- it
-    // converges to some orthogonal similarity -- but the reported
-    // eigenvalues are NOT the eigenvalues of A and Q's columns are NOT
-    // eigenvectors. Measured on a 6x6 symmetric matrix: the wrong sign
-    // gave an eigenvalue error of up to 2.95 and an eigenvector residual
-    // ‖A·Q − Q·Λ‖ of order 1; the correct sign gives 5.3e-15 and 2.2e-16.
-    //
-    // **THE `app == aqq` DEGENERATE BRANCH IS CORRECT AND MUST STAY.** It
-    // computes theta = ±π/4 directly (the `atan2` would be 0/0 there).
-    // It is the proof that the general branch was the wrong one: the same
-    // function is right on the degenerate branch and wrong on the general
-    // one, and a probe that computes the post-rotation off-diagonal
-    // directly measures 1.6e-16 for the degenerate branch against −1.269
-    // for the general branch.
+    // That routine returns the eigenpairs SORTED DESCENDING by eigenvalue,
+    // with column j of the eigenvector matrix paired with eigenvalues(0, j).
+    // Shampoo indexes the eigenvalues and the eigenvector columns in
+    // LOCKSTEP (`max(λ_L[k], eps)^{-1/4}` against column k of U_L), so the
+    // consistent permutation the sort applies changes nothing about the
+    // preconditioner it builds.
     //
     // **THE INVARIANT IS PINNED BY tests/test_jacobi_eig.cpp**, which
-    // asserts A·Q == Q·Λ through the PUBLIC accessors. Orthonormality and
-    // Frobenius-norm preservation are NOT sufficient: both hold for a
-    // product of rotations that is not an eigenbasis, which is why the
-    // defect survived every pre-existing test.
-    static void jacobi_eigendecompose(Tensor& A,
-                                      Tensor& Q,
-                                      Tensor& eigenvalues,
-                                      int max_sweeps = 100,
-                                      double tol = 1e-12);
+    // asserts A·Q == Q·Λ through the PUBLIC accessors (get_U_L / get_U_R).
+    // Orthonormality and Frobenius-norm preservation are NOT sufficient:
+    // both hold for a product of rotations that is not an eigenbasis.
 };
 
 #endif

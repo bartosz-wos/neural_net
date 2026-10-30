@@ -186,37 +186,31 @@ private:
     void update_param(Tensor* param, Tensor* grad, ParamState& st,
                       double b1_correction, double b2_correction);
 
-    // Symmetric eigendecomposition via cyclic Jacobi rotations.
-    // On entry, A is a symmetric (k × k) Tensor. On exit, Q holds the
-    // orthogonal matrix of eigenvectors (columns) and eigenvalues is
-    // filled with the eigenvalues of A. Q is initialized to identity.
+    // The symmetric eigendecomposition of G_EMAᵀ·G_EMA comes from the SHARED
+    // public utility `nn::utils::symmetric_eigendecompose`
+    // (include/nn/utils/linear_algebra.h) -- there is no private copy here
+    // any more.
     //
-    // **THE ROTATION ANGLE'S SIGN IS LOAD-BEARING.** The general branch
-    // must be
+    // **THE DESCENDING-SORT CONTRACT IS WHAT MAKES GaLore's "top-r"
+    // CORRECT.** The shared routine returns the eigenpairs SORTED
+    // DESCENDING by eigenvalue, with column j of the eigenvector matrix
+    // paired with eigenvalues(0, j). So "the first r columns" really IS
+    // "the r dominant eigenvectors" -- which is what P is documented to be.
     //
-    //     theta = 0.5 * atan2(2 * apq, app - aqq)
-    //
-    // and NOT `aqq - app`. With the wrong sign the routine still returns an
-    // ORTHOGONAL matrix and still drives A to a diagonal matrix, but the
-    // reported eigenvalues are NOT the eigenvalues of A and Q's columns are
-    // NOT eigenvectors. **For GaLore that is especially damaging: P is
-    // supposed to span the DOMINANT EIGENSPACE of G_EMAᵀ·G_EMA, and a
-    // wrong eigenbasis projects the gradient onto a subspace that is not
-    // the dominant one -- while Pᵀ·P is still the identity, so the
-    // orthonormality check cannot see it.**
-    //
-    // **THE `app == aqq` DEGENERATE BRANCH IS CORRECT AND MUST STAY** (it
-    // computes theta = ±π/4 directly). It is the proof that the general
-    // branch was the wrong one.
+    // The cyclic Jacobi's own final diagonal is NOT sorted: it is the order
+    // in which the rotations happened to converge, and for a matrix that is
+    // ALREADY DIAGONAL no rotation happens at all, so the diagonal is
+    // exactly the input's diagonal order. On G = diag(1, 5, 1, 1) -- whose
+    // Gram matrix GᵀG = diag(1, 25, 1, 1) is already diagonal -- the
+    // unsorted sweep kept the eigenvector of the SMALLEST eigenvalue, and
+    // GaLore projected the gradient onto a subspace that was NOT the
+    // dominant one. Pᵀ·P was still the identity, so the orthonormality
+    // check could not see it. That is fixed by the shared routine's sort,
+    // and pinned by tests/test_galore_projection.cpp.
     //
     // **THE INVARIANT IS PINNED BY tests/test_jacobi_eig.cpp** through the
-    // PUBLIC accessors: every column of P must be an eigenvector of
+    // PUBLIC accessor (get_P): every column of P must be an eigenvector of
     // G_EMAᵀ·G_EMA.
-    static void jacobi_eigendecompose(Tensor& A,
-                                      Tensor& Q,
-                                      Tensor& eigenvalues,
-                                      int max_sweeps = 100,
-                                      double tol = 1e-12);
 };
 
 #endif

@@ -32,6 +32,7 @@
 #include "../core/model.h"
 #include "../core/layer.h"
 #include "../core/tensor.h"
+#include "../utils/linear_algebra.h"
 
 #include <algorithm>
 #include <cmath>
@@ -150,110 +151,30 @@ void GaLore::ensure_state(void* layer_ptr,
 }
 
 // ============================================================================
-// Symmetric eigendecomposition via cyclic Jacobi rotations
-// ============================================================================
-// (Same algorithm as SOAP::jacobi_eigendecompose — duplicated here so we
-// don't introduce a cross-optimizer dependency. Identical math, different
-// class scope.)
-
-void GaLore::jacobi_eigendecompose(Tensor& A,
-                                   Tensor& Q,
-                                   Tensor& eigenvalues,
-                                   int max_sweeps,
-                                   double tol) {
-    const size_t n = A.rows;
-    if (n == 0) {
-        eigenvalues = Tensor(0, 0);
-        return;
-    }
-    if (A.cols != n || Q.rows != n || Q.cols != n) {
-        throw std::invalid_argument("GaLore::jacobi_eigendecompose: shape mismatch");
-    }
-
-    Q.fill(0.0);
-    for (size_t i = 0; i < n; ++i) Q(i, i) = 1.0;
-
-    for (int sweep = 0; sweep < max_sweeps; ++sweep) {
-        double off_norm_sq = 0.0;
-        for (size_t p = 0; p < n; ++p)
-            for (size_t q = p + 1; q < n; ++q)
-                off_norm_sq += 2.0 * A(p, q) * A(p, q);
-
-        if (std::sqrt(off_norm_sq) < tol) break;
-
-        for (size_t p = 0; p + 1 < n; ++p) {
-            for (size_t q = p + 1; q < n; ++q) {
-                const double apq = A(p, q);
-                if (std::abs(apq) < 1e-15) continue;
-
-                const double app = A(p, p);
-                const double aqq = A(q, q);
-
-                // Compute the rotation angle.
-                // Standard Jacobi formula: theta = (app - aqq) / (2 * apq),
-                // i.e. theta = 0.5 * atan2(2*apq, app - aqq). The SIGN of the
-                // second argument matters: with `aqq - app` the rotation
-                // roughly DOUBLES the off-diagonal instead of annihilating
-                // it, and the routine returns an orthogonal similarity that
-                // is NOT an eigendecomposition. See the note in the header.
-                double theta;
-                if (std::abs(app - aqq) < 1e-30) {
-                    theta = (apq >= 0.0) ? M_PI / 4.0 : -M_PI / 4.0;
-                } else {
-                    theta = 0.5 * std::atan2(2.0 * apq, app - aqq);
-                }
-                const double c = std::cos(theta);
-                const double s = std::sin(theta);
-
-                const double new_app = c * c * app + 2.0 * c * s * apq + s * s * aqq;
-                const double new_aqq = s * s * app - 2.0 * c * s * apq + c * c * aqq;
-                A(p, p) = new_app;
-                A(q, q) = new_aqq;
-                A(p, q) = 0.0;
-                A(q, p) = 0.0;
-
-                for (size_t r_idx = 0; r_idx < n; ++r_idx) {
-                    if (r_idx == p || r_idx == q) continue;
-                    const double arp = A(r_idx, p);
-                    const double arq = A(r_idx, q);
-                    const double new_arp = c * arp + s * arq;
-                    const double new_arq = -s * arp + c * arq;
-                    A(r_idx, p) = new_arp;
-                    A(p, r_idx) = new_arp;
-                    A(r_idx, q) = new_arq;
-                    A(q, r_idx) = new_arq;
-                }
-
-                for (size_t r_idx = 0; r_idx < n; ++r_idx) {
-                    const double qrp = Q(r_idx, p);
-                    const double qrq = Q(r_idx, q);
-                    const double new_qrp = c * qrp + s * qrq;
-                    const double new_qrq = -s * qrp + c * qrq;
-                    Q(r_idx, p) = new_qrp;
-                    Q(r_idx, q) = new_qrq;
-                }
-            }
-        }
-    }
-
-    eigenvalues = Tensor(1, n);
-    for (size_t i = 0; i < n; ++i) eigenvalues(0, i) = A(i, i);
-}
-
-// ============================================================================
 // Projection refresh — extract top-r right singular vectors of G_EMA
 // ============================================================================
 //
 // Math: the right singular vectors of G_EMA are the eigenvectors of
 // G_EMA^T · G_EMA (an n × n symmetric matrix). We compute this Gram matrix,
-// eigendecompose via Jacobi, then take the top-r eigenvectors (the ones
-// with the largest eigenvalues) as columns of P. P is then orthonormal.
+// eigendecompose it via the SHARED public routine
+// `nn::utils::symmetric_eigendecompose`, then take the top-r eigenvectors
+// (the ones with the largest eigenvalues) as columns of P. P is then
+// orthonormal.
 //
-// To keep the API simple, we don't bother sorting eigenvectors by eigenvalue
-// for the projection — the Adam-in-subspace step is invariant to the
-// ordering of P's columns (the Adam update is symmetric across the r
-// dimensions). The orthonormality of P is what matters for the
-// projection-on-then-projection-off identity to hold.
+// **THE SORT IS WHAT MAKES "THE FIRST r COLUMNS" MEAN "THE TOP r".** The
+// shared routine returns the eigenpairs SORTED DESCENDING by eigenvalue
+// (column j paired with eigenvalues(0, j)), so keeping the first r columns
+// keeps the r DOMINANT eigenvectors -- which is what P is documented to
+// be. The cyclic Jacobi's own final diagonal is NOT sorted (for an
+// already-diagonal input it is exactly the input's diagonal order), so
+// before the shared routine's sort this code kept an arbitrary r of the n
+// eigenvectors -- on G = diag(1, 5, 1, 1) the eigenvector of the SMALLEST
+// eigenvalue, projecting the gradient onto a subspace that was not the
+// dominant one.
+//
+// The Adam-in-subspace step is invariant to the ORDER of P's columns (the
+// Adam update is symmetric across the r dimensions), so the sort itself
+// changes nothing about the update -- only WHICH subspace is kept.
 
 void GaLore::refresh_projection(ParamState& st, size_t m, size_t n) {
     const int r = std::min(rank, (int)std::min(m, n));
@@ -276,14 +197,17 @@ void GaLore::refresh_projection(ParamState& st, size_t m, size_t n) {
         }
     }
 
-    // Eigendecompose: Q holds eigenvectors as columns.
-    Tensor Q(n, n);
-    Tensor eigvals(1, n);
-    jacobi_eigendecompose(gram, Q, eigvals);
+    // Eigendecompose: the eigenvector matrix's columns are the eigenvectors,
+    // SORTED DESCENDING by eigenvalue. The shared routine takes a const
+    // Tensor& and does not mutate it, so `gram` stays intact (it is not
+    // used afterwards either).
+    const nn::utils::SymmetricEig eig =
+        nn::utils::symmetric_eigendecompose(gram);
+    const Tensor& Q = eig.eigenvectors;
 
     // Copy top-r columns of Q into st.P (which is (n, r)).
-    // If r < n, we keep the first r columns (no sorting needed — see header).
-    // (For full-rank case r == n, copy all columns.)
+    // Because the eigenpairs are sorted descending, the first r columns ARE
+    // the top-r. (For the full-rank case r == n, copy all columns.)
     st.P = Tensor(n, r);
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < (size_t)r; ++j) {

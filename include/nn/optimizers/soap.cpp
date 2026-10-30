@@ -12,6 +12,7 @@
 #include "../core/model.h"
 #include "../core/layer.h"
 #include "../core/tensor.h"
+#include "../utils/linear_algebra.h"
 
 #include <cmath>
 #include <algorithm>
@@ -123,117 +124,6 @@ void SOAP::ensure_state(void* layer_ptr,
 }
 
 // ============================================================================
-// Symmetric eigendecomposition via cyclic Jacobi rotations
-// ============================================================================
-//
-// Jacobi rotations are an O(n^3) iterative method for symmetric eigendecomposition.
-// For small matrices (m, n <= ~16, typical Dense layer preconditioner size)
-// it converges in a handful of sweeps and is numerically stable. We use
-// cyclic sweeps: at each sweep, we visit every off-diagonal pair (p, q)
-// with p < q and apply a rotation that zeros A(p, q) (and A(q, p) by symmetry).
-//
-// A sweep on an (n × n) matrix is O(n^3) — n*(n-1)/2 rotations, each O(n).
-// We cap at max_sweeps iterations and break early when the off-diagonal norm
-// falls below tol.
-//
-// On entry, A is a symmetric (n × n) tensor. On exit, A's diagonal contains
-// the eigenvalues (in arbitrary order) and Q holds the orthogonal matrix of
-// eigenvectors (Q(:, k) is the eigenvector for eigenvalue A(k, k)).
-// The eigenvalues Tensor is filled with the diagonal of A on return.
-
-void SOAP::jacobi_eigendecompose(Tensor& A,
-                                 Tensor& Q,
-                                 Tensor& eigenvalues,
-                                 int max_sweeps,
-                                 double tol) {
-    const size_t n = A.rows;
-    if (n == 0) {
-        eigenvalues = Tensor(0, 0);
-        return;
-    }
-    if (A.cols != n || Q.rows != n || Q.cols != n) {
-        throw std::invalid_argument("SOAP::jacobi_eigendecompose: shape mismatch");
-    }
-
-    // Initialize Q to identity.
-    Q.fill(0.0);
-    for (size_t i = 0; i < n; ++i) Q(i, i) = 1.0;
-
-    // Working copy of A (we will mutate A in place).
-    for (int sweep = 0; sweep < max_sweeps; ++sweep) {
-        double off_norm_sq = 0.0;
-        for (size_t p = 0; p < n; ++p)
-            for (size_t q = p + 1; q < n; ++q)
-                off_norm_sq += 2.0 * A(p, q) * A(p, q);
-
-        if (std::sqrt(off_norm_sq) < tol) break;
-
-        for (size_t p = 0; p < n - 1; ++p) {
-            for (size_t q = p + 1; q < n; ++q) {
-                const double apq = A(p, q);
-                if (std::abs(apq) < 1e-15) continue;
-
-                const double app = A(p, p);
-                const double aqq = A(q, q);
-
-                // Compute the rotation angle.
-                // Standard Jacobi formula: theta = (app - aqq) / (2 * apq),
-                // i.e. theta = 0.5 * atan2(2*apq, app - aqq). The SIGN of the
-                // second argument matters: with `aqq - app` the rotation
-                // roughly DOUBLES the off-diagonal instead of annihilating
-                // it, and the routine returns an orthogonal similarity that
-                // is NOT an eigendecomposition. See the note in the header.
-                double theta;
-                if (std::abs(app - aqq) < 1e-30) {
-                    theta = (apq >= 0.0) ? M_PI / 4.0 : -M_PI / 4.0;
-                } else {
-                    theta = 0.5 * std::atan2(2.0 * apq, app - aqq);
-                }
-                const double c = std::cos(theta);
-                const double s = std::sin(theta);
-
-                // Apply the rotation to A: A := J^T · A · J.
-                // (rows p, q and cols p, q; symmetric so we touch both sides.)
-                // New diagonal entries:
-                const double new_app = c * c * app + 2.0 * c * s * apq + s * s * aqq;
-                const double new_aqq = s * s * app - 2.0 * c * s * apq + c * c * aqq;
-                A(p, p) = new_app;
-                A(q, q) = new_aqq;
-                A(p, q) = 0.0;
-                A(q, p) = 0.0;
-
-                // Off-diagonal entries: A(r, p) and A(r, q) for r != p, q.
-                for (size_t r = 0; r < n; ++r) {
-                    if (r == p || r == q) continue;
-                    const double arp = A(r, p);
-                    const double arq = A(r, q);
-                    const double new_arp = c * arp + s * arq;
-                    const double new_arq = -s * arp + c * arq;
-                    A(r, p) = new_arp;
-                    A(p, r) = new_arp;
-                    A(r, q) = new_arq;
-                    A(q, r) = new_arq;
-                }
-
-                // Apply the same rotation to Q: Q := Q · J.
-                for (size_t r = 0; r < n; ++r) {
-                    const double qrp = Q(r, p);
-                    const double qrq = Q(r, q);
-                    const double new_qrp = c * qrp + s * qrq;
-                    const double new_qrq = -s * qrp + c * qrq;
-                    Q(r, p) = new_qrp;
-                    Q(r, q) = new_qrq;
-                }
-            }
-        }
-    }
-
-    // Copy diagonal into eigenvalues output.
-    eigenvalues = Tensor(1, n);
-    for (size_t i = 0; i < n; ++i) eigenvalues(0, i) = A(i, i);
-}
-
-// ============================================================================
 // Per-parameter update
 // ============================================================================
 //
@@ -314,12 +204,13 @@ void SOAP::update_param(Tensor* param,
         }
 
         // Eigendecompose L (if m >= 2).
+        //
+        // The shared routine takes a const Tensor& and does NOT mutate it,
+        // so no working copy is needed. SOAP does not use the eigenvalues at
+        // all -- it rotates into the eigenbasis and runs Adam there -- so
+        // only the eigenvector matrix is bound.
         if (m >= 2) {
-            Tensor eigvals;
-            // Make a working copy because jacobi_eigendecompose mutates A.
-            Tensor L_copy = st.L;
-            jacobi_eigendecompose(L_copy, st.Q_L, eigvals);
-            // Note: L_copy is now diagonal; st.Q_L holds the eigenvectors.
+            st.Q_L = nn::utils::symmetric_eigendecompose(st.L).eigenvectors;
         } else {
             // m == 1: Q_L is 1x1 identity (no rotation needed).
             st.Q_L(0, 0) = 1.0;
@@ -327,9 +218,7 @@ void SOAP::update_param(Tensor* param,
 
         // Eigendecompose R (if n >= 2).
         if (n >= 2) {
-            Tensor eigvals;
-            Tensor R_copy = st.R;
-            jacobi_eigendecompose(R_copy, st.Q_R, eigvals);
+            st.Q_R = nn::utils::symmetric_eigendecompose(st.R).eigenvectors;
         } else {
             // n == 1: Q_R is 1x1 identity.
             st.Q_R(0, 0) = 1.0;
