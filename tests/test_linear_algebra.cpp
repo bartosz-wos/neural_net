@@ -518,23 +518,72 @@ int main() {
             return false;
         };
 
-        check(throws_with([&]() { utils::symmetric_eigendecompose(empty); }, "empty"),
+        // The needles are the FULL messages ("<who>: matrix is empty"),
+        // not the bare words "empty" and "square". **The bare words appear
+        // in EVERY guard's message** -- four of them -- so a needle of
+        // "empty" would be satisfied by whichever guard happened to fire
+        // first, and removing the one under test would go unnoticed. The
+        // full message names the function, and each function's own guards
+        // are distinguishable from each other.
+        check(throws_with([&]() { utils::symmetric_eigendecompose(empty); },
+                          "symmetric_eigendecompose: matrix is empty"),
               "5.1 an empty matrix is rejected");
-        check(throws_with([&]() { utils::symmetric_eigendecompose(Tensor(2, 3)); }, "square"),
+        check(throws_with([&]() { utils::symmetric_eigendecompose(Tensor(2, 3)); },
+                          "symmetric_eigendecompose: matrix must be square"),
               "5.2 a non-square matrix is rejected");
-        check(throws_with([&]() { utils::symmetric_matrix_sqrt(empty); }, "empty"),
+        check(throws_with([&]() { utils::symmetric_matrix_sqrt(empty); },
+                          "symmetric_matrix_sqrt: matrix is empty"),
               "5.3 the square root rejects an empty matrix");
-        check(throws_with([&]() { utils::symmetric_matrix_sqrt(Tensor(2, 3)); }, "square"),
+        check(throws_with([&]() { utils::symmetric_matrix_sqrt(Tensor(2, 3)); },
+                          "symmetric_matrix_sqrt: matrix must be square"),
               "5.4 the square root rejects a non-square matrix");
 
         Tensor mu(1, 2);
         Tensor cov(2, 2);
         cov.fill(1.0);
-        check(throws_with([&]() { utils::frechet_distance(mu, cov, Tensor(1, 3), cov); }, "dimension"),
+
+        // -- THE MEAN-DIMENSION GUARD, AND WHY ITS NEEDLE IS "different
+        //    dimensions" AND NOT "dimension".
+        //
+        // **THE DISCRIMINATOR IS THE MESSAGE, NOT THE THROW.** The mutation
+        // harness found that dropping the `mu1.cols != mu2.cols` guard
+        // SURVIVED this suite, because the needle was the bare word
+        // "dimension" -- and the guard that fires NEXT produces the message
+        // "the second covariance's dimension does not match the mean", which
+        // ALSO contains "dimension". So a test asserting "it threw something
+        // mentioning dimension" passed while the guard it meant to cover was
+        // gone.
+        //
+        // The three dimension guards have three DISTINCT messages:
+        //     "the two means have different dimensions"
+        //     "the first covariance's dimension does not match the mean"
+        //     "the second covariance's dimension does not match the mean"
+        // and only the first contains "different dimensions". Each guard
+        // below therefore asserts ITS OWN message, so removing any one of
+        // them is visible.
+        check(throws_with([&]() { utils::frechet_distance(mu, cov, Tensor(1, 3), cov); },
+                          "different dimensions"),
               "5.5 the Frechet distance rejects a mean/covariance dimension mismatch");
-        check(throws_with([&]() { utils::frechet_distance(mu, cov, Tensor(1, 2), Tensor(2, 3)); }, "square"),
+
+        // -- THE TWO COVARIANCE-DIMENSION GUARDS, PINNED SEPARATELY. --
+        // Without these, the mean-dimension guard's own message could be
+        // masked by either of them (and vice versa).
+        check(throws_with([&]() { utils::frechet_distance(mu, Tensor(3, 3), mu, cov); },
+                          "first covariance's dimension"),
+              "5.8 the Frechet distance rejects a first covariance that does not match its mean");
+        check(throws_with([&]() { utils::frechet_distance(mu, cov, mu, Tensor(3, 3)); },
+                          "second covariance's dimension"),
+              "5.9 the Frechet distance rejects a second covariance that does not match its mean");
+        // -- THE TWO SQUARE GUARDS, PINNED WITH THEIR OWN MESSAGE. --
+        // The needle is the FULL "first covariance: matrix must be square"
+        // rather than the bare word "square", because the bare word appears
+        // in BOTH covariance messages and would let one guard's removal hide
+        // behind the other's throw.
+        check(throws_with([&]() { utils::frechet_distance(mu, cov, Tensor(1, 2), Tensor(2, 3)); },
+                          "second covariance: matrix must be square"),
               "5.6 the Frechet distance rejects a non-square covariance");
-        check(throws_with([&]() { utils::frechet_distance(mu, Tensor(2, 3), mu, cov); }, "square"),
+        check(throws_with([&]() { utils::frechet_distance(mu, Tensor(2, 3), mu, cov); },
+                          "first covariance: matrix must be square"),
               "5.7 the Frechet distance rejects a non-square first covariance");
     }
 
@@ -559,6 +608,90 @@ int main() {
         printf("    residual for a WRONG eigenbasis = %.6e\n", resid);
         check(resid > 1e-3,
               "6.1 a wrong eigenbasis scores a LARGE residual (the metric works)");
+    }
+
+    // =========================================================================
+    // 7. THE ASYMMETRIC INPUT IS SYMMETRISED
+    //
+    // **THIS SECTION EXISTS BECAUSE A MUTATION HARNESS FOUND THE GAP, NOT
+    // BECAUSE THE SUITE WAS THOUGHT TO BE INCOMPLETE.**
+    //
+    // The mutation "drop the input symmetrisation" -- replacing
+    //     const double v = 0.5 * (A(i, j) + A(j, i));
+    // with
+    //     const double v = A(i, j);
+    // -- SURVIVED this suite. The reason is a shape, not a strength: the
+    // mutation only changes the answer for an ASYMMETRIC input, and EVERY
+    // fixture above is a Gram matrix `G'G`, which is EXACTLY symmetric. On a
+    // symmetric input the two variants are bit-identical.
+    //
+    // **A FIXTURE THAT DOES NOT VARY IN THE DIMENSION THE MUTATION TARGETS
+    // CANNOT SEE THE MUTATION.** This is the repo's recorded trap, in the
+    // matrix form.
+    //
+    // The contract, as the header states it, is that an asymmetric input is
+    // treated as its SYMMETRIC PART -- the average of the two triangles,
+    // (A + A')/2. This section pins that, against an INDEPENDENT closed-form
+    // 2x2 reference computed in THIS file from `l^2 - tr.l + det = 0`, and it
+    // asserts the two WRONG readings give DIFFERENT answers, so the section
+    // proves it can discriminate rather than merely agreeing with whatever
+    // the implementation does.
+    // =========================================================================
+    section("7. THE ASYMMETRIC INPUT IS SYMMETRISED (the symmetric part)");
+    {
+        // A = [[1, 2], [4, 3]] -- deliberately asymmetric.
+        Tensor A(2, 2);
+        A(0, 0) = 1.0; A(0, 1) = 2.0;
+        A(1, 0) = 4.0; A(1, 1) = 3.0;
+
+        // -- NON-VACUITY: the input really IS asymmetric. --
+        bool asymmetric = std::abs(A(0, 1) - A(1, 0)) > 1e-9;
+        check(asymmetric,
+              "7.1 the fixture's input is genuinely ASYMMETRIC (A(0,1) != A(1,0))");
+
+        utils::SymmetricEig eig = utils::symmetric_eigendecompose(A);
+
+        // The symmetric part: (A + A')/2 = [[1, 3], [3, 3]].
+        const double sym01 = 0.5 * (A(0, 1) + A(1, 0));
+        Eig2 ref = reference_eig2(0.5 * (A(0, 0) + A(0, 0)),
+                                  sym01,
+                                  0.5 * (A(1, 1) + A(1, 1)));
+
+        printf("    library eigenvalues            = %.12f, %.12f\n",
+               eig.eigenvalues(0, 0), eig.eigenvalues(0, 1));
+        printf("    symmetric part's closed form   = %.12f, %.12f\n",
+               ref.lambda[1], ref.lambda[0]);
+
+        check(rel_err(eig.eigenvalues(0, 0), ref.lambda[1]) < 1e-9,
+              "7.2 the larger eigenvalue matches the SYMMETRIC PART's closed form");
+        check(rel_err(eig.eigenvalues(0, 1), ref.lambda[0]) < 1e-9,
+              "7.3 the smaller eigenvalue matches the SYMMETRIC PART's closed form");
+
+        // -- THE TWO WRONG READINGS, AND THE FACT THAT THEY DIFFER. --
+        //
+        // "use the lower triangle and mirror it" gives [[1,4],[4,3]];
+        // "use the upper triangle and mirror it" gives [[1,2],[2,3]].
+        // Both are plausible readings of "symmetrise", and BOTH must be
+        // distinguishable from the symmetric part -- otherwise this section
+        // would pass for the wrong implementation.
+        Eig2 lower = reference_eig2(A(0, 0), A(1, 0), A(1, 1));
+        Eig2 upper = reference_eig2(A(0, 0), A(0, 1), A(1, 1));
+
+        bool lower_differs = std::abs(lower.lambda[1] - ref.lambda[1]) > 1e-6;
+        bool upper_differs = std::abs(upper.lambda[1] - ref.lambda[1]) > 1e-6;
+        check(lower_differs,
+              "7.4 the lower-triangle reading gives a DIFFERENT answer (so the fixture discriminates)");
+        check(upper_differs,
+              "7.5 the upper-triangle reading gives a DIFFERENT answer (so the fixture discriminates)");
+
+        // And the library must NOT be returning either of them.
+        check(std::abs(eig.eigenvalues(0, 0) - lower.lambda[1]) > 1e-6 &&
+              std::abs(eig.eigenvalues(0, 0) - upper.lambda[1]) > 1e-6,
+              "7.6 the library returns the SYMMETRIC PART, not a mirrored triangle");
+
+        // -- AND THE INPUT IS NOT MUTATED, even when it is asymmetric. --
+        check(std::abs(A(0, 1) - 2.0) < 1e-12 && std::abs(A(1, 0) - 4.0) < 1e-12,
+              "7.7 the routine does NOT mutate the caller's matrix");
     }
 
     printf("\n=== SUMMARY: %d passed, %d failed ===\n", g_pass, g_fail);

@@ -182,11 +182,25 @@ struct SymmetricEig {
 // that inertness is pinned by tests/test_jacobi_inertness.cpp.
 //
 // **A MATRIX THAT IS NOT SYMMETRIC IS ACCEPTED** and symmetrised
-// internally: the routine uses only the lower triangle's mirrored values,
-// so an asymmetric input is treated as its symmetric part. This is the
-// documented behaviour rather than an accident, and it is what makes the
-// routine safe to call on `G.G'` products whose asymmetry is pure
-// rounding.
+// internally: the routine uses the SYMMETRIC PART, the average of the two
+// triangles, (A + A')/2 -- so an asymmetric input is treated as its
+// symmetric part. This is the documented behaviour rather than an accident,
+// and it is what makes the routine safe to call on `G.G'` products whose
+// asymmetry is pure rounding.
+//
+// **THE AVERAGING IS NOT THE SAME AS MIRRING A TRIANGLE, AND THE
+// DIFFERENCE IS MEASURED.** For A = [[1,2],[4,3]] the three readings give:
+//
+//   symmetric part  (A+A')/2 = [[1,3],[3,3]]  ->  5.162278, -1.162278
+//   lower mirrored           = [[1,4],[4,3]]  ->  6.123106, -2.123106
+//   upper mirrored           = [[1,2],[2,3]]  ->  4.236068, -0.236068
+//
+// so the choice is observable, and `tests/test_linear_algebra.cpp` pins it
+// (section 7) against an independent closed-form reference. That section
+// exists because a mutation dropping the averaging SURVIVED the earlier
+// version of the suite: every other fixture in the file is a Gram matrix
+// `G'G`, which is EXACTLY symmetric, and on a symmetric input the averaging
+// and the mirroring are bit-identical.
 //
 // Throws std::invalid_argument on: an empty matrix; a non-square matrix;
 // max_sweeps < 1; a non-positive or non-finite tol. Every message is
