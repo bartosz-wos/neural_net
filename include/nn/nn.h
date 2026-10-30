@@ -94,6 +94,7 @@
 #include "utils/ngram_lm.h"
 #include "utils/sinkhorn.h"
 #include "utils/linear_algebra.h"
+#include "utils/sliced_wasserstein.h"
 #include "utils/logit_processing.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"

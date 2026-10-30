@@ -91,6 +91,31 @@ static void check(bool ok, const std::string& name) {
 
 static void section(const char* name) { printf("\n=== %s ===\n", name); }
 
+// ---------------------------------------------------------------------------
+// A guarded call.
+//
+// **THE MUTATION HARNESS FOUND THIS THE HARD WAY.** The mutation "the random
+// directions are not normalised" makes the unit check fire, and the
+// resulting std::invalid_argument ESCAPED main -- the binary aborted with
+// rc=134, the harness reported MUT-CRASH, and the whole suite's verdict
+// count was lost. That is this repo's recorded defect class: "every
+// throwing call in a test is inside call_guarded, or an inverted guard
+// ABORTS the binary and is reported MUT-CRASH with nothing countable".
+//
+// Every call that CAN throw is wrapped here, so a defect becomes a FAIL
+// with a count instead of an abort with nothing.
+// ---------------------------------------------------------------------------
+template <typename F>
+static bool call_guarded(F fn, double* out) {
+    try {
+        *out = fn();
+        return true;
+    } catch (const std::exception& e) {
+        printf("    [THREW] %s\n", e.what());
+        return false;
+    }
+}
+
 static double rel_err(double got, double want) {
     double denom = std::max(std::abs(got), std::abs(want));
     if (denom < 1e-12) return std::abs(got - want);
@@ -428,21 +453,34 @@ int main() {
         check(worst_norm < 1e-12,
               "6.2 EVERY generated direction is a UNIT vector");
 
-        double a = utils::sliced_wasserstein_distance(P, Q, 16, 12345);
-        double b = utils::sliced_wasserstein_distance(P, Q, 16, 12345);
-        printf("    seeded SWD = %.12f\n", a);
-        check(std::abs(a - b) < 1e-15,
-              "6.3 the SAME seed gives the SAME answer (reproducible)");
+        double a = 0.0, b = 0.0, c = 0.0, d_rev = 0.0;
+        const bool ok_a = call_guarded(
+            [&]() { return utils::sliced_wasserstein_distance(P, Q, 16, 12345); }, &a);
+        const bool ok_b = call_guarded(
+            [&]() { return utils::sliced_wasserstein_distance(P, Q, 16, 12345); }, &b);
+        const bool ok_c = call_guarded(
+            [&]() { return utils::sliced_wasserstein_distance(P, Q, 16, 999); }, &c);
+        const bool ok_r = call_guarded(
+            [&]() { return utils::sliced_wasserstein_distance(Q, P, 16, 12345); }, &d_rev);
 
-        double c = utils::sliced_wasserstein_distance(P, Q, 16, 999);
-        check(std::abs(a - c) > 1e-9,
-              "6.4 a DIFFERENT seed generally gives a DIFFERENT answer "
-              "(the seed is actually used)");
-
-        double d_rev = utils::sliced_wasserstein_distance(Q, P, 16, 12345);
-        check(rel_err(a, d_rev) < 1e-12,
-              "6.5 the random-direction form is symmetric too");
-        check(a >= 0.0, "6.6 the random-direction form is >= 0");
+        check(ok_a && ok_b && ok_c && ok_r,
+              "6.3 the random-direction form returns a value (it does not throw)");
+        if (!ok_a || !ok_b || !ok_c || !ok_r) {
+            // Nothing further in this section is meaningful if the call
+            // threw, and every check below would be a comparison against an
+            // UNINITIALISED value.
+            printf("    seeded SWD = <unavailable>\n");
+        } else {
+            printf("    seeded SWD = %.12f\n", a);
+            check(std::abs(a - b) < 1e-15,
+                  "6.4 the SAME seed gives the SAME answer (reproducible)");
+            check(std::abs(a - c) > 1e-9,
+                  "6.5 a DIFFERENT seed generally gives a DIFFERENT answer "
+                  "(the seed is actually used)");
+            check(rel_err(a, d_rev) < 1e-12,
+                  "6.6 the random-direction form is symmetric too");
+            check(a >= 0.0, "6.7 the random-direction form is >= 0");
+        }
     }
 
     // =========================================================================
@@ -457,6 +495,8 @@ int main() {
         Tensor Q = make_tensor({{1.0, 1.0}, {2.0, 3.0}});
         Tensor dirs = make_tensor({{1.0, 0.0}});
         Tensor wrong_dim_dirs = make_tensor({{1.0, 0.0, 0.0}});
+        // A sample set with a DIFFERENT NUMBER OF COLUMNS.
+        Tensor wrong_dim_samples = make_tensor({{0.0, 0.0, 0.0}, {1.0, 2.0, 3.0}});
 
         auto throws_with = [](const std::function<void()>& fn, const char* needle) {
             try { fn(); } catch (const std::invalid_argument& e) {
@@ -465,36 +505,48 @@ int main() {
             return false;
         };
 
+        // **THE NEEDLES ARE THE FULL MESSAGES, NOT THE BARE WORDS.** The
+        // words "empty" and "dimension" each appear in SEVERAL guard
+        // messages, so a bare-word needle would be satisfied by whichever
+        // guard happened to fire first -- and removing the one under test
+        // would go unnoticed. Each check below names its own guard.
         check(throws_with([&]() {
                   utils::sliced_wasserstein_distance(Tensor(), Q, dirs);
-              }, "empty"),
+              }, "the first sample set is empty"),
               "7.1 an empty sample set is rejected");
 
         check(throws_with([&]() {
                   utils::sliced_wasserstein_distance(P, Q, Tensor());
-              }, "empty"),
+              }, "the direction set is empty"),
               "7.2 an empty direction set is rejected");
 
         check(throws_with([&]() {
                   utils::sliced_wasserstein_distance(P, Q, wrong_dim_dirs);
-              }, "dimension"),
+              }, "the directions' dimension does not match the samples'"),
               "7.3 a direction set of the wrong dimension is rejected");
 
+        // **THE FIXTURE MUST VARY IN THE DIMENSION THE GUARD IS ABOUT.** The
+        // first draft of this check used P = 1x2 and Q = 2x2 -- which have
+        // the SAME number of COLUMNS, so there was no dimension mismatch at
+        // all and the guard never fired. A row-count difference is not a
+        // dimension difference.
+        check(P.cols == 2 && wrong_dim_samples.cols == 3,
+              "7.4 the fixture's two sample sets really do have different "
+              "COLUMN counts");
         check(throws_with([&]() {
-                  utils::sliced_wasserstein_distance(
-                      make_tensor({{0.0, 0.0}}), Q, dirs);
-              }, "dimension"),
-              "7.4 two sample sets of different dimensions are rejected");
+                  utils::sliced_wasserstein_distance(wrong_dim_samples, Q, dirs);
+              }, "the two sample sets have different dimensions"),
+              "7.5 two sample sets of different dimensions are rejected");
 
         check(throws_with([&]() {
-                  utils::sliced_wasserstein_distance(P, Q, dirs, 0);
-              }, "projections"),
-              "7.5 a non-positive projection count is rejected");
+                  utils::sliced_wasserstein_distance(P, Q, 0, 12345);
+              }, "the projection count must be >= 1"),
+              "7.6 a non-positive projection count is rejected");
 
         check(throws_with([&]() {
                   utils::random_unit_directions(4, 0, 1);
-              }, "dimension"),
-              "7.6 a zero-dimensional direction space is rejected");
+              }, "the dimension must be >= 1"),
+              "7.7 a zero-dimensional direction space is rejected");
     }
 
     // =========================================================================
