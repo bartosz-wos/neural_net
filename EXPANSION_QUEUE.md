@@ -1330,6 +1330,19 @@ After completing an item, move it to the "Done" section.
   `SNIS(c*rho) == SNIS(rho)` for any c > 0 (the scale cancels between numerator and denominator), while `IPS(c*rho) == c * IPS(rho)`. **A FIXTURE THAT DOES NOT VARY THE SCALE OF THE WEIGHTS CANNOT TELL SNIS FROM IPS AT ALL**, and the fixture's weights are scaled by 0.25, 3.0 and 100.0 precisely to make that difference visible. ESS is scale invariant too, which is checked the same way.
 
   ---------------------------------------------------------------------------
+  **THE SANITIZER FOUND A REAL HEAP-BUFFER-OVERFLOW IN THIS SESSION'S OWN NEW
+  SUITE -- AND IT IS THE MOST IMPORTANT FINDING IN THIS ENTRY.**
+  ---------------------------------------------------------------------------
+
+  The ASan+UBSan build reported a **heap-buffer-overflow, READ of size 8, 0 bytes after a 16-byte region**, at `tests/test_off_policy_eval.cpp:284` in `enumerate_expectation`. The cause: section 5 passed a **two-element** `rho` to a **three-action** bandit, and the enumerator indexed it as `rho[seq[t]]` with `seq[t]` in {0,1,2}.
+
+  **AT `-O2` THAT READ WENT PAST THE END OF THE VECTOR AND INTO THE ALLOCATOR'S SLACK SPACE, AND THE SUITE WAS GREEN.** The bytes it returned were never used -- the control estimator in that section IGNORES the weights -- so the defect changed no result and no assertion could see it. **A SILENT OUT-OF-BOUNDS READ IS INVISIBLE TO THE TEST SUITE THAT CONTAINS IT, AND ONLY A SANITIZER OR AN INDEPENDENT REFERENCE FINDS IT.**
+
+  The fix is two-sided, and the second side is the one that generalises: (1) the call site now passes a `rho` with one entry per action, and (2) **THE ENUMERATOR NOW VALIDATES THE SIZE OF EVERY PER-ACTION TABLE IT INDEXES**, because a table indexed by an action index must be CHECKED to have one entry per action -- **derive loop bounds from the buffer, never from a sibling quantity**. Check 5.3 asserts that the new guard actually FIRES on a mis-sized table, so the guard is a check and not a comment.
+
+  **AND NOTE THE IRONY: THIS IS EXACTLY THE `Flatten` TRAP THAT `NOT_FIXED.md` RECORDS** -- "a layer that silently produces the wrong shape, and only the next `Dense` will notice". The same session that documented that trap shipped a suite containing an instance of it, and the same class of blindness defeated the test suite until a sanitizer was pointed at it.
+
+  ---------------------------------------------------------------------------
   **TWO TEST BUGS IN THIS SESSION'S OWN NEW SUITE, BOTH CAUGHT BY THE FIXTURE RATHER THAN BY REASONING.**
   ---------------------------------------------------------------------------
 
