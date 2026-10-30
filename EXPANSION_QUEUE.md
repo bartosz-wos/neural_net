@@ -4,6 +4,10 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-10-29] THE VAE'S KL SCALE AND ITS KL-GRADIENT SIGN FIXED. 23/23 +
+#     17/17, 5 mutations caught / 0 survived, ASan+UBSan CLEAN, zero new
+#     full-suite failures. The plain VAE had NO test file at all. Do not
+#     re-pop.
 # [DONE 2026-10-29] SLICED WASSERSTEIN DISTANCE SHIPPED. 40/40 + oracle
 #     22/22, 7 mutations caught / 0 survived / 0 broken / 0 crashed / 0 noop,
 #     ASan+UBSan CLEAN, zero new full-suite failures. Do not re-pop.
@@ -1237,6 +1241,24 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **The plain VAE's KL was a SUM over the batch while its reconstruction loss was a MEAN -- and its KL GRADIENT had an INVERTED SIGN, so the KL term was actively pushing the encoder AWAY from the prior** (fixed 2026-10-29). **THE CLASS HAD NO TEST FILE AT ALL**, and it is reachable from the public umbrella `include/nn/nn.h`.
+
+  **THE DEFECT WAS DEFERRED ONCE AND THE DEFERRAL WAS WRONG.** The 2026-10-28 session recorded it as "a judgement call the repo has not settled -- PyTorch's VAE sums the KL over the batch and means over nothing, while this repo's other losses reduce over the batch; picking either changes the loss scale and would need a decision about the beta weighting too". **IT IS NOT A JUDGEMENT CALL, AND THE MEASUREMENT SETTLES IT.** Two independent arguments, and the second is decisive: (1) the repo's own convention agrees -- `utils/losses.h` documents that the mean reduction divides by `numel`, NOT by `rows` (D7), and `utils/contrastive_losses.cpp` divides its total by `X.rows`; **A LOSS THAT SCALES WITH THE BATCH SIZE IS NOT A PER-SAMPLE QUANTITY**; and (2) **THE KL DEPENDS ON `mu` AND `logvar` ONLY -- THE REPARAMETERISATION'S NOISE DOES NOT ENTER IT.** Measured: two forwards of the same input give a BIT-IDENTICAL KL (0.375652369438650 both times) while the reconstruction loss differs (4.316909166426290 against 4.937511503244158). So the reconstruction term is a MEAN over a STOCHASTIC quantity and the KL was a SUM over a DETERMINISTIC one, and a total loss whose batch-scaling depends on which term you look at is not a coherent per-sample objective.
+
+  **MEASURED BEFORE THE FIX:** a 2-row batch of identical data gave a KL of EXACTLY TWICE the 1-row batch's (0.751304738877 against 0.375652369439 -- a ratio of exactly 2.0) while the reconstruction loss stayed O(1). So the total loss changed with the batch size even for fixed data, and the effective beta (the KL's weight, hard-coded to 1.0) was a property of the BATCH SIZE rather than of the loss.
+
+  **THE FIX UNCOVERED A SECOND AND MORE SERIOUS DEFECT, IN THE GRADIENT.** `backward()`'s KL contribution used `-mu_ij`, with a source comment ASSERTING the sign was negative ("NOT +mu_ij -- the sign is negative"). **A COMMENT THAT ASSERTS A SIGN IS NOT EVIDENCE OF ONE.** The closed form carries `- mu^2` with a minus in front, so `d/dmu [-0.5*(1 + logvar - mu^2 - exp(logvar))] = +mu`. Measured against finite differences on the encoder's BIAS (which shifts mu and logvar DIRECTLY, so no weight path, ReLU or other layer is confounded with the KL's own contribution), the ratio was exactly **-1.0 for N=1, -2.0 for N=2, -3.0 for N=3** -- wrong sign AND missing the 1/N -- while the logvar gradient's ratio was +1.0/+2.0/+3.0 (right sign, missing the 1/N). **THE RATIO'S SCALING WITH N IS WHAT SEPARATES THE TWO DEFECTS**: a constant ratio means a sign error, a growing ratio means a missing 1/N, and one that is negative AND growing means both.
+
+  **AND THE SIGN WAS NOT COSMETIC.** The KL is minimised at mu = 0, so the gradient must have the SAME SIGN as mu and gradient descent must move mu toward zero. With the sign inverted it moved AWAY: **measured, one training step took the mu-bias from +0.300000 to +0.542474 -- the KL term was actively pushing the encoder AWAY from the prior.** After the fix the same step takes it to +0.057526.
+
+  **THE FINITE-DIFFERENCE CAVEAT IS THE PART WORTH CARRYING FORWARD.** **THE FD OF `total_loss()` IS NOT A VALID DERIVATIVE**: the reparameterisation draws a fresh `eps` on every forward, so the central difference compares two UNCORRELATED noisy outputs -- the repo's recorded "stochastic forward" trap. Measured, it produced a 300000-magnitude FD against an analytical 0. The FD of `kl_loss()` alone IS valid, because the KL does not depend on the noise. **THE TESTS PROBE THE KL AND THE ENCODER'S BIAS, NOT THE TOTAL LOSS, AND THE HEADER SAYS SO.**
+
+  **ONE TEST BUG IN THIS SESSION'S OWN NEW SUITE, CAUGHT BY THE FIXTURE ITSELF.** The `doubled_input()` helper's first draft wrote a loop that left row 0 as [1.0, 1.0, 0.5] and row 1 as [-2.0, -2.0, 0.5] -- TWO DIFFERENT ROWS, not a repeated one. **THE SYMPTOM WAS DECISIVE**: the KL's batch-scaling ratio came out 0.5533, where the SUM convention predicts exactly 2.0. **A RATIO OF 0.55 IS NEITHER A SUM NOR A MEAN -- IT IS THE SIGNATURE OF A FIXTURE THAT IS NOT WHAT IT CLAIMS TO BE.** The corrected helper gives the predicted 2.0 on the unfixed code, which is what makes the assertion discriminating rather than merely failing.
+
+  **THE ABSENCE THAT LED HERE, AND IT IS THE QUEUE'S OWN RECURRING CLASS:** the plain `VAE` is reachable from `include/nn/nn.h` and had **NO TEST FILE AT ALL** -- `tests/` has `test_vq_vae.cpp` for the VQ-VAE (a different class) and nothing for this one. **A CLASS THAT IS REACHABLE FROM THE PUBLIC API WITH ZERO COVERAGE IS THE SAME DEFECT CLASS THE 2026-10-28 ENTRY FOUND IN THE ABSTRACT-CLASS SWEEP: the code looks healthy because nothing ever exercises it.**
+
+  **SHIPPED: `test(generative): RED tests for the VAE's loss conventions and its KL gradient` (6bf0185), `fix(generative): the VAE's KL is a per-sample mean, and its gradient had the wrong sign` (0550f1c), `test(generative): mutation harness for the VAE's loss conventions and KL gradient` (14c0ca0).** **23/23 in test_vae, 17/17 in test_vae_grad, 5/5 mutations caught / 0 survived / 0 broken / 0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures.**
 
 - **The sliced Wasserstein distance SHIPPED, and with it the repo's first sample-quality metric that needs NO pretrained feature extractor** (2026-10-29). `include/nn/utils/sliced_wasserstein.{h,cpp}`, 40/40 in `test_sliced_wasserstein`, 7/7 mutations caught, ASan+UBSan CLEAN, zero new full-suite failures.
 
