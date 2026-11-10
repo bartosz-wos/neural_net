@@ -891,6 +891,107 @@ def section_pinned_fixture():
         print("    //   %r -> linear %r, step %r" % (q, lin, stp))
 
 
+def section_report_fixture():
+    print("\n=== 9b. THE REPORT FIXTURE (held-out) ===")
+
+    # A DETERMINISTIC construction -- no RNG, so the C++ literals are
+    # reproducible from the printed arrays alone.
+    #
+    # The true probability is p(s) = 0.1 + 0.8*s on a grid of 10 scores,
+    # each appearing m times with round(m*p(s)) positive labels. The RAW
+    # score is the OVERCONFIDENT version 0.02 + 0.96*s, pushed toward the
+    # extremes -- so the raw probabilities are badly calibrated and the
+    # isotonic map has real work to do.
+    grid = [i / 10.0 for i in range(10)]
+    mult = 6
+    cal_scores, cal_labels = [], []
+    for s in grid:
+        p = 0.1 + 0.8 * s
+        n_pos = int(round(mult * p))
+        for j in range(mult):
+            cal_scores.append(0.02 + 0.96 * s)
+            cal_labels.append(1.0 if j < n_pos else 0.0)
+    # The evaluation set: the SAME score grid but a DIFFERENT realisation of
+    # the labels, with a deterministic +-1 shift in the positive count at
+    # each grid point. THAT SHIFT IS ESSENTIAL: if the evaluation set had
+    # the same per-score positive rate as the calibration set, the map would
+    # fit it perfectly and the "held-out" ECE would be exactly 0 -- which
+    # would make the fixture unable to show the optimism gap at all.
+    ev_scores, ev_labels = [], []
+    for gi, s in enumerate(grid):
+        p = 0.1 + 0.8 * s
+        n_pos = int(round(mult * p))
+        n_pos = max(0, min(mult, n_pos + (1 if gi % 2 == 0 else -1)))
+        for j in range(mult):
+            ev_scores.append(0.02 + 0.96 * s)
+            ev_labels.append(1.0 if j < n_pos else 0.0)
+
+    cal_s = np.array(cal_scores)
+    cal_y = np.array(cal_labels)
+    ev_s = np.array(ev_scores)
+    ev_y = np.array(ev_labels)
+
+    def ece(y, p, n_bins=10):
+        edges = np.linspace(0.0, 1.0, n_bins + 1)
+        bi = np.searchsorted(edges[1:-1], p)
+        total = 0.0
+        for b in range(n_bins):
+            sel = bi == b
+            if not np.any(sel):
+                continue
+            total += (np.sum(sel) / len(y)) * abs(y[sel].mean() - p[sel].mean())
+        return float(total)
+
+    xk, yk = fit_isotonic(cal_s, cal_y)
+    cal_out = isotonic_predict(cal_s, cal_y, ev_s)
+    ece_before = ece(ev_y, ev_s)
+    ece_after = ece(ev_y, cal_out)
+    brier_before = sk_brier(ev_y, ev_s)
+    brier_after = sk_brier(ev_y, cal_out)
+
+    check("the report fixture: calibration REDUCES the held-out ECE",
+          ece_after < ece_before, "before %r after %r" % (ece_before, ece_after))
+    check("the report fixture: calibration REDUCES the held-out Brier",
+          brier_after < brier_before,
+          "before %r after %r" % (brier_before, brier_after))
+
+    # THE OPTIMISM GAP, MEASURED. The IN-SAMPLE ECE of a fitted map is
+    # essentially ZERO -- PAVA interpolates the fitting set -- so a report
+    # computed on the data it was fitted on measures nothing. This is WHY
+    # the shipped report takes a SEPARATE evaluation set.
+    in_sample = isotonic_predict(cal_s, cal_y, cal_s)
+    ece_in_sample = ece(cal_y, in_sample)
+    check("the IN-SAMPLE ECE of a fitted map is ~0 (the optimism gap)",
+          ece_in_sample < 0.02,
+          "in-sample %r vs held-out %r" % (ece_in_sample, ece_after))
+    check("the in-sample ECE is MUCH smaller than the held-out one",
+          ece_in_sample < 0.25 * ece_after,
+          "in-sample %r held-out %r" % (ece_in_sample, ece_after))
+
+    print("")
+    print("    // ---- report fixture (transferred from the oracle) ----")
+    print("    const std::vector<double> kCalScores = {%s};" %
+          ", ".join(repr(float(v)) for v in cal_s))
+    print("    const std::vector<double> kCalLabels = {%s};" %
+          ", ".join(repr(float(v)) for v in cal_y))
+    print("    const std::vector<double> kEvScores = {%s};" %
+          ", ".join(repr(float(v)) for v in ev_s))
+    print("    const std::vector<double> kEvLabels = {%s};" %
+          ", ".join(repr(float(v)) for v in ev_y))
+    print("    const std::vector<double> kReportKnotX = {%s};" %
+          ", ".join(repr(float(v)) for v in xk))
+    print("    const std::vector<double> kReportKnotY = {%s};" %
+          ", ".join(repr(float(v)) for v in yk))
+    print("    // expected report:")
+    print("    //   ece_before   = %r" % ece_before)
+    print("    //   ece_after    = %r" % ece_after)
+    print("    //   brier_before = %r" % brier_before)
+    print("    //   brier_after  = %r" % brier_after)
+    print("    //   n_knots      = %d" % len(xk))
+    print("    //   n_samples    = %d" % len(ev_s))
+    print("    // ---- end report fixture ----")
+
+
 # ===========================================================================
 # MAIN
 # ===========================================================================
@@ -912,6 +1013,7 @@ def main():
     section_report()
     section_cross_check()
     section_pinned_fixture()
+    section_report_fixture()
 
     print("")
     print("=== SUMMARY: %d passed, %d failed ===" % (PASSED, FAILED))
