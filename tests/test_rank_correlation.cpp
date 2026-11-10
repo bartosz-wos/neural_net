@@ -542,6 +542,74 @@ static void test_copula_correlation() {
         check(std::fabs(raw - cop) > 1e-6,
               "5.5 the copula correlation and the raw Pearson correlation DIFFER on a tied fixture");
     }
+
+    // 5.6 THE LARGE-OFFSET FIXTURE. `pearson_r` uses the TWO-PASS CENTRED
+    //     form, and this check is what makes that choice observable.
+    //
+    //     **THE MUTATION HARNESS CAUGHT THIS GAP.** The M10 mutation
+    //     (replace the centred form with the one-pass
+    //     `sum(xy) - sum(x)sum(y)/n` form) SURVIVED the first version of
+    //     this suite, because every fixture had small, well-conditioned
+    //     values where the two forms agree to 1e-15. The two forms are
+    //     algebraically IDENTICAL and differ only in FLOATING POINT: the
+    //     one-pass form subtracts two nearly-equal large numbers, and the
+    //     loss is catastrophic for large-offset data.
+    //
+    //     Measured on the fixture below (base 1e8): the centred form gives
+    //     0.90286102487357334 and the one-pass form gives
+    //     0.77032888651964315 -- a difference of 1.3e-1. On data with a
+    //     larger offset the one-pass form does not merely lose precision,
+    //     it returns -inf and then nan (the variance term underflows to
+    //     zero or goes negative). **A SURVIVOR IS A HOLE IN THE SUITE**,
+    //     and this is the fixture that closes it.
+    {
+        std::vector<double> ba, bb;
+        for (int i = 0; i < 50; ++i) {
+            ba.push_back(1e8 + 0.5 * i + 0.25 * ((i * 7919) % 13));
+            bb.push_back(1e8 + 0.25 * i + 0.5 * ((i * 104729) % 11));
+        }
+        Tensor a = col(ba), b = col(bb);
+        const double got = pearson_r(a, b);
+        printf("    large-offset pearson_r = %.17g\n", got);
+
+        // The centred form is the reference: recompute it here, INDEPENDENT
+        // of the library, and require agreement. If the library used the
+        // one-pass form, this would disagree by ~1.3e-1.
+        double ma = 0.0, mb = 0.0;
+        for (size_t i = 0; i < ba.size(); ++i) { ma += ba[i]; mb += bb[i]; }
+        ma /= static_cast<double>(ba.size());
+        mb /= static_cast<double>(ba.size());
+        double num = 0.0, saa = 0.0, sbb = 0.0;
+        for (size_t i = 0; i < ba.size(); ++i) {
+            const double da = ba[i] - ma;
+            const double db = bb[i] - mb;
+            num += da * db;
+            saa += da * da;
+            sbb += db * db;
+        }
+        const double want = num / std::sqrt(saa * sbb);
+        close_to(got, want, 1e-12,
+                 "5.6 pearson_r uses the CENTRED form: it matches the two-pass reference "
+                 "on large-offset data");
+
+        // and the one-pass form genuinely DISAGREYS there, so the check
+        // discriminates rather than passing vacuously.
+        double op_num = 0.0, op_saa = 0.0, op_sbb = 0.0;
+        for (size_t i = 0; i < ba.size(); ++i) {
+            op_num += ba[i] * bb[i];
+            op_saa += ba[i] * ba[i];
+            op_sbb += bb[i] * bb[i];
+        }
+        const double nn_ = static_cast<double>(ba.size());
+        op_num -= nn_ * ma * mb;
+        op_saa -= nn_ * ma * ma;
+        op_sbb -= nn_ * mb * mb;
+        const double one_pass = op_num / std::sqrt(op_saa * op_sbb);
+        printf("    the one-pass foil      = %.17g\n", one_pass);
+        check(std::fabs(got - one_pass) > 1e-6,
+              "5.6b the one-pass Pearson foil DIFFERS from pearson_r on large-offset data, "
+              "so 5.6 discriminates");
+    }
 }
 
 // =============================================================================
