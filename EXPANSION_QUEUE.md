@@ -1238,6 +1238,8 @@ After completing an item, move it to the "Done" section.
        for BACKWARD (`last_k_`, `last_v_`), which is NOT an inference-time
        cache. **THE TRAP**: a `grep -ril 'kv_cache'` will hit those backward
        caches and report the feature as PRESENT. PRINT THE MATCHING LINES.
+       <!-- 2026-11-10: re-measured, unchanged: 3 hits, ALL COMMENTS. Still
+           unbuilt. Do not re-pop without re-measuring first. -->
      - **A STANDALONE ELBO / VI UTILITY.** `grep -rinE 'elbo|variational.inference|kullback' include/`
        -> **1 hit**, a comment (`utils/distribution_losses.h:8`, "KL
        Divergence (Kullback-Leibler)"). The repo's VAE computes its KL
@@ -1252,9 +1254,12 @@ After completing an item, move it to the "Done" section.
        calibration-diagnostics suite but NO monotone calibration map, which
        composes with the shipped conformal prediction.
      - **RANK CORRELATION / COPULA UTILITIES.** `grep -rinE 'copula|rank.?correl|spearman|kendall' include/`
-       -> **0 hits**.
-
-     **DO NOT RE-POP**: `sliced.?wasserstein`, `weight.?standard`,
+       -> **0 content hits**.
+       <!-- 2026-11-10: SHIPPED as `utils/rank_correlation.{h,cpp}` (see
+           ## Done). Do not re-pop. The related absence -- the repo had NO
+           correlation machinery at all, not even Pearson's r -- was filled by
+           the same module. -->
+     - **DO NOT RE-POP**: `sliced.?wasserstein`, `weight.?standard`,
      `learnable.?lip`, `ngram`, `jelinek`, `mercer`, `stupid.?backoff`,
      `katz`, `nystrom`, `crf`, `gaussian.?process`, `matrix.?sqrt`,
      `frechet`, `fid` -- all CLOSED or measured present.
@@ -1279,6 +1284,66 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Rank correlation and the Gaussian copula SHIPPED: Spearman's rho, Kendall's tau-b, the marginal-free copula correlation, and the four exact population correspondences** (2026-11-10). `include/nn/utils/rank_correlation.{h,cpp}`, 83/83 in `test_rank_correlation`, oracle 96/96, oracle-mutation 7/7, C++ mutation 10 caught / 0 survived / 0 broken / 0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures. **THE `## Ideas` LIST WAS DRAINED a NINETEENTH TIME** (the docs-gap grep returned its 23 familiar hits for the NINTH consecutive run, all accounted for in shipped headers), so the session fell back to the queue's own documented method -- a verified-absent concept sweep -- and popped the LAST bullet: rank correlation / copula utilities.
+
+  **THE ABSENCE WAS TOTAL, AND IT WAS BIGGER THAN THE BULLET SUGGESTED.**
+
+  ```
+  grep -rinE 'copula|rank.?correl|spearman|kendall' include/ tests/
+  -> 0 content hits
+
+  grep -rinE '\bpearson\b|\bcorrelation\b' include/nn/utils/*.h
+  -> only "Clopper-Pearson" (a BINOMIAL BOUND, a different object)
+  ```
+
+  So the repo had ~250 layers and 60+ utility files and **no correlation machinery of any kind** -- not Pearson's r either, which is not what the bullet asked for but is what the module turned out to need. The shipped API: `mid_ranks`, `pearson_r`, `spearman_rho`, `kendall_tau_b`, `normal_scores`, `gaussian_copula_correlation`, and the four population correspondences `gaussian_copula_{tau,spearman}_from_rho` / `gaussian_copula_rho_from_{tau,spearman}`.
+
+  **THE INVERSE NORMAL CDF WAS COMPOSED, NOT REIMPLEMENTED.** The repo already ships `normal_quantile` at GLOBAL scope in `utils/randomized_smoothing.h` (that header has no namespace -- measured, `grep -c 'namespace'` -> 0), and its own header records it as agreeing with `scipy.stats.norm.ppf` to 4.5e-16 relative across `p in [1e-12, 1-1e-12]`. Copying a second bisection probit into the new module would have been exactly the "hand-roll a standard primitive you already have" mistake.
+
+  ---------------------------------------------------------------------------
+  **THE BLOMQVIST AMBIGUITY, AND WHY NOTHING IS SHIPPED UNDER THAT NAME.**
+  ---------------------------------------------------------------------------
+  The literature contains **TWO DIFFERENT** statistics called Blomqvist's beta. The maintained `easystats/correlation` R package **delegates to** `wdm::wdm(x, y, method = "blomqvist")`, whose implementation (read from CRAN `wdm_0.2.6`, `inst/include/wdm/bbeta.hpp`) is a **MEDIAN-QUADRANT** statistic: `2 * (mass in the lower-left + upper-right quadrants about the medians) / total - 1`. Other sources describe a **normal-scores** correlation. **These are different functions of the data.** Shipping one under the name "Blomqvist" would ship a definition this repo cannot justify, so the median-quadrant variant is NOT shipped at all and the normal-scores correlation is shipped under the name that says exactly what it computes: `gaussian_copula_correlation`.
+
+  ---------------------------------------------------------------------------
+  **THE THREE TIE CONVENTIONS, AND THE ONE THAT COST THE ORACLE ITS FIRST DRAFT.**
+  ---------------------------------------------------------------------------
+  1. **RANKS ARE MID-RANKS** -- a tied group gets the AVERAGE of the ranks it spans.
+  2. **TAU-B'S JOINT TIES COUNT IN BOTH `xtie` AND `ytie`.** The oracle's first draft counted them in NEITHER, and the discrepancy against `scipy.stats.kendalltau(variant="b")` was immediate and systematic: `-0.045454545454545456` against `-0.04761904761904762`. **A wrong tie convention is invisible on a fixture with no ties**, which is why the pinned fixture carries JOINT TIES on purpose.
+  3. **THE PLOTTING POSITION IS `(r - 0.5)/n`** (Hazen), not Blomqvist's `(r - 0.375)/(n + 0.25)` and not the Weibull `r/(n+1)`.
+
+  ---------------------------------------------------------------------------
+  **THE ORACLE WAS GREEN ON ITS FIRST EXECUTION, AND THAT IS NOT A RESULT.**
+  ---------------------------------------------------------------------------
+  `tests/rank_correlation_oracle.py` printed **96 passed, 0 failed** on its first successful execution. A green oracle proves only that the oracle agrees with itself, so its discriminating power was **MEASURED**: `tests/rank_correlation_mutate_oracle.py` breaks the oracle in seven specific ways and requires that it fail each time (OM1 the mid-ranks use the first rank of a tied group; OM2 tau-b counts the joint ties in neither `xtie` nor `ytie`; OM3 the plotting position is Blomqvist's; OM4 the population tau is `(1/pi)asin(rho)`; OM5 the population Spearman drops the `/2`; OM6 the copula correlation uses the raw values; OM7 Spearman uses the `d^2` shortcut). **ALL SEVEN ARE CAUGHT.** The same discipline as the off-policy-evaluation session's oracle-mutation harness, applied one level up, to the SPECIFICATION.
+
+  ---------------------------------------------------------------------------
+  **THE FOUR CLOSED FORMS ARE VERIFIED AGAINST QUADRATURE, NOT AGAINST THEMSELVES.**
+  ---------------------------------------------------------------------------
+  For a bivariate Gaussian with correlation `rho` (the Gaussian copula with parameter `rho`), `tau = (2/pi)arcsin(rho)` and `rho_S = (6/pi)arcsin(rho/2)`. Each is checked in the oracle against an INDEPENDENT numerical computation that does not contain it: `tau` against `E[sign(U)sign(V)]` by 1-D conditional quadrature of the bivariate normal concordance probability, and `rho_S` against `12*E[Phi(X)Phi(Y)] - 3` by Gauss-Hermite quadrature, with the 1-D and 2-D forms cross-checked against each other and a self-check at `rho = 0` (where independence makes the answer exactly 0). **A closed form checked against a quadrature that does not contain it is evidence; a closed form checked against itself is not.** The quadrature's first draft was WRONG -- it applied a spurious `sqrt(2)` to the Hermite nodes and divided by `pi` instead of `2*pi` -- and the `rho = 0` self-check caught it immediately (it returned 3.0 instead of 0.0).
+
+  ---------------------------------------------------------------------------
+  **THE MUTATION HARNESS FOUND A REAL COVERAGE GAP IN THIS SESSION'S OWN SUITE.**
+  ---------------------------------------------------------------------------
+  The first run of `tests/mutate_rank_correlation.sh` reported **9 caught, 1 SURVIVED**. The survivor was M10, "the one-pass (uncentred) Pearson form is used" -- `sum(xy) - sum(x)sum(y)/n` instead of the two-pass centred form. The two are **algebraically identical** and differ only in FLOATING POINT: the one-pass form subtracts two nearly-equal large numbers, which is catastrophic for large-offset data. **Every fixture in the suite had small, well-conditioned values where the two forms agree to 1e-15, so the suite could not tell them apart.** Measured on a base-1e8 fixture: the centred form gives `0.90286102487357334` and the one-pass form gives `0.77032888651964315` -- a difference of 1.3e-1 -- and at a larger offset the one-pass form returns `-inf` and then `nan`. The suite now carries that fixture (check 5.6) and asserts BOTH that the library agrees with an independently recomputed two-pass reference AND that the one-pass foil genuinely differs, so the check discriminates rather than passing vacuously. **A SURVIVOR IS A HOLE IN THE SUITE**, and this is the fixture that closed it.
+
+  ---------------------------------------------------------------------------
+  **ONE TEST BUG IN THIS SESSION'S OWN NEW SUITE, CAUGHT BY THE FIXTURE.**
+  ---------------------------------------------------------------------------
+  Check 5.5 first used `a == b` as the fixture for "the copula correlation differs from the raw Pearson correlation". **A sample correlates perfectly with ITSELF**, so both statistics were exactly 1 and the fixture could not discriminate between them at all -- a check that cannot fail. The fixture was replaced with the tied one, where the two differ by 0.054. **THE IMPLEMENTATION WAS RIGHT; THE FIXTURE WAS WRONG.**
+
+  ---------------------------------------------------------------------------
+  **THE CITATIONS ARE ALL PRE-arXiv, SO NO WRONG-ID RISK WAS TAKEN.**
+  ---------------------------------------------------------------------------
+  Spearman (1904), American Journal of Psychology 15(1), 72-101; Kendall (1938), Biometrika 30(1-2), 81-93; Nelsen (2006), "An Introduction to Copulas", 2nd ed., Springer. Each verified 2026-11-10 by a web search on the EXACT title (the JSTOR record for Spearman; the DOI `10.1093/biomet/30.1-2.81` and the Google Scholar record for Kendall; the Springer record DOI `10.1007/0-387-28678-0` for Nelsen). **NO arXiv ID IS ASSERTED** -- this repo's expansion queue has produced fourteen wrong arXiv identifiers, every one a plausible-looking neighbour of the right paper, so an unverified bare number is exactly the thing to avoid.
+
+  ---------------------------------------------------------------------------
+  **THE PROPERTY THAT MAKES THE COPULA HALF WORTH BUILDING, AND ITS NON-VACUOUSNESS.**
+  ---------------------------------------------------------------------------
+  **A COPULA STATISTIC IS INVARIANT UNDER ANY STRICTLY INCREASING TRANSFORMATION OF EITHER MARGINAL.** That is checkable to machine precision, and it is exactly what separates a copula statistic from a linear one: Pearson's r of the RAW values is NOT invariant (measured: 0.830303030303 against 0.619731188964 for `exp`-transformed data), while Pearson's r of the NORMAL SCORES IS. The suite asserts the invariance AND asserts that the raw-Pearson foil FAILS it, so the property is not a tautology.
+
+  **SHIPPED: `test(utils): float64 oracle for the rank correlation and Gaussian copula utilities` (619eca3), `test(utils): mutation harness for the rank correlation oracle` (3a28192), `docs: the plan for the rank correlation and Gaussian copula utilities` (c8da4e2), `test(utils): RED test for the rank correlation and Gaussian copula utilities` (afb5d8d), `feat(utils): the rank correlation and Gaussian copula utilities` (d96024f), `build: wire the rank correlation suite into the test target` (381d8ff), `test(utils): mutation harness for the rank correlation utilities` (e86ca4b).** Plan: `docs/plans/2026-11-10-rank-correlation-copula.md`.
 
 - **Off-policy evaluation SHIPPED: the importance-weighting, direct-method and doubly-robust estimators, plus the effective sample size** (2026-10-30). `include/nn/utils/off_policy_eval.{h,cpp}`, 64/64 in `test_off_policy_eval`, oracle 38/38, oracle-mutation 8/8, 12 mutations caught / 0 survived / 0 broken / 0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures. **The `## Ideas` LIST WAS DRAINED an EIGHTEENTH TIME** (the docs-gap grep returned its 23 familiar hits for the EIGHTH consecutive run, all accounted for in shipped headers, and **the constructibility sweep the 2026-10-28 entry added returned ZERO findings** -- the eight abstract classes it found are still fixed), so the session fell back to the queue's own documented method, a verified-absent concept sweep, and popped the LAST bullet: off-policy evaluation.
 
