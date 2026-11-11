@@ -97,6 +97,7 @@
 #include "utils/sliced_wasserstein.h"
 #include "utils/off_policy_eval.h"
 #include "utils/rank_correlation.h"
+#include "utils/isotonic_regression.h"
 #include "utils/logit_processing.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
