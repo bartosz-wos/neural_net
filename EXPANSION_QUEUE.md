@@ -1245,14 +1245,20 @@ After completing an item, move it to the "Done" section.
        Divergence (Kullback-Leibler)"). The repo's VAE computes its KL
        inline.
      - **AN ORDINAL-REGRESSION LAYER.** `grep -rinE 'ordinal.regress|cumulative.link|probit|ordered.logit' include/`
-       -> **1 hit**, a comment (`utils/gaussian_process.h:141`, "Bernoulli-probit
-       GPs"). A cumulative-link model over K ordered classes.
+       -> **2 hits**, BOTH comments (`utils/gaussian_process.h:141`,
+       "Bernoulli-probit GPs", and `utils/rank_correlation.cpp:8`, which
+       mentions the probit function in a note about not hand-rolling it). A
+       cumulative-link model over K ordered classes.
+       <!-- 2026-11-11: re-measured: 2 hits (was 1), both comments. Still
+           unbuilt. Do not re-pop without re-measuring first. -->
      - **EDIT DISTANCE / DYNAMIC TIME WARPING.** `grep -rinE 'levenshtein|edit.distance|dynamic.time.warp' include/`
        -> **0 hits**.
      - **ISOTONIC REGRESSION.** `grep -rinE 'isotonic|monotone.calib' include/`
        -> **0 hits**. The repo has temperature scaling and a full
        calibration-diagnostics suite but NO monotone calibration map, which
        composes with the shipped conformal prediction.
+       <!-- 2026-11-11: SHIPPED as `utils/isotonic_regression.{h,cpp}` (see
+           ## Done). Do not re-pop. -->
      - **RANK CORRELATION / COPULA UTILITIES.** `grep -rinE 'copula|rank.?correl|spearman|kendall' include/`
        -> **0 content hits**.
        <!-- 2026-11-10: SHIPPED as `utils/rank_correlation.{h,cpp}` (see
@@ -1284,6 +1290,43 @@ After completing an item, move it to the "Done" section.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
 ## Done
+
+- **Isotonic regression and the monotone calibration map SHIPPED: the Pool-Adjacent-Violators fit, the weighted-L2 primitive it is built on, and the held-out calibration report** (2026-11-11). `include/nn/utils/isotonic_regression.{h,cpp}`, 61/61 in `test_isotonic` + 400 randomised differential cases against the EXACT optimum in `test_isotonic_differential`, oracle 63/63, oracle-mutation 9/9, C++ mutation **12 caught / 0 survived / 0 broken / 0 crashed / 0 noop**, ASan+UBSan CLEAN, zero new full-suite failures. **THE `## Ideas` LIST WAS DRAINED a TWENTIETH TIME** (the docs-gap grep returned **27** hits excluding the new file -- up from the 23 the 2026-11-10 entry recorded, because more shipped headers now document their own scope -- and **every one is in a shipped header**, so there was still nothing new to pick from it), so the session fell back to the queue's own documented method -- a verified-absent concept sweep -- and popped the LAST bullet: isotonic regression.
+
+  **THE GAP WAS MEASURED, AND IT WAS A REAL ONE.** The repo has the PARAMETRIC half of this problem (`utils/temperature_scaling.h` fits ONE scalar `T`) and the MEASURING half (`utils/metrics.h`'s ECE / Brier / reliability diagrams), but no monotone calibration MAP. The two are complementary rather than alternatives: conformal prediction guarantees marginal COVERAGE of a prediction SET and says nothing about whether a member probability is 0.9 or 0.1; isotonic calibration guarantees MONOTONICITY of a probability map and says nothing about coverage. The shipped map never inverts the score ranking, which is what makes the composition valid -- and the suite pins that property explicitly.
+
+  **THE FOUR SEMANTICS THAT ARE EASY TO GET WRONG, AND WHERE EACH ONE WAS PINNED.**
+  1. Ties in `x` collapse to a **weighted mean** of `y` with the weights **summed** (`x=[1,1], y=[0,1], w=[3,1]` -> 0.25, not 0.5 and not 1.0).
+  2. PAVA pools **ADJACENT** violators, and the pooled block's value is the **weighted mean of the points it contains** -- never the mean of the two block MEANS, which is wrong whenever the blocks differ in weight or size.
+  3. The fit is a STEP function; the **PREDICTION is a LINEAR INTERPOLATION** through the retained knots. The distinction is observable and the suite pins it at three queries where the two answers differ by 1/3, 1/24 and 1/8.
+  4. The retained knots are the **TRIMMED** step values: an interior point equal to BOTH neighbours' is dropped. The trimming does not change the interpolated function, but it DOES change the knot list, which is part of the public output.
+
+  ---------------------------------------------------------------------------
+  **THE DIFFERENTIAL TEST WAS REWRITTEN, AND THE REASON IS THE POINT.**
+
+  The prior session had left `tests/test_isotonic_differential.cpp` and `tests/isotonic_dump_fixture.py` on disk, uncommitted. The differential test could not have run as written: it declared its own `DiffCase` struct at global scope while the generated header put a *different* `DiffCase` inside `namespace nn_isotonic_diff`, and it `#include`d a header that the build never generated -- so it referenced `nn_isotonic_diff_cases()`, a symbol that does not exist in either file. It also required a **build-time Python + numpy dependency**, which this repo has never had: `grep -n 'python' Makefile` -> **0 hits**, and every other oracle in `tests/` is a standalone script that a human runs, never a build step.
+
+  **SO THE DIFFERENTIAL TEST WAS REWRITTEN TO BE SELF-CONTAINED, AND THE REWRITE MADE IT STRONGER.** Instead of dumping the oracle's expectations into a generated header, the new test computes the **EXACT optimum by exhaustive enumeration of the block partitions** -- which is the DEFINITION of the weighted-L2 isotonic regression, so it is exact by construction rather than by agreement with anything. 400 randomised tie-heavy weighted cases, seed-pinned, both directions, compared on the fitted VALUE at every distinct `x`, on the knot COUNT, and on the knot VALUES. **worst value difference 0, worst knot difference 0, 0 ambiguous cases.**
+
+  **AND THE REFERENCE NEVER COLLAPSES THE TIES ITSELF, WHICH IS WHAT MAKES IT INDEPENDENT.** The shipped implementation collapses tied `x` to a weighted mean before running PAVA. A reference that did the same would collapse the same wrong way and the tie-collapse defect would be invisible. So the reference works on the ORIGINAL points: a block's value is the weighted mean of the points it contains, and the constraint that all points sharing an `x` get ONE value is imposed by partitioning the GROUPS rather than by pre-collapsing. **THE WEIGHTED-MEAN TIE-COLLAPSE RULE IS THEREFORE EMERGENT IN THE DIFFERENTIAL TEST** -- a collapse using the unweighted mean, or one that forgot to sum the weights, produces a different optimum and is caught. The obsolete `tests/isotonic_dump_fixture.py` was deleted: nothing referenced it, and keeping a generator whose output nothing consumes is exactly the kind of bloat the cleanup pass exists to remove.
+
+  ---------------------------------------------------------------------------
+  **THE MUTATION HARNESS IS THE MISSING PIECE, AND IT MEASURED THE SUITE'S OWN SENSITIVITY.**
+
+  The prior session's plan called for `tests/mutate_isotonic.sh` (its Task 6) and it did not exist. It now does, following `tests/mutate_rank_correlation.sh`'s rules exactly -- the backup is restored ATOMICALLY and is NEVER deleted by `restore()` (a self-cleaning restore works exactly once and leaves a mutant in the tree), the link set comes from `make print-lib-objs` and never from a regex over the Makefile, the mutated TU is compiled separately and swapped in for the library's copy, and the verdict classes are kept distinct: `CAUGHT` / `SURVIVED` / `MUT-BROKEN` (the build failed) / `MUT-CRASH` (the binary died -- a THIRD class, not a verdict about the suite) / `MUT-NOOP` / `MUT-ANCHOR`.
+
+  **12 caught, 0 survived, 0 broken, 0 crashed, 0 noop, 0 anchor.** Every one of the twelve was caught by the PINNED suite alone; the randomised differential one is the second chance, and it is what sees the tie-heavy weighted shapes the hand-written fixtures do not.
+
+  **THE HARNESS CAUGHT A REAL GAP IN THE PINNED SUITE, WHICH IS EXACTLY WHAT IT IS FOR.** The suite had **no zero-weight fixture at all** -- the only zero-weight test was the guard that rejects an ALL-zero weight vector. M7 ("zero-weight points are kept instead of dropped") therefore had nothing to fail against, and the rule that a zero-weight point must not shift the fitted RANGE was unpinned. The new **section 1b** pins it three ways: a zero-weight point at a distinct `x` does not become a knot, one at the EXTREME `x` does not shift the fitted range (the range starts at `x=2`, not `x=1`), and one at a SHARED `x` contributes nothing to that `x`'s value. **A ZERO-WEIGHT POINT THAT WAS KEPT WOULD PUT A GROUP WHOSE SUMMED WEIGHT IS ZERO INTO THE TIE COLLAPSE, AND THE COLLAPSED VALUE `sum(w*y)/sum(w)` WOULD THEN BE `0/0`** -- so the foil is computed at run time from the tensor (the compiler cannot constant-fold it away) and asserts the kept-value is non-finite while the drop-it answer is finite. **THE FIRST DRAFT OF THAT FOIL WAS WRONG AND WAS CAUGHT BY RUNNING IT**: it compared two values that were numerically identical, so it asserted a difference that did not exist. It was rewritten against the actual mechanism rather than against a hand-arithmetic slip.
+
+  **THE COMMITTED RED TEST DID NOT COMPILE, AND THE WORKING TREE FIXED IT.** `git show HEAD:tests/test_isotonic.cpp` has the `check()` call sites in the WRONG ARGUMENT ORDER -- `check("msg", cond, detail)` against a `check(bool ok, const std::string& msg)` declaration -- so the committed RED test was a compile error rather than a failing assertion. The working tree rewrote the call sites to `check(cond, msg)` and added a `check_detail(cond, msg, detail)` that reports the OBSERVED value on failure, so a failure says what was produced rather than only what was expected. Every changed expectation was then checked against the ORACLE rather than accepted: the two-knot and three-knot counts, the pooled block value, the row-order invariance fixture (the prior version permuted the `x` values but NOT the `y` values, so it compared two different datasets), and the pinned fixture's five knots -- all confirmed against `tests/isotonic_oracle.py` directly.
+
+  ---------------------------------------------------------------------------
+  **THE REPORT TAKES A SEPARATE EVALUATION SET, AND THE REASON IS MEASURED.** A map fitted by PAVA INTERPOLATES its fitting set, so the in-sample calibration error of a fitted map is essentially ZERO -- **measured at ~0 against a held-out 0.03333 on the same map** -- and a report computed on the data the map was fitted on measures nothing while reporting a number that looks wonderful. `evaluate_isotonic_calibration` therefore takes a CALIBRATION set and an EVALUATION set, and the suite pins the optimism gap explicitly. The report's ECE and Brier come from the repo's OWN `utils/metrics.h`, not from a re-implementation.
+
+  **THE CITATIONS ARE ALL PRE-arXiv, SO NO WRONG-ID RISK WAS TAKEN.** Best & Chakravarti, "Active set algorithms for isotonic regression; A unifying framework", *Mathematical Programming* **47** (1990), 425-439, DOI `10.1007/BF01580873`; Chakravarti, "Isotonic Median Regression: A Linear Programming Approach", *Mathematics of Operations Research* **14**(2) (May 1989), 303-308, DOI `10.1287/moor.14.2.303`; Zadrozny & Elkan, KDD 2001, 204-213, DOI `10.1145/775047.775151`, and ICML 2001, 609-616; Niculescu-Mizil & Caruana, ICML 2005, DOI `10.1145/1102351.1102430`. **NO arXiv ID IS ASSERTED** -- this repo's expansion queue has produced fifteen wrong arXiv identifiers, every one a plausible-looking neighbour of the right paper. The reference implementation used for the cross-check is **scikit-learn 1.9.0's `sklearn.isotonic.IsotonicRegression`**.
+
+  **SHIPPED: `feat(utils): the isotonic regression and monotone calibration utilities` (79991a4), `test(utils): the zero-weight fixtures for the isotonic regression utilities` (c078f8e), `test(utils): the randomised differential check against the exact isotonic optimum` (3c2db76), `test(utils): mutation harness for the isotonic regression utilities` (e28e578), `build: wire the isotonic regression suites into the test target` (a9d2625).** Plan: `docs/plans/2026-11-10-isotonic-regression.md`.
 
 - **Rank correlation and the Gaussian copula SHIPPED: Spearman's rho, Kendall's tau-b, the marginal-free copula correlation, and the four exact population correspondences** (2026-11-10). `include/nn/utils/rank_correlation.{h,cpp}`, 83/83 in `test_rank_correlation`, oracle 96/96, oracle-mutation 7/7, C++ mutation 10 caught / 0 survived / 0 broken / 0 crashed / 0 noop, ASan+UBSan CLEAN, zero new full-suite failures. **THE `## Ideas` LIST WAS DRAINED a NINETEENTH TIME** (the docs-gap grep returned its 23 familiar hits for the NINTH consecutive run, all accounted for in shipped headers), so the session fell back to the queue's own documented method -- a verified-absent concept sweep -- and popped the LAST bullet: rank correlation / copula utilities.
 
