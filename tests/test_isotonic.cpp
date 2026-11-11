@@ -53,8 +53,10 @@
 
 #include "nn/utils/isotonic_regression.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -84,6 +86,20 @@ static void check(bool ok, const std::string& msg) {
     } else {
         ++g_fail;
         std::cout << "  [FAIL] " << msg << std::endl;
+    }
+}
+
+// A check that also reports the DETAIL when it fails. The detail is the
+// observed value, so a failure says what was actually produced rather
+// than only what was expected.
+static void check_detail(bool ok, const std::string& msg,
+                         const std::string& detail) {
+    if (ok) {
+        ++g_pass;
+        std::cout << "  [PASS] " << msg << std::endl;
+    } else {
+        ++g_fail;
+        std::cout << "  [FAIL] " << msg << "  (" << detail << ")" << std::endl;
     }
 }
 
@@ -168,37 +184,101 @@ static void section_tie_collapse() {
     // The UNWEIGHTED mean would be 0.5. The SUM would be 1.0.
     IsotonicFit fit = fit_isotonic(column({1.0, 1.0}), column({0.0, 1.0}),
                                    column({3.0, 1.0}));
-    check("the tie collapse uses the WEIGHTED mean (0.25, not 0.5)",
-          fit.y_knots.size() == 1 && close_to(fit.y_knots[0], 0.25),
-          "got " + std::to_string(fit.y_knots.empty() ? -1.0 : fit.y_knots[0]));
+    check_detail(fit.y_knots.size() == 1 && close_to(fit.y_knots[0], 0.25), "the tie collapse uses the WEIGHTED mean (0.25, not 0.5)", "got " + std::to_string(fit.y_knots.empty() ? -1.0 : fit.y_knots[0]));
 
     IsotonicFit fit2 = fit_isotonic(column({1.0, 1.0}), column({0.0, 1.0}),
                                     column({1.0, 9.0}));
-    check("the tie collapse weights the OTHER way (0.9)",
-          fit2.y_knots.size() == 1 && close_to(fit2.y_knots[0], 0.9),
-          "got " + std::to_string(fit2.y_knots.empty() ? -1.0 : fit2.y_knots[0]));
+    check_detail(fit2.y_knots.size() == 1 && close_to(fit2.y_knots[0], 0.9), "the tie collapse weights the OTHER way (0.9)", "got " + std::to_string(fit2.y_knots.empty() ? -1.0 : fit2.y_knots[0]));
 
     // The foil: the UNWEIGHTED mean genuinely differs on this fixture.
-    check("the unweighted-mean foil DIFFERS from the weighted mean",
-          std::fabs(0.5 - 0.25) > 1e-12);
+    check(std::fabs(0.5 - 0.25) > 1e-12, "the unweighted-mean foil DIFFERS from the weighted mean");
 
     // The weights are SUMMED, so a tie's block carries the total weight --
     // which is what makes the pooled value a weighted mean.
     IsotonicFit fit3 = fit_isotonic(column({2.0}), column({0.5}), column({7.0}));
-    check("a single point keeps its own value whatever its weight",
-          fit3.y_knots.size() == 1 && close_to(fit3.y_knots[0], 0.5));
+    check(fit3.y_knots.size() == 1 && close_to(fit3.y_knots[0], 0.5), "a single point keeps its own value whatever its weight");
 
     // A weighted pool, where there IS a violation: x = [1, 2], y = [4, 0],
     // w = [1, 3]. The pooled value is (4*1 + 0*3) / 4 = 1.0.
+    // The unweighted mean of the two points would be 2.0.
+    // The "mean of the two block MEANS" shortcut would ALSO give 2.0.
+    //
+    // The fit has TWO knots, both valued 1.0: with two points neither is
+    // interior, so the trimming removes neither.
     IsotonicFit fit4 = fit_isotonic(column({1.0, 2.0}), column({4.0, 0.0}),
                                     column({1.0, 3.0}));
-    check("the pooled block value is the WEIGHTED mean (1.0, not 2.0)",
-          fit4.y_knots.size() == 1 && close_to(fit4.y_knots[0], 1.0),
-          "got " + std::to_string(fit4.y_knots.empty() ? -1.0 : fit4.y_knots[0]));
+    bool all_one = fit4.y_knots.size() == 2;
+    for (size_t i = 0; all_one && i < fit4.y_knots.size(); ++i)
+        all_one = close_to(fit4.y_knots[i], 1.0);
+    check_detail(all_one, "the pooled block value is the WEIGHTED mean (1.0, not 2.0)", "knots " + std::to_string(fit4.y_knots.size()));
 
     // The mean-of-the-two-MEANS shortcut would give 2.0 here.
-    check("the mean-of-the-means foil DIFFERS from the weighted mean",
-          std::fabs(2.0 - 1.0) > 1e-12);
+    check(std::fabs(2.0 - 1.0) > 1e-12, "the mean-of-the-means foil DIFFERS from the weighted mean");
+}
+
+// =============================================================================
+// SECTION 1b -- the zero-weight rule
+// =============================================================================
+//
+// A point with weight ZERO is DROPPED. It must not contribute to the tie
+// collapse, must not shift the fitted range, and must not appear as a knot.
+//
+// The second of those is the one that a suite which only ever drops a
+// zero-weight point in the MIDDLE would miss: a zero-weight point at the
+// EXTREME x must not extend the fitted range either.
+//
+// The expected values are the ORACLE's (tests/isotonic_oracle.py).
+
+static void section_zero_weight() {
+    std::cout << "\n=== 1b. THE ZERO-WEIGHT RULE ===" << std::endl;
+
+    // A zero-weight point at a DISTINCT x: it is dropped, so the fit has
+    // TWO knots at x = 1 and x = 3 and NOT one at x = 2.
+    const Tensor zw = column({1.0, 0.0, 1.0});
+    IsotonicFit fit = fit_isotonic(column({1.0, 2.0, 3.0}), column({0.0, 1.0, 1.0}), zw);
+    check_detail(fit.x_knots.size() == 2 &&
+                     close_to(fit.x_knots[0], 1.0) && close_to(fit.x_knots[1], 3.0),
+                 "a zero-weight point does not become a knot",
+                 "knots " + std::to_string(fit.x_knots.size()));
+    check_detail(fit.x_knots.size() == 2 && close_to(fit.y_knots[0], 0.0) &&
+                     close_to(fit.y_knots[1], 1.0),
+                 "the zero-weight point does not shift the fitted VALUES",
+                 "knots " + std::to_string(fit.y_knots.size()));
+
+    // A zero-weight point at the EXTREME x: the fitted range starts at
+    // x = 2, NOT at x = 1. This is the fixture that pins "must not shift
+    // the fitted range".
+    IsotonicFit edge = fit_isotonic(column({1.0, 2.0}), column({0.0, 1.0}),
+                                    column({0.0, 1.0}));
+    check_detail(edge.x_knots.size() == 1 && close_to(edge.x_knots[0], 2.0),
+                 "a zero-weight point does not shift the fitted RANGE",
+                 "knots " + std::to_string(edge.x_knots.size()));
+    check_detail(edge.x_knots.size() == 1 && close_to(edge.y_knots[0], 1.0),
+                 "the fitted VALUE is the surviving point's own value",
+                 "knots " + std::to_string(edge.y_knots.size()));
+
+    // THE FOIL: KEEPING the zero-weight point would put a group whose
+    // summed weight is ZERO into the tie collapse, and the collapsed
+    // value sum(w*y)/sum(w) would then be 0/0 -- a NaN. So the two
+    // behaviours differ, and the fixture above DISCRIMINATES them.
+    //
+    // The divisor is read from the TENSOR at run time, so the compiler
+    // cannot constant-fold the division and hide the check.
+    const double kept_group_w = zw(1, 0);
+    const double kept_group_wy = zw(1, 0) * 1.0;
+    const double kept_value = kept_group_wy / kept_group_w;
+    check(!std::isfinite(kept_value),
+          "the keep-the-zero-weight foil DIFFERS from the drop-it answer");
+    check(std::isfinite(fit.y_knots.empty() ? 0.0 : fit.y_knots[0]),
+          "the drop-it answer is FINITE, so the foil is distinguishable");
+
+    // A zero-weight point at a SHARED x: it contributes NOTHING to that
+    // x's value, and it does not create a second knot there.
+    IsotonicFit shared = fit_isotonic(column({1.0, 1.0}), column({0.0, 1.0}),
+                                      column({1.0, 0.0}));
+    check_detail(shared.x_knots.size() == 1 && close_to(shared.y_knots[0], 0.0),
+                 "a zero-weight point contributes nothing to its shared x",
+                 "knots " + std::to_string(shared.x_knots.size()));
 }
 
 // =============================================================================
@@ -211,56 +291,62 @@ static void section_pava() {
     // y = [1, 3, 2] increasing -> 3 > 2 violates -> pool {3, 2} -> 2.5.
     IsotonicFit fit = fit_isotonic(column({1.0, 2.0, 3.0}),
                                    column({1.0, 3.0, 2.0}));
-    check("PAVA pools the adjacent violator (1,3,2 -> 1,2.5,2.5)",
-          fit.y_knots.size() == 3 && close_to(fit.y_knots[0], 1.0) &&
-              close_to(fit.y_knots[1], 2.5) && close_to(fit.y_knots[2], 2.5),
-          "knots " + std::to_string(fit.y_knots.size()));
+    check_detail(fit.y_knots.size() == 3 && close_to(fit.y_knots[0], 1.0) &&
+              close_to(fit.y_knots[1], 2.5) && close_to(fit.y_knots[2], 2.5), "PAVA pools the adjacent violator (1,3,2 -> 1,2.5,2.5)", "knots " + std::to_string(fit.y_knots.size()));
 
     // Decreasing: y = [3, 1, 2] -> 1 < 2 violates -> pool {1, 2} -> 1.5.
     IsotonicFit dec = fit_isotonic(column({1.0, 2.0, 3.0}),
                                    column({3.0, 1.0, 2.0}),
                                    Tensor(), IsotonicDirection::Decreasing);
-    check("PAVA decreasing pools the adjacent violator",
-          dec.y_knots.size() == 3 && close_to(dec.y_knots[0], 3.0) &&
-              close_to(dec.y_knots[1], 1.5) && close_to(dec.y_knots[2], 1.5),
-          "knots " + std::to_string(dec.y_knots.size()));
+    check_detail(dec.y_knots.size() == 3 && close_to(dec.y_knots[0], 3.0) &&
+              close_to(dec.y_knots[1], 1.5) && close_to(dec.y_knots[2], 1.5), "PAVA decreasing pools the adjacent violator", "knots " + std::to_string(dec.y_knots.size()));
 
     // A pool of UNEQUAL SIZE: y = [6, 0, 0] -> 6 > 0 pools {6, 0} -> 3; then
-    // 3 > 0 pools {3, 0} -> 2.
+    // 3 > 0 pools {3, 0} -> 2. The fitted value is 2.
+    // The "mean of the two block MEANS" shortcut would give (3+0)/2 = 1.5.
+    //
+    // The fit has TWO knots (x = 1 and x = 3), both valued 2.0: the middle
+    // point is interior and equal to both neighbours', so it is trimmed.
     IsotonicFit fit2 = fit_isotonic(column({1.0, 2.0, 3.0}),
                                     column({6.0, 0.0, 0.0}));
-    check("the pool is over the points, not the means",
-          fit2.y_knots.size() == 1 && close_to(fit2.y_knots[0], 2.0),
-          "got " + std::to_string(fit2.y_knots.empty() ? -1.0 : fit2.y_knots[0]));
+    bool all_two = fit2.y_knots.size() == 2;
+    for (size_t i = 0; all_two && i < fit2.y_knots.size(); ++i)
+        all_two = close_to(fit2.y_knots[i], 2.0);
+    check_detail(all_two, "the pool is over the points, not the means", "knots " + std::to_string(fit2.y_knots.size()));
 
     // The mean-of-the-two-MEANS shortcut would give 1.5 here.
-    check("the mean-of-the-means foil DIFFERS (1.5 vs 2.0)",
-          std::fabs(1.5 - 2.0) > 1e-12);
+    check(std::fabs(1.5 - 2.0) > 1e-12, "the mean-of-the-means foil DIFFERS (1.5 vs 2.0)");
 
     // Non-adjacent pooling is wrong: y = [3, 0, 3] -> pool {3, 0} -> 1.5.
     IsotonicFit fit3 = fit_isotonic(column({1.0, 2.0, 3.0}),
                                     column({3.0, 0.0, 3.0}));
-    check("PAVA pools ADJACENT violators only",
-          fit3.y_knots.size() == 3 && close_to(fit3.y_knots[0], 1.5) &&
-              close_to(fit3.y_knots[1], 1.5) && close_to(fit3.y_knots[2], 3.0),
-          "knots " + std::to_string(fit3.y_knots.size()));
+    check_detail(fit3.y_knots.size() == 3 && close_to(fit3.y_knots[0], 1.5) &&
+              close_to(fit3.y_knots[1], 1.5) && close_to(fit3.y_knots[2], 3.0), "PAVA pools ADJACENT violators only", "knots " + std::to_string(fit3.y_knots.size()));
 
     // The five-point fixture: v = [1, 3, 2, 4, 0]; pool {3,2} -> 2.5;
     // pool {4,0} -> 2; 2.5 > 2 so pool {2.5, 2} -> 2.25.
+    // The fitted values are [1, 2.25, 2.25, 2.25, 2.25] at x = [1..5], and
+    // the trimming keeps x = 1 (value 1) and the FIRST and LAST of the flat
+    // run at 2.25 -- so THREE knots, at x = 1, 2 and 5.
     IsotonicFit fit4 = fit_isotonic(column({1.0, 2.0, 3.0, 4.0, 5.0}),
                                     column({1.0, 3.0, 2.0, 4.0, 0.0}));
-    check("PAVA on a five-point fixture",
-          fit4.y_knots.size() == 2 && close_to(fit4.y_knots[0], 1.0) &&
-              close_to(fit4.y_knots[1], 2.25),
-          "knots " + std::to_string(fit4.y_knots.size()));
+    bool five_ok = fit4.y_knots.size() == 3 &&
+                   close_to(fit4.y_knots[0], 1.0) &&
+                   close_to(fit4.y_knots[1], 2.25) &&
+                   close_to(fit4.y_knots[2], 2.25) &&
+                   close_to(fit4.x_knots[0], 1.0) &&
+                   close_to(fit4.x_knots[1], 2.0) &&
+                   close_to(fit4.x_knots[2], 5.0);
+    check_detail(five_ok, "PAVA on a five-point fixture", "knots " + std::to_string(fit4.y_knots.size()));
 
-    // The fit is INVARIANT to the row order.
+    // The fit is INVARIANT to the row order: the SAME data, permuted.
     IsotonicFit shuffled = fit_isotonic(column({5.0, 1.0, 4.0, 2.0, 3.0}),
-                                        column({0.0, 1.0, 0.0, 1.0, 0.0}));
-    check("the fit is INVARIANT to the row order",
-          shuffled.y_knots.size() == fit4.y_knots.size() &&
-              close_to(shuffled.y_knots[0], 1.0, 1e-9) &&
-              close_to(shuffled.y_knots[1], 2.25, 1e-9));
+                                        column({0.0, 1.0, 4.0, 3.0, 2.0}));
+    bool inv_ok = shuffled.y_knots.size() == fit4.y_knots.size();
+    for (size_t i = 0; inv_ok && i < fit4.y_knots.size(); ++i)
+        inv_ok = close_to(shuffled.x_knots[i], fit4.x_knots[i], 1e-12) &&
+                 close_to(shuffled.y_knots[i], fit4.y_knots[i], 1e-12);
+    check_detail(inv_ok, "the fit is INVARIANT to the row order", "knots " + std::to_string(shuffled.y_knots.size()));
 }
 
 // =============================================================================
@@ -273,49 +359,42 @@ static void section_pinned_fixture() {
 
     IsotonicFit fit = fit_isotonic(column(kX), column(kY), column(kW));
 
-    check("the retained knot count is 5 (one was trimmed)",
-          fit.x_knots.size() == 5, "got " + std::to_string(fit.x_knots.size()));
+    check_detail(fit.x_knots.size() == 5, "the retained knot count is 5 (one was trimmed)", "got " + std::to_string(fit.x_knots.size()));
     bool xs_ok = fit.x_knots.size() == kKnotX.size();
     for (size_t i = 0; xs_ok && i < kKnotX.size(); ++i)
         xs_ok = close_to(fit.x_knots[i], kKnotX[i]);
-    check("the retained knot abscissae match the oracle", xs_ok);
+    check(xs_ok, "the retained knot abscissae match the oracle");
     bool ys_ok = fit.y_knots.size() == kKnotY.size();
     for (size_t i = 0; ys_ok && i < kKnotY.size(); ++i)
         ys_ok = close_to(fit.y_knots[i], kKnotY[i]);
-    check("the retained knot values match the oracle", ys_ok);
+    check(ys_ok, "the retained knot values match the oracle");
 
     // THE PREDICTION IS A LINEAR INTERPOLATION, NOT THE STEP FUNCTION.
     Tensor preds = isotonic_predict(fit, column(kQueries));
     bool all_ok = preds.rows == kExpected.size();
     for (size_t i = 0; all_ok && i < kExpected.size(); ++i)
         all_ok = close_to(preds(i, 0), kExpected[i]);
-    check("the predictions match the oracle's LINEAR interpolation", all_ok);
+    check(all_ok, "the predictions match the oracle's LINEAR interpolation");
 
     // THE DISCRIMINATING QUERIES. A step-function implementation would
     // return 0.0 at 0.15, 2/3 at 0.30 and 0.75 at 0.75.
-    check("query 0.15 gives the LINEAR value (1/3), not the step (0.0)",
-          close_to(preds(1, 0), 0.3333333333333332) &&
-              std::fabs(0.3333333333333332 - 0.0) > 1e-12);
-    check("query 0.30 gives the LINEAR value (17/24), not the step (2/3)",
-          close_to(preds(4, 0), 0.7083333333333333) &&
-              std::fabs(0.7083333333333333 - 0.6666666666666666) > 1e-12);
-    check("query 0.75 gives the LINEAR value (7/8), not the step (3/4)",
-          close_to(preds(8, 0), 0.875) && std::fabs(0.875 - 0.75) > 1e-12);
+    check(close_to(preds(1, 0), 0.3333333333333332) &&
+              std::fabs(0.3333333333333332 - 0.0) > 1e-12, "query 0.15 gives the LINEAR value (1/3), not the step (0.0)");
+    check(close_to(preds(4, 0), 0.7083333333333333) &&
+              std::fabs(0.7083333333333333 - 0.6666666666666666) > 1e-12, "query 0.30 gives the LINEAR value (17/24), not the step (2/3)");
+    check(close_to(preds(8, 0), 0.875) && std::fabs(0.875 - 0.75) > 1e-12, "query 0.75 gives the LINEAR value (7/8), not the step (3/4)");
 
     // The map is CONTINUOUS at a knot -- a step function is not.
     const double eps = 1e-9;
     Tensor left = isotonic_predict(fit, column({0.4 - eps}));
     Tensor right = isotonic_predict(fit, column({0.4 + eps}));
-    check("the interpolated map is CONTINUOUS at a knot",
-          std::fabs(left(0, 0) - right(0, 0)) < 1e-8);
+    check(std::fabs(left(0, 0) - right(0, 0)) < 1e-8, "the interpolated map is CONTINUOUS at a knot");
 
     // The trimming does NOT change the interpolated function: the untrimmed
     // fit has SIX knots and the trimmed has FIVE, but the curve is the same.
     IsotonicFit untrimmed = fit_isotonic(column({1.0, 2.0, 3.0, 4.0, 5.0}),
                                           column({0.0, 1.0, 0.0, 0.0, 1.0}));
-    check("the untrimmed fixture has 5 knots before trimming",
-          untrimmed.x_knots.size() == 4,
-          "got " + std::to_string(untrimmed.x_knots.size()));
+    check_detail(untrimmed.x_knots.size() == 4, "the untrimmed fixture has 5 knots before trimming", "got " + std::to_string(untrimmed.x_knots.size()));
 }
 
 // =============================================================================
@@ -329,33 +408,29 @@ static void section_out_of_bounds() {
 
     Tensor clipped = isotonic_predict(fit, column({-100.0, 100.0}),
                                       IsotonicOutOfBounds::Clip);
-    check("clip extends the END VALUES",
-          close_to(clipped(0, 0), 0.0) && close_to(clipped(1, 0), 1.0));
+    check(close_to(clipped(0, 0), 0.0) && close_to(clipped(1, 0), 1.0), "clip extends the END VALUES");
 
     // Clip does NOT return the MEAN of the end values.
-    check("clip returns the END VALUE, not the mean of the ends",
-          std::fabs(clipped(0, 0) - 0.5) > 1e-12);
+    check(std::fabs(clipped(0, 0) - 0.5) > 1e-12, "clip returns the END VALUE, not the mean of the ends");
 
     Tensor nanned = isotonic_predict(fit, column({-100.0, 100.0}),
                                      IsotonicOutOfBounds::Nan);
-    check("nan returns NaN outside the range",
-          std::isnan(nanned(0, 0)) && std::isnan(nanned(1, 0)));
+    check(std::isnan(nanned(0, 0)) && std::isnan(nanned(1, 0)), "nan returns NaN outside the range");
 
     bool raised = throws_with(
         [&]() { isotonic_predict(fit, column({-100.0}), IsotonicOutOfBounds::Raise); },
         "outside");
-    check("raise throws outside the range", raised);
+    check(raised, "raise throws outside the range");
 
     // The single-knot case: one unique x, so the map is constant everywhere.
     IsotonicFit single = fit_isotonic(column({2.0, 2.0, 2.0}), column({0.0, 0.5, 1.0}));
-    check("a single unique x gives ONE knot", single.x_knots.size() == 1);
+    check(single.x_knots.size() == 1, "a single unique x gives ONE knot");
     check_close(single.y_knots.empty() ? -1.0 : single.y_knots[0], 0.5, 1e-12,
                 "the single knot's value is the weighted mean");
     Tensor const_out = isotonic_predict(single, column({0.0, 2.0, 4.0}),
                                         IsotonicOutOfBounds::Clip);
-    check("the single-knot map is constant everywhere",
-          close_to(const_out(0, 0), 0.5) && close_to(const_out(1, 0), 0.5) &&
-              close_to(const_out(2, 0), 0.5));
+    check(close_to(const_out(0, 0), 0.5) && close_to(const_out(1, 0), 0.5) &&
+              close_to(const_out(2, 0), 0.5), "the single-knot map is constant everywhere");
 }
 
 // =============================================================================
@@ -378,8 +453,7 @@ static void section_calibration_map() {
     IsotonicFit fit = fit_isotonic_calibration(s, y);
     Tensor calibrated = isotonic_calibrate(fit, s);
 
-    check("the calibration map produces one value per score",
-          calibrated.rows == s.rows);
+    check(calibrated.rows == s.rows, "the calibration map produces one value per score");
 
     // NON-DECREASING IN THE SCORE. The values come back in the INPUT row
     // order, so the monotonicity must be checked after sorting by score.
@@ -395,12 +469,12 @@ static void section_calibration_map() {
     bool monotone = true;
     for (size_t i = 1; i < by_score.size(); ++i)
         if (by_score[i] < by_score[i - 1] - 1e-15) monotone = false;
-    check("the calibrated map is NON-DECREASING in the score", monotone);
+    check(monotone, "the calibrated map is NON-DECREASING in the score");
 
     bool in_range = true;
     for (size_t i = 0; i < calibrated.rows; ++i)
         if (calibrated(i, 0) < -1e-15 || calibrated(i, 0) > 1.0 + 1e-15) in_range = false;
-    check("the calibrated probabilities lie in [0, 1]", in_range);
+    check(in_range, "the calibrated probabilities lie in [0, 1]");
 
     // The map NEVER INVERTS the score ranking -- the property that makes it
     // safe to compose with the shipped conformal prediction.
@@ -409,12 +483,11 @@ static void section_calibration_map() {
         for (size_t j = i + 1; j < scores.size(); ++j)
             if (scores[i] < scores[j] && calibrated(i, 0) > calibrated(j, 0) + 1e-15)
                 no_inversions = false;
-    check("the calibration map NEVER INVERTS the score ranking", no_inversions);
+    check(no_inversions, "the calibration map NEVER INVERTS the score ranking");
 
     // The map is a FUNCTION of the score: equal scores -> equal outputs.
     Tensor dup = isotonic_calibrate(fit, column({0.5, 0.5, 0.5}));
-    check("equal scores give equal calibrated outputs",
-          close_to(dup(0, 0), dup(1, 0)) && close_to(dup(1, 0), dup(2, 0)));
+    check(close_to(dup(0, 0), dup(1, 0)) && close_to(dup(1, 0), dup(2, 0)), "equal scores give equal calibrated outputs");
 }
 
 // =============================================================================
@@ -450,11 +523,8 @@ static void section_report() {
         column(cal_scores), column(cal_labels), column(ev_scores),
         column(ev_labels), 10);
 
-    check("the report's sample count is the EVALUATION set's size",
-          rep.n_samples == ev_scores.size(),
-          "got " + std::to_string(rep.n_samples));
-    check("the report's knot count is the retained knot count",
-          rep.n_knots == 9, "got " + std::to_string(rep.n_knots));
+    check_detail(rep.n_samples == ev_scores.size(), "the report's sample count is the EVALUATION set's size", "got " + std::to_string(rep.n_samples));
+    check_detail(rep.n_knots == 9, "the report's knot count is the retained knot count", "got " + std::to_string(rep.n_knots));
 
     check_close(rep.ece_before, 0.14800000000000002, 1e-12,
                 "the report's ECE before matches the oracle");
@@ -465,10 +535,8 @@ static void section_report() {
     check_close(rep.brier_after, 0.2166666666666667, 1e-12,
                 "the report's Brier after matches the oracle");
 
-    check("the isotonic calibration REDUCES the held-out ECE",
-          rep.ece_after < rep.ece_before);
-    check("the isotonic calibration REDUCES the held-out Brier",
-          rep.brier_after < rep.brier_before);
+    check(rep.ece_after < rep.ece_before, "the isotonic calibration REDUCES the held-out ECE");
+    check(rep.brier_after < rep.brier_before, "the isotonic calibration REDUCES the held-out Brier");
 
     // THE OPTIMISM GAP, MEASURED. The IN-SAMPLE ECE of a fitted map is
     // essentially ZERO -- PAVA interpolates the fitting set -- so a report
@@ -477,12 +545,9 @@ static void section_report() {
     IsotonicCalibrationReport in_sample = evaluate_isotonic_calibration(
         column(cal_scores), column(cal_labels), column(cal_scores),
         column(cal_labels), 10);
-    check("the IN-SAMPLE ECE of a fitted map is ~0 (the optimism gap)",
-          in_sample.ece_after < 0.02,
-          "in-sample " + std::to_string(in_sample.ece_after) + " vs held-out " +
+    check_detail(in_sample.ece_after < 0.02, "the IN-SAMPLE ECE of a fitted map is ~0 (the optimism gap)", "in-sample " + std::to_string(in_sample.ece_after) + " vs held-out " +
               std::to_string(rep.ece_after));
-    check("the in-sample ECE is MUCH smaller than the held-out one",
-          in_sample.ece_after < 0.25 * rep.ece_after);
+    check(in_sample.ece_after < 0.25 * rep.ece_after, "the in-sample ECE is MUCH smaller than the held-out one");
 }
 
 // =============================================================================
@@ -493,51 +558,42 @@ static void section_guards() {
     std::cout << "\n=== 7. THE GUARDS ===" << std::endl;
 
     std::string what;
-    check("the empty-input guard fires",
-          throws_with([&]() { fit_isotonic(column({}), column({})); },
-                      "at least one row", &what));
+    check(throws_with([&]() { fit_isotonic(column({}), column({})); },
+                      "at least one row", &what), "the empty-input guard fires");
 
-    check("the length-mismatch guard fires",
-          throws_with([&]() { fit_isotonic(column({1.0, 2.0}), column({1.0})); },
-                      "same number of rows", &what));
+    check(throws_with([&]() { fit_isotonic(column({1.0, 2.0}), column({1.0})); },
+                      "same number of rows", &what), "the length-mismatch guard fires");
 
-    check("the non-(N,1) x guard fires",
-          throws_with([&]() { fit_isotonic(Tensor(2, 2), column({1.0, 2.0})); },
-                      "(N,1) column", &what));
+    check(throws_with([&]() { fit_isotonic(Tensor(2, 2), column({1.0, 2.0})); },
+                      "(N,1) column", &what), "the non-(N,1) x guard fires");
 
-    check("the non-finite x guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic(column({std::numeric_limits<double>::quiet_NaN()}),
                            column({1.0}));
-          }, "finite", &what));
+          }, "finite", &what), "the non-finite x guard fires");
 
-    check("the non-finite y guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic(column({1.0}),
                            column({std::numeric_limits<double>::infinity()}));
-          }, "finite", &what));
+          }, "finite", &what), "the non-finite y guard fires");
 
-    check("the weights length-mismatch guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic(column({1.0, 2.0}), column({1.0, 2.0}), column({1.0}));
-          }, "same number of rows", &what));
+          }, "same number of rows", &what), "the weights length-mismatch guard fires");
 
-    check("the negative-weight guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic(column({1.0, 2.0}), column({1.0, 2.0}),
                            column({1.0, -1.0}));
-          }, "non-negative", &what));
+          }, "non-negative", &what), "the negative-weight guard fires");
 
-    check("the all-zero-weight guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic(column({1.0, 2.0}), column({1.0, 2.0}),
                            column({0.0, 0.0}));
-          }, "positive weight", &what));
+          }, "positive weight", &what), "the all-zero-weight guard fires");
 
-    check("the non-binary-label guard fires",
-          throws_with([&]() {
+    check(throws_with([&]() {
               fit_isotonic_calibration(column({1.0, 2.0}), column({0.0, 2.0}));
-          }, "binary", &what));
+          }, "binary", &what), "the non-binary-label guard fires");
 
     // The guard MESSAGES must be DISTINCT from one another: a check that
     // two guards share a message discriminates nothing. The two "same
@@ -549,9 +605,7 @@ static void section_guards() {
     throws_with([&]() {
         fit_isotonic(column({1.0, 2.0}), column({1.0, 2.0}), column({1.0}));
     }, "same number of rows", &w_y);
-    check("the x/y and weights length guards have DISTINCT messages",
-          !w_x.empty() && !w_y.empty() && w_x != w_y,
-          "x/y: '" + w_x + "'  weights: '" + w_y + "'");
+    check_detail(!w_x.empty() && !w_y.empty() && w_x != w_y, "the x/y and weights length guards have DISTINCT messages", "x/y: '" + w_x + "'  weights: '" + w_y + "'");
 }
 
 // =============================================================================
@@ -562,6 +616,7 @@ int main() {
     std::cout << "====================================================" << std::endl;
 
     section_tie_collapse();
+    section_zero_weight();
     section_pava();
     section_pinned_fixture();
     section_out_of_bounds();
