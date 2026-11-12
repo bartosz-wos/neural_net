@@ -153,8 +153,14 @@ static int bfs_levenshtein(const std::string& a, const std::string& b,
                 t.erase(t.begin() + static_cast<long>(i));
                 if (t == b) return depth;
                 if (seen.insert(t).second) next.push_back(t);
-                // substitution -- MUTATED: skipped
-                (void)0;
+                // substitution
+                for (char c : alphabet) {
+                    if (c == s[i]) continue;
+                    t = s;
+                    t[i] = c;
+                    if (t == b) return depth;
+                    if (seen.insert(t).second) next.push_back(t);
+                }
             }
         }
         frontier.swap(next);

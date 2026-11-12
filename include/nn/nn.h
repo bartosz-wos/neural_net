@@ -98,6 +98,8 @@
 #include "utils/off_policy_eval.h"
 #include "utils/rank_correlation.h"
 #include "utils/isotonic_regression.h"
+#include "utils/edit_distance.h"
+#include "utils/dtw.h"
 #include "utils/logit_processing.h"
 #include "utils/model_ema.h"
 #include "utils/early_stopping.h"
