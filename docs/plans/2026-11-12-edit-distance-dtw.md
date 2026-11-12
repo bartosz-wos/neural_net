@@ -361,3 +361,75 @@ and the test results, and mark the bullet so it is not re-popped.
 - **Reference implementations used for the cross-checks, all installed locally under `/usr/bin/python3`: `rapidfuzz` 3.x, `jellyfish`, `jiwer` 4.0.0, `dtw-python` (`dtw` package).**
 
 **NO arXiv ID IS ASSERTED.** Every reference above is pre-arXiv or has no arXiv record, and this repo's expansion queue has produced many wrong arXiv identifiers — every one a plausible-looking neighbour of the right paper.
+
+---
+
+## Outcome (recorded 2026-11-12)
+
+**SHIPPED.** All eleven tasks are complete.
+
+| File | Status |
+| --- | --- |
+| `include/nn/utils/edit_distance.{h,cpp}` | new — 338-line header, 379-line implementation |
+| `include/nn/utils/dtw.{h,cpp}` | new — 208-line header, 245-line implementation |
+| `tests/edit_distance_oracle.py` | new — 882 lines, 28/28 checks |
+| `tests/edit_distance_mutate_oracle.py` | new — 386 lines, 13 caught / 1 documented survivor |
+| `tests/dtw_oracle.py` | new — 682 lines, 22/22 checks |
+| `tests/dtw_mutate_oracle.py` | new — 387 lines, 16 caught / 1 documented survivor |
+| `tests/test_edit_distance.cpp` | new — 286/286 checks |
+| `tests/test_edit_distance_differential.cpp` | new — 7/7 checks |
+| `tests/test_dtw.cpp` | new — 91/91 checks |
+| `tests/test_dtw_differential.cpp` | new — 5/5 checks |
+| `Makefile` | 4 build rules, 4 `tests:` prerequisites, 4 `run_tests` lines |
+| `include/nn/nn.h` | 2 umbrella includes |
+
+**THE PLAN'S TASK ORDER WAS FOLLOWED, WITH ONE DEVIATION WORTH RECORDING.** The plan
+called for the C++ implementation to come after the oracles — which it did — but the
+plan did NOT specify a separate randomised differential suite for either module. Two
+such suites were written anyway, because a pinned fixture set only sees the fixtures
+it was written for. The references they use share NO structure with the shipped code:
+
+- the edit-distance differential uses a **breadth-first search over the string state
+  space** (with and without transposition), a **Dijkstra over that same space** for
+  weighted costs, and an **exhaustive enumeration of every monotone alignment** for
+  OSA;
+- the DTW differential uses an **exhaustive enumeration of every monotone path**,
+  which is the definition of the warping problem rather than an algorithm for it.
+
+**THREE DEFECTS FOUND IN THIS WORK, ALL OF THEM IN THE WORK'S OWN CODE.**
+
+1. **The DTW first column must stay at `+inf`.** Initialising it with the local cost
+   lets the warping path start late — it can enter the grid at row 2 and skip the
+   first observation of `x` entirely. Measured on `x = [100, 0]` against `y = [0]`:
+   the finite first column gives **0.0**, the infinite one gives **100.0**, and
+   `dtw-python` gives **100.0**. This is a wrong ANSWER, not a precision difference,
+   and no tolerance-based test would have flagged it — only the reference comparison
+   did.
+2. **The C++ DTW differential reference charged the local cost of the cell it was
+   LEAVING rather than the one it was ARRIVING at**, so the final cell's cost was
+   dropped. The symptom was 312 mismatches over 120 cases — every case failing —
+   which is what a systematic off-by-one in the REFERENCE looks like.
+3. **A mutation harness that restores the wrong file leaves the mutation in the
+   tree.** The harness edited the reference in a scratch copy and restored only the
+   implementation, so a mutation ("the BFS skips substitutions") was committed into
+   the shipped test file. The symptom was 48/150 mismatches under `-march=native`
+   that did **not** reproduce under plain `-O2` — which looked like an
+   optimisation-dependent bug and was not. The general rule: **a survivor count that
+   changes with the compiler flags is a harness defect, not a finding**, and a
+   mutation harness must restore every file it touches.
+
+**ONE COVERAGE GAP FOUND BY THE MUTATION HARNESS, AND CLOSED.** The tie-break order
+is observable, and the suite did not pin it: a mutation that swapped the horizontal
+and vertical branches survived both the pinned and the differential suites. The
+cause was that every existing path fixture had a UNIQUE optimal path, so no fixture
+could tell one predecessor order from another. Nine tie-discriminating fixtures were
+generated from the oracle (integer observations, because continuous observations
+almost never tie), and the suite now **asserts that every one of them admits more
+than one optimal path** — otherwise the section could not fail. The
+horizontal-versus-vertical distinction needed its own fixture on top of the other
+eight.
+
+**THE AGGREGATE SUITE.** `make run_tests` ran every registered suite. The only
+failing suite is `test_neural_ode` (the ODERNN gradient check), and it was
+**re-measured identically on the pre-work commit `c9d87ca`** — it is the long-standing
+entry in `NOT_FIXED.md` and is not a regression from this work.
