@@ -161,6 +161,7 @@
 #include "layers/dense/embedding.h"
 #include "layers/dense/flatten.h"
 #include "layers/dense/ordinal_regression.h"
+#include "layers/dense/quantile_regression.h"
 
 // Layers — normalization
 #include "layers/normalization/batch_norm.h"
