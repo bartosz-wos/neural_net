@@ -1300,7 +1300,7 @@ run_tests: tests
 		echo "run_tests: FAILED (listed above). Every suite ran."; \
 		exit 1; \
 	else \
-		echo ""; echo "run_tests: all 225 suites PASSED"; \
+		echo ""; echo "run_tests: all suites PASSED"; \
 		exit 0; \
 	fi
 clean:

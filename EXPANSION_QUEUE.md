@@ -4,10 +4,29 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-11-16] THE BLOCK-LEVEL CACHED DECODE SHIPPED. 45/45, oracle
+#     62/62, oracle-mutation 23 caught / 0 survived / 0 broken / 0 noop /
+#     0 anchor, C++ mutation 21 caught / 0 survived / 0 broken / 0 crashed /
+#     0 noop / 0 anchor, ASan+UBSan CLEAN, 283 suite invocations with zero
+#     new failures (the only failing suite, `test_neural_ode`, was
+#     re-measured IDENTICALLY -- 47 passed / 1 failed, the same `ODERNN
+#     dense1.W grad vs FD (line 561)` -- and is the long-standing entry in
+#     `NOT_FIXED.md`). THE QUEUE'S RESIDUAL-STREAM CACHE WAS REFUTED BY
+#     MEASUREMENT: `LayerNorm` normalises over the FEATURE axis, so the
+#     block's tail is POSITION-WISE and the KV cache already covers the
+#     block's only cross-token coupling. A second cache would be a second
+#     source of truth for ZERO behavioural difference, so it is NOT
+#     shipped -- and its bullet is ANNOTATED, not deleted, so the next
+#     session does not re-pop it without re-measuring the LayerNorm's axis
+#     first. The KV-CACHE and RESIDUAL-STREAM bullets are closed.
 # [DONE 2026-11-16] THE INFERENCE-TIME KV CACHE SHIPPED. 108/108, oracle
 #     66/66, oracle-mutation 22 caught / 0 survived / 0 broken / 0 noop /
 #     0 anchor, C++ mutation 20 caught / 0 survived / 0 broken / 0 crashed /
-#     0 noop / 0 anchor, ASan+UBSan CLEAN, 285 suites with zero new failures
+#     0 noop / 0 anchor, ASan+UBSan CLEAN, 282 suite invocations with zero
+#     new failures (the "285" first recorded here was a LOG-GREP count: it
+#     included the 3 "=== Running" strings the suites print THEMSELVES and
+#     missed that `test_adversarial` is listed TWICE -- the count is the
+#     Makefile's invocation lines, verified)
 #     (the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY
 #     -- 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line
 #     561)` -- and is the long-standing entry in `NOT_FIXED.md`). The
@@ -1319,7 +1338,7 @@ After completing an item, move it to the "Done" section.
 
 ## Done
 
-- **THE BLOCK-LEVEL CACHED DECODE SHIPPED: `TransformerBlock::forward_cached` — the token-by-token decode of the repo's canonical transformer block, equal to the full-sequence forward TO THE LAST BIT — and the queue's RESIDUAL-STREAM CACHE was REFUTED BY MEASUREMENT rather than shipped** (2026-11-16). `include/nn/layers/attention/transformer.{h,cpp}` (the block's cached path and the absolute positional encoding), 45/45 in `test_block_cached_decode`, oracle 62/62, oracle-mutation **23 caught / 0 survived / 0 broken / 0 noop / 0 anchor**, C++ mutation **21 caught / 0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor**, ASan+UBSan CLEAN, **285 suites with zero new failures** (the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY — 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)` — and is the long-standing entry in `NOT_FIXED.md`). **THE `## Ideas` LIST WAS DRAINED a TWENTY-FIFTH TIME** — every bullet is marked `[DONE]` — so the session fell back to the queue's own documented method (a verified-absent concept sweep) and took the one item the last `## Done` entry named explicitly.
+- **THE BLOCK-LEVEL CACHED DECODE SHIPPED: `TransformerBlock::forward_cached` — the token-by-token decode of the repo's canonical transformer block, equal to the full-sequence forward TO THE LAST BIT — and the queue's RESIDUAL-STREAM CACHE was REFUTED BY MEASUREMENT rather than shipped** (2026-11-16). `include/nn/layers/attention/transformer.{h,cpp}` (the block's cached path and the absolute positional encoding), 45/45 in `test_block_cached_decode`, oracle 62/62, oracle-mutation **23 caught / 0 survived / 0 broken / 0 noop / 0 anchor**, C++ mutation **21 caught / 0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor**, ASan+UBSan CLEAN, **283 suite invocations (282 distinct suites -- `test_adversarial` is listed twice) with ZERO new failures** (the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY — 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)` — and is the long-standing entry in `NOT_FIXED.md`). **THE `## Ideas` LIST WAS DRAINED a TWENTY-FIFTH TIME** — every bullet is marked `[DONE]` — so the session fell back to the queue's own documented method (a verified-absent concept sweep) and took the one item the last `## Done` entry named explicitly.
 
   **THE GAP, MEASURED NOT ASSUMED.** `grep -rinE 'residual.?stream|hidden.?state.?cache|x.?cache' include/` -> 3 hits, ALL COMMENTS (`griffin.h:16`, `xlstm_block.h:35`, `ngpt.h:18`) -> ZERO implementation. The repo shipped an attention-level KV cache and `MultiHeadAttention::forward_cached`, but `TransformerBlock` — the block every decoder stack is built from — had **NO cached forward at all**. A block-level decode was NOT shipped.
 
