@@ -104,6 +104,11 @@ void KVCache::append(int layer, const Tensor& k, const Tensor& v) {
     l.len += static_cast<int>(k.rows);
 }
 
+bool KVCache::has_layer(int layer) const {
+    return layer >= 0 && layer < static_cast<int>(layers_.size()) &&
+           layers_[layer].width != 0;
+}
+
 int KVCache::size(int layer) const {
     if (layer < 0 || layer >= static_cast<int>(layers_.size()) ||
         layers_[layer].width == 0) {

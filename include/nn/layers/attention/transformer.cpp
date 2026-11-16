@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 // Fix dimension mismatch: standard convention is (tokens, d_model) internally
 // Reshape at entry/exit: (d_model, seq_len) <-> (tokens, d_model)
@@ -27,6 +29,32 @@ void MultiHeadAttention::zero_grad() {
     grad_W_q.fill(0.0); grad_W_k.fill(0.0); grad_W_v.fill(0.0); grad_W_o.fill(0.0);
 }
 
+// The Q/K/V projection, shared by the ordinary and the cached path.
+//
+// Q = x @ W_q^T, K = x @ W_k^T, V = x @ W_v^T, with x in (tokens, d_model).
+//
+// NOTE: explicit loops are needed here because x is (tokens, d_model)
+// row-major and W is (d_model, d_model) -- a matmul must process per-row
+// for cache locality. The loop bodies are the ones that used to live
+// inside forward(); they were moved here VERBATIM so that the ordinary
+// path and the cached path cannot drift apart, and so that the ordinary
+// path's arithmetic is bit-for-bit what it was.
+void MultiHeadAttention::project_qkv(const Tensor& x, Tensor& Q, Tensor& K,
+                                     Tensor& V) const {
+    const size_t tokens = x.rows;
+    for (size_t i = 0; i < tokens; ++i) {
+        for (size_t j = 0; j < d_model; ++j) {
+            double qv = 0.0, kv = 0.0, vv = 0.0;
+            for (size_t k = 0; k < d_model; ++k) {
+                qv += x[i][k] * W_q[k][j];
+                kv += x[i][k] * W_k[k][j];
+                vv += x[i][k] * W_v[k][j];
+            }
+            Q[i][j] = qv; K[i][j] = kv; V[i][j] = vv;
+        }
+    }
+}
+
 Tensor MultiHeadAttention::forward(const Tensor& input) {
     // input: (d_model, seq_len) -> internal (tokens, d_model) where tokens = seq_len (batch=1)
     size_t seq_len = input.cols;
@@ -39,23 +67,11 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
             x[s][f] = input[f][s];  // flip indices
 
     last_x = x;
+    last_forward_was_cached_ = false;
 
     // Compute Q, K, V: each (tokens, d_model)
-    // Q = x @ W_q^T: (tokens, d_model) @ (d_model, d_model) = (tokens, d_model)
-    // NOTE: explicit loops needed here because x is (tokens, d_model) row-major,
-    // and W is (d_model, d_model) — matmul must process per-row for cache locality.
     Tensor Q(tokens, d_model), K(tokens, d_model), V(tokens, d_model);
-    for (size_t i = 0; i < tokens; ++i) {
-        for (size_t j = 0; j < d_model; ++j) {
-            double qv = 0.0, kv = 0.0, vv = 0.0;
-            for (size_t k = 0; k < d_model; ++k) {
-                qv += x[i][k] * W_q[k][j];
-                kv += x[i][k] * W_k[k][j];
-                vv += x[i][k] * W_v[k][j];
-            }
-            Q[i][j] = qv; K[i][j] = kv; V[i][j] = vv;
-        }
-    }
+    project_qkv(x, Q, K, V);
     last_q = Q; last_k = K; last_v = V;
 
     // Multi-head attention
@@ -174,7 +190,178 @@ Tensor MultiHeadAttention::forward(const Tensor& input) {
     return out_back;
 }
 
+// ===========================================================================
+// THE INFERENCE-TIME KV CACHE
+// ===========================================================================
+//
+// `forward_cached()` is the INCREMENTAL path: `input` holds only the NEW
+// tokens, and the cache holds the previous tokens' keys and values.
+//
+// THE INVARIANT IT MAINTAINS: the incremental decode equals the full-sequence
+// forward, TOKEN FOR TOKEN. It is maintained by keeping the ARITHMETIC
+// IDENTICAL to the ordinary path:
+//
+//   * the Q/K/V projection is the SHARED helper, so the same dot products
+//     are computed in the same order;
+//   * the scores are the same dot products, divided by the same
+//     sqrt(d_k + 1e-9);
+//   * the causal mask is the same -1e9, applied to the same columns -- the
+//     key at absolute position j is admissible iff j <= past + i, and every
+//     CACHED key is in the past, so only the new chunk needs masking;
+//   * the softmax reduces over the SAME columns, in the SAME order;
+//   * the weighted sum over the values runs over the SAME columns, in the
+//     SAME order.
+//
+// The masked columns contribute exp(-1e9 - max) == 0.0 EXACTLY, so a
+// column that the ordinary path masks and this path skips contributes
+// exactly zero to the sum -- which is why the two agree to the LAST BIT
+// and not merely to within a tolerance.
+//
+// IT IS AN INFERENCE PATH: `backward()` after a cached forward throws.
+
+void MultiHeadAttention::set_kv_cache(std::shared_ptr<nn::utils::KVCache> cache,
+                                      int layer_index) {
+    if (layer_index < 0) {
+        throw std::invalid_argument(
+            "MultiHeadAttention::set_kv_cache: the layer index must be "
+            "non-negative, got " + std::to_string(layer_index));
+    }
+    kv_cache_ = cache;
+    kv_layer_index_ = layer_index;
+}
+
+void MultiHeadAttention::clear_kv_cache() {
+    kv_cache_.reset();
+    kv_layer_index_ = 0;
+    last_forward_was_cached_ = false;
+}
+
+Tensor MultiHeadAttention::forward_cached(const Tensor& input) {
+    if (!kv_cache_) {
+        throw std::runtime_error(
+            "MultiHeadAttention::forward_cached: no KV cache is attached; "
+            "call set_kv_cache() first");
+    }
+    if (input.rows != d_model) {
+        throw std::runtime_error(
+            "MultiHeadAttention::forward_cached: the input must have d_model = " +
+            std::to_string(d_model) + " rows, got " + std::to_string(input.rows));
+    }
+    const size_t seq_len = input.cols;
+    if (seq_len == 0) {
+        throw std::runtime_error(
+            "MultiHeadAttention::forward_cached: the input holds no tokens");
+    }
+    const size_t tokens = seq_len;
+
+    // Reshape input to (tokens, d_model): each row is one token embedding.
+    // THE SAME FLIP as the ordinary path.
+    Tensor x(tokens, d_model);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            x[s][f] = input[f][s];
+
+    // The cache's slot for this layer is reserved on first use.
+    if (!kv_cache_->has_layer(kv_layer_index_)) {
+        kv_cache_->reserve(kv_layer_index_, static_cast<int>(d_model));
+    }
+    const int past = kv_cache_->size(kv_layer_index_);
+
+    // Project the NEW tokens only -- the cached tokens were projected when
+    // they were appended.
+    Tensor Q(tokens, d_model), K(tokens, d_model), V(tokens, d_model);
+    project_qkv(x, Q, K, V);
+
+    // Append the new keys and values.
+    kv_cache_->append(kv_layer_index_, K, V);
+    const int total = kv_cache_->size(kv_layer_index_);
+    const Tensor& Kc = kv_cache_->key_buffer(kv_layer_index_);
+    const Tensor& Vc = kv_cache_->value_buffer(kv_layer_index_);
+
+    last_x = x;
+    last_forward_was_cached_ = true;
+
+    // The attention over the whole sequence so far.
+    Tensor output_acc(tokens, d_model);
+    output_acc.fill(0.0);
+
+    for (size_t h = 0; h < num_heads; ++h) {
+        // scores = Q_new @ K_cached^T / sqrt(d_k + 1e-9)
+        Tensor scores(tokens, total);
+        for (size_t i = 0; i < tokens; ++i) {
+            for (size_t j = 0; j < static_cast<size_t>(total); ++j) {
+                double s = 0.0;
+                for (size_t dk = 0; dk < d_k; ++dk)
+                    s += Q[i][h * d_k + dk] * Kc[j][h * d_k + dk];
+                double sc = s / std::sqrt((double)d_k + 1e-9);
+                // Causal mask: the key at absolute position j is admissible
+                // iff j <= past + i. Every cached key is in the past, so
+                // only the new chunk can be inadmissible.
+                if (j > static_cast<size_t>(past + static_cast<int>(i)))
+                    sc += -1e9f;
+                scores[i][j] = sc;
+            }
+        }
+
+        // Softmax over the columns -- the SAME order as the ordinary path.
+        for (size_t i = 0; i < tokens; ++i) {
+            double max_s = scores[i][0];
+            for (size_t j = 1; j < static_cast<size_t>(total); ++j)
+                if (scores[i][j] > max_s) max_s = scores[i][j];
+            double sum_exp = 0.0;
+            for (size_t j = 0; j < static_cast<size_t>(total); ++j) {
+                scores[i][j] = std::exp(scores[i][j] - max_s);
+                sum_exp += scores[i][j];
+            }
+            for (size_t j = 0; j < static_cast<size_t>(total); ++j)
+                scores[i][j] /= sum_exp;
+        }
+
+        // attn = scores @ V_cached^T, accumulated per head -- the SAME
+        // accumulation order as the ordinary path.
+        for (size_t i = 0; i < tokens; ++i) {
+            for (size_t dk = 0; dk < d_k; ++dk) {
+                double val = 0.0;
+                for (size_t j = 0; j < static_cast<size_t>(total); ++j)
+                    val += scores[i][j] * Vc[j][h * d_k + dk];
+                output_acc[i][h * d_k + dk] += val;
+            }
+        }
+    }
+
+    // Final projection: output_acc @ W_o^T -- identical to the ordinary path.
+    Tensor output(tokens, d_model);
+    for (size_t i = 0; i < tokens; ++i) {
+        for (size_t j = 0; j < d_model; ++j) {
+            double val = 0.0;
+            for (size_t k = 0; k < d_model; ++k) {
+                val += output_acc[i][k] * W_o[k][j];
+            }
+            output[i][j] = val;
+        }
+    }
+    last_attn_out = output;
+    last_attn_acc = output_acc;
+
+    // Reshape output back to (d_model, seq_len)
+    Tensor out_back(d_model, seq_len);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            out_back[f][s] = output[s][f];
+    return out_back;
+}
+
 Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
+    // A cached forward is an INFERENCE path: there is no adjoint for it. The
+    // error is explicit rather than a silently wrong gradient -- a decode
+    // followed by a backward pass is a PROGRAMMING mistake, and the message
+    // says what to do instead.
+    if (last_forward_was_cached_) {
+        throw std::runtime_error(
+            "MultiHeadAttention::backward: the last forward was a CACHED "
+            "forward, which is an inference path and has no adjoint; call "
+            "forward() before backward()");
+    }
     // grad_output: (d_model, seq_len)
     // 1. Reshape grad_output (d_model, seq_len) to internal (tokens, d_model)
     size_t seq_len = grad_output.cols;

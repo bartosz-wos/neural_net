@@ -159,7 +159,7 @@ MUTATIONS = [
 
     ("OM8",
      "the incremental path skips the output projection",
-     "        out = acc @ Wo.T\n        blocks.append(out.T)",
+     "        out = acc @ Wo\n        blocks.append(out.T)",
      "        out = acc\n        blocks.append(out.T)"),
 
     ("OM9",
@@ -179,7 +179,7 @@ MUTATIONS = [
 
     ("OM12",
      "the FULL path skips the output projection",
-     "    out = acc @ Wo.T\n    return out.T",
+     "    out = acc @ Wo\n    return out.T",
      "    out = acc\n    return out.T"),
 
     ("OM13",

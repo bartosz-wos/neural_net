@@ -150,9 +150,23 @@ def ref_mha_full(x, Wq, Wk, Wv, Wo, heads):
     """
     d_model, seq_len = x.shape
     X = x.T                                    # (tokens, d_model)
-    Q = X @ Wq.T
-    K = X @ Wk.T
-    V = X @ Wv.T
+    # THE PROJECTION CONVENTION IS THE REPO'S, NOT THE TEXTBOOK'S.
+    #
+    # The C++ layer computes Q[i][j] = sum_k x[i][k] * W_q[k][j], which is
+    # the STANDARD matmul X @ W_q -- and Tensor::operator* in this repo is
+    # exactly that (res[i][j] += a_ik * other[k][j]). The first draft of
+    # this oracle wrote X @ Wq.T, the textbook convention for a projection
+    # stored as (out, in); the repo stores W_q as (d_model, d_model) with
+    # the INPUT feature on the row axis, so the transpose is wrong.
+    #
+    # The defect was invisible to the oracle's own checks -- it agreed with
+    # itself -- and was found by the CROSS-LANGUAGE comparison against the
+    # C++ (max_abs_diff = 1.546). That is what the pinned-fixture transfer
+    # is FOR: two implementations of the same maths can agree with each
+    # other and both be wrong about the convention.
+    Q = X @ Wq
+    K = X @ Wk
+    V = X @ Wv
     d_k = d_model // heads
     scale = math.sqrt(d_k + 1e-9)
 
@@ -170,7 +184,7 @@ def ref_mha_full(x, Wq, Wk, Wv, Wo, heads):
         e = np.exp(scores - m)
         p = e / e.sum(axis=1, keepdims=True)
         acc[:, sl] = p @ Vh
-    out = acc @ Wo.T
+    out = acc @ Wo
     return out.T                               # (d_model, seq_len)
 
 
@@ -195,9 +209,9 @@ def ref_mha_incremental(x, Wq, Wk, Wv, Wo, heads, chunk,
     for start in range(0, seq_len, chunk):
         n = min(chunk, seq_len - start)
         Xn = x[:, start:start + n].T            # (n, d_model)
-        Q = Xn @ Wq.T
-        K = Xn @ Wk.T
-        V = Xn @ Wv.T
+        Q = Xn @ Wq                             # the repo's convention
+        K = Xn @ Wk
+        V = Xn @ Wv
         past = Kc.shape[0]
         if use_cache:
             Kc = np.vstack([Kc, K])
@@ -225,7 +239,7 @@ def ref_mha_incremental(x, Wq, Wk, Wv, Wo, heads, chunk,
             e = np.exp(scores - m)
             p = e / e.sum(axis=1, keepdims=True)
             acc[:, sl] = p @ Vh
-        out = acc @ Wo.T
+        out = acc @ Wo
         blocks.append(out.T)                    # (d_model, n)
 
     return np.hstack(blocks)

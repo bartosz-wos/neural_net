@@ -99,6 +99,11 @@ public:
     // differs from the layer's; zero rows; a capacity overflow.
     void append(int layer, const Tensor& k, const Tensor& v);
 
+    // Whether `layer` has been reserved. This is a QUERY, not a semantic
+    // change: it exists so that a consumer can reserve a layer lazily
+    // without having to catch an exception to find out.
+    bool has_layer(int layer) const;
+
     // The number of cached tokens in `layer`.
     int size(int layer) const;
 
