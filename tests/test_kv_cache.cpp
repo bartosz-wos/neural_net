@@ -760,19 +760,36 @@ static void test_cached_forward_errors() {
 
 int main() {
     std::cout << "=== test_kv_cache ===\n";
-    test_construction();
-    test_append_and_size();
-    test_second_append();
-    test_layer_independence();
-    test_reset();
-    test_memory_accounting();
-    test_errors();
-    test_full_forward_matches_the_oracle();
-    test_decode_matches_full_forward();
-    test_two_layers_share_one_cache();
-    test_the_cache_is_read();
-    test_attaching_a_cache_does_not_change_forward();
-    test_cached_forward_errors();
+    // THE WHOLE SUITE IS EXCEPTION-SAFE. An uncaught exception used to
+    // ABORT the run, which loses every result after the throw and turns a
+    // clean failure into a CRASH -- and a crash is a third verdict class to
+    // the mutation harness, not a coverage verdict. It was found by the
+    // mutation harness: dropping the cache's WIDTH guard makes an earlier
+    // append succeed, so the cache's length diverges and a LATER append
+    // throws "the capacity of 4 tokens is exceeded" from a line that is not
+    // inside an expect_throw.
+    //
+    // A suite that reports the exception as a FAILURE keeps every other
+    // result AND gives the mutation harness a clean verdict.
+    try {
+        test_construction();
+        test_append_and_size();
+        test_second_append();
+        test_layer_independence();
+        test_reset();
+        test_memory_accounting();
+        test_errors();
+        test_full_forward_matches_the_oracle();
+        test_decode_matches_full_forward();
+        test_two_layers_share_one_cache();
+        test_the_cache_is_read();
+        test_attaching_a_cache_does_not_change_forward();
+        test_cached_forward_errors();
+    } catch (const std::exception& e) {
+        ++g_fail;
+        std::cout << "  [FAIL] an uncaught exception escaped a test: "
+                  << e.what() << "\n";
+    }
     std::cout << "\n" << g_pass << " passed, " << g_fail << " failed\n";
     if (g_fail > 0) {
         std::cout << "TESTS FAILED\n";
