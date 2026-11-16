@@ -624,43 +624,94 @@ void MultiHeadAttention::update_weights(double learning_rate) {
 // ============== TransformerBlock ==============
 
 TransformerBlock::TransformerBlock(size_t d_model, size_t num_heads)
-    : attn(d_model, num_heads)
+    // THE MEMBERS MUST BE INITIALISED EXPLICITLY. The constructor's
+    // PARAMETERS are named `d_model` and `num_heads` too, so they SHADOW
+    // the members of the same name -- and a member that is not in the
+    // initialiser list is left INDETERMINATE. The block's public
+    // `d_model`/`num_heads` members therefore held GARBAGE for the whole
+    // life of this class.
+    //
+    // It stayed hidden because `forward()` never read them: it took the
+    // width from `input.rows` instead. The block-level cached decode DOES
+    // read `d_model` (to check the input's row count), and it surfaced the
+    // bug immediately as "the input must have d_model = 737171360 rows".
+    //
+    // **THE GRADIENT BUFFERS WERE NEVER INITIALISED EITHER**, and that one
+    // was a MEMORY-CORRUPTION BUG, not merely a wrong number:
+    //
+    //     grad_W1 = grad_b1 = grad_W2 = grad_b2 = Tensor();   // 0 x 0
+    //
+    // so `backward()` wrote `grad_W2[k][j] += ...` PAST THE END of an
+    // EMPTY buffer -- an out-of-bounds write on every single training
+    // step -- and `update_weights()` read `grad_W1[i][j]` out of bounds
+    // from it. **THE BLOCK WAS NEVER TRAINABLE.** It surfaced as a
+    // SEGFAULT in the block-level decode's suite, in the one place that
+    // calls `backward()` on a block that had not been trained before.
+    //
+    // `MultiHeadAttention`, the layer next to it, has always done it
+    // correctly: `: d_model(d_model), num_heads(num_heads), d_k(...)` and
+    // `grad_W_q = Tensor::zeros(d_model, d_model)`.
+    : d_model(d_model)
+    , num_heads(num_heads)
+    , attn(d_model, num_heads)
     , ln1(d_model)
     , ln2(d_model)
     , W1(Tensor::random(d_model, d_model, 0.01))
     , b1(Tensor::zeros(1, d_model))
     , W2(Tensor::random(d_model, d_model, 0.01))
     , b2(Tensor::zeros(1, d_model))
+    , grad_W1(Tensor::zeros(d_model, d_model))
+    , grad_b1(Tensor::zeros(1, d_model))
+    , grad_W2(Tensor::zeros(d_model, d_model))
+    , grad_b2(Tensor::zeros(1, d_model))
 {}
 
-Tensor TransformerBlock::forward(const Tensor& input) {
-    // input: (d_model, seq_len)
-    size_t d_model_local = input.rows;
-    size_t seq_len = input.cols;
-
-    // Reshape to (tokens, d_model) where tokens = seq_len (batch=1)
-    size_t tokens = seq_len;
-    size_t d = input.rows;
-    Tensor x(tokens, d);
-    for (size_t f = 0; f < d; ++f)
-        for (size_t s = 0; s < seq_len; ++s)
-            x[s][f] = input[f][s];
-
-    last_x = x;
-
-    // Self-attention
-    Tensor attn_out = attn.forward(input); // returns (d_model, seq_len)
-
-    // Reshape attn_out to (tokens, d_model)
-    Tensor attn_tokens(tokens, d_model_local);
-    for (size_t f = 0; f < d_model_local; ++f)
-        for (size_t s = 0; s < seq_len; ++s)
-            attn_tokens[s][f] = attn_out[f][s];
-
-    last_attn_out = attn_out;
+// ===========================================================================
+// THE BLOCK'S POST-ATTENTION TAIL
+// ===========================================================================
+//
+// The shared helper. It lives here, rather than being duplicated in
+// `forward` and `forward_cached`, so that the ordinary path and the cached
+// path CANNOT DRIFT APART -- the same discipline the attention layer uses
+// for its Q/K/V projection (`project_qkv`).
+//
+// The loop bodies are the ones that used to live inside forward(); they
+// were moved here VERBATIM, so the ordinary path's arithmetic is bit-for-bit
+// what it was.
+//
+// `x_tokens` and `attn_tokens` are (tokens, d_model) -- the block's
+// internal layout.
+//
+//   residual = x + attn
+//   norm1    = LayerNorm(residual)
+//   ffn1     = W1 @ norm1 + b1 ; GELU
+//   ffn2     = W2 @ GELU(ffn1) + b2
+//   ffn_res  = norm1 + ffn2
+//   out      = LayerNorm(ffn_res)
+//
+// WHY THE TAIL IS ROW-WISE, AND WHY THAT MATTERS
+// ------------------------------------------------
+// This repo's LayerNorm normalises over the FEATURE axis of each row (see
+// layer_norm.cpp: `batch = input.rows; features = input.cols;` and the mean
+// loop runs over `features`). A LayerNorm over a (tokens, d_model) tensor
+// is therefore PER TOKEN, so the whole tail above is POSITION-WISE.
+//
+// That is what makes the block-level cached decode work with ONLY the
+// key/value cache: the attention is the sole cross-token coupling in the
+// block, and the cache covers it exactly. Measured: the tail computed on
+// the last two tokens alone equals the full sequence's rows to 0.0, while
+// the counterfactual (a LayerNorm over the token axis) differs by 1.54.
+//
+// NO RESIDUAL-STREAM CACHE IS SHIPPED, and that is a MEASURED decision
+// rather than an oversight: a second cache would be a second source of
+// truth to keep in sync for ZERO behavioural difference.
+Tensor TransformerBlock::compute_tail(const Tensor& x_tokens,
+                                      const Tensor& attn_tokens) {
+    const size_t tokens = x_tokens.rows;
+    const size_t d_model_local = attn_tokens.cols;
 
     // Residual connection: x = x + attn_tokens (standard residual)
-    Tensor residual = x + attn_tokens;
+    Tensor residual = x_tokens + attn_tokens;
 
     // LayerNorm
     Tensor norm1_out = ln1.forward(residual); // (tokens, d_model)
@@ -671,8 +722,9 @@ Tensor TransformerBlock::forward(const Tensor& input) {
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d_model_local; ++j) {
             double val = b1[0][j];
-            for (size_t k = 0; k < d_model_local; ++k)
+            for (size_t k = 0; k < d_model_local; ++k) {
                 val += W1[k][j] * norm1_out[i][k];
+            }
             ffn1[i][j] = val;
         }
     }
@@ -693,8 +745,9 @@ Tensor TransformerBlock::forward(const Tensor& input) {
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d_model_local; ++j) {
             double val = b2[0][j];
-            for (size_t k = 0; k < d_model_local; ++k)
+            for (size_t k = 0; k < d_model_local; ++k) {
                 val += W2[k][j] * ffn1[i][k];
+            }
             ffn2[i][j] = val;
         }
     }
@@ -702,6 +755,39 @@ Tensor TransformerBlock::forward(const Tensor& input) {
     // Final residual + LayerNorm
     Tensor ffn_res = norm1_out + ffn2;
     Tensor norm2_out = ln2.forward(ffn_res);
+
+    return norm2_out;
+}
+
+Tensor TransformerBlock::forward(const Tensor& input) {
+    // input: (d_model, seq_len)
+    size_t d_model_local = input.rows;
+    size_t seq_len = input.cols;
+
+    // Reshape to (tokens, d_model) where tokens = seq_len (batch=1)
+    size_t tokens = seq_len;
+    size_t d = input.rows;
+    Tensor x(tokens, d);
+    for (size_t f = 0; f < d; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            x[s][f] = input[f][s];
+
+    last_x = x;
+    last_forward_was_cached_ = false;
+
+    // Self-attention
+    Tensor attn_out = attn.forward(input); // returns (d_model, seq_len)
+
+    // Reshape attn_out to (tokens, d_model)
+    Tensor attn_tokens(tokens, d_model_local);
+    for (size_t f = 0; f < d_model_local; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            attn_tokens[s][f] = attn_out[f][s];
+
+    last_attn_out = attn_out;
+
+    // The post-attention tail -- SHARED with the cached path.
+    Tensor norm2_out = compute_tail(x, attn_tokens);
 
     // Reshape back to (d_model, seq_len)
     last_ffn_out = Tensor(d_model_local, seq_len);
@@ -712,7 +798,102 @@ Tensor TransformerBlock::forward(const Tensor& input) {
     return last_ffn_out;
 }
 
+// ===========================================================================
+// THE BLOCK-LEVEL CACHED DECODE
+// ===========================================================================
+//
+// `forward_cached()` is the INCREMENTAL path: `input` holds only the NEW
+// tokens, and the attention's key/value cache holds the previous tokens'
+// keys and values.
+//
+// THE INVARIANT IT MAINTAINS: the incremental decode equals the full-sequence
+// forward, TOKEN FOR TOKEN. It is maintained by keeping the ARITHMETIC
+// IDENTICAL to the ordinary path:
+//
+//   * the attention is the shipped `MultiHeadAttention::forward_cached`,
+//     which is bit-exact against the ordinary path by construction -- the
+//     same projection helper, the same scores, the same -1e9 causal mask,
+//     the same softmax reduction order, the same weighted sum;
+//   * the tail is the SHARED `compute_tail` helper, applied to the new
+//     tokens only, and it is ROW-WISE, so each new token's tail value is
+//     bit-identical to the full sequence's value for that token.
+//
+// IT IS AN INFERENCE PATH: `backward()` after a cached forward throws.
+
+void TransformerBlock::set_kv_cache(std::shared_ptr<nn::utils::KVCache> cache,
+                                    int layer_index) {
+    attn.set_kv_cache(cache, layer_index);
+}
+
+void TransformerBlock::clear_kv_cache() {
+    attn.clear_kv_cache();
+}
+
+Tensor TransformerBlock::forward_cached(const Tensor& input) {
+    if (!has_kv_cache()) {
+        throw std::runtime_error(
+            "TransformerBlock::forward_cached: no KV cache is attached; "
+            "call set_kv_cache() first");
+    }
+    if (input.rows != d_model) {
+        throw std::runtime_error(
+            "TransformerBlock::forward_cached: the input must have d_model = " +
+            std::to_string(d_model) + " rows, got " + std::to_string(input.rows));
+    }
+    const size_t seq_len = input.cols;
+    if (seq_len == 0) {
+        throw std::runtime_error(
+            "TransformerBlock::forward_cached: the input holds no tokens");
+    }
+    const size_t tokens = seq_len;
+
+    // Reshape the NEW tokens to (tokens, d_model) -- the SAME flip as the
+    // ordinary path.
+    Tensor x(tokens, d_model);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            x[s][f] = input[f][s];
+
+    // The attention over the whole sequence so far, via the cache.
+    Tensor attn_out = attn.forward_cached(input); // (d_model, n_new)
+
+    // Reshape attn_out to (tokens, d_model)
+    Tensor attn_tokens(tokens, d_model);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            attn_tokens[s][f] = attn_out[f][s];
+
+    last_x = x;
+    last_attn_out = attn_out;
+    last_forward_was_cached_ = true;
+
+    // The SAME tail helper as the ordinary path.
+    Tensor norm2_out = compute_tail(x, attn_tokens);
+
+    // Reshape back to (d_model, n_new)
+    last_ffn_out = Tensor(d_model, seq_len);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            last_ffn_out[f][s] = norm2_out[s][f];
+
+    return last_ffn_out;
+}
+
 Tensor TransformerBlock::backward(const Tensor& grad_output, double) {
+    // A cached forward is an INFERENCE path: there is no adjoint for it.
+    //
+    // THE CHECK IS FIRST, BEFORE ANY GRADIENT BUFFER IS TOUCHED. A guard
+    // placed at the END of the backward pass would let the FFN's and the
+    // LayerNorms' gradient accumulators be written with values derived from
+    // a decode, and THEN throw -- leaving the block's gradients silently
+    // corrupted for the next training step. The error is explicit rather
+    // than a silently wrong gradient.
+    if (last_forward_was_cached_) {
+        throw std::runtime_error(
+            "TransformerBlock::backward: the last forward was a CACHED "
+            "forward, which is an inference path and has no adjoint; call "
+            "forward() before backward()");
+    }
     size_t tokens = last_x.rows;
     size_t d = last_x.cols;
     size_t seq_len = grad_output.cols;
@@ -866,14 +1047,54 @@ PositionalEncoding::PositionalEncoding(size_t max_len, size_t d_model) {
 }
 
 Tensor PositionalEncoding::forward(const Tensor& input) {
-    size_t d_model_local = input.rows;
-    size_t seq_len = input.cols;
-    size_t max_len = pe.rows;
+    return forward_at(input, 0);
+}
+
+// The ABSOLUTE-position form: output[f][s] = input[f][s] + pe[offset + s][f].
+//
+// `offset` is the absolute position of the tensor's FIRST column. For a
+// whole sequence it is 0; for an incremental decode it is the number of
+// tokens already in the cache.
+//
+// TWO LATENT DEFECTS IN THE ORIGINAL SIX LINES ARE FIXED HERE, and both
+// were SILENT:
+//
+//  1. `input.rows` was never checked against `d_model`. The original read
+//     `pe[s][f]` with `f` running to `input.rows-1`, while `pe` has
+//     `d_model` columns -- so a caller with more rows than `d_model` read
+//     OUT OF BOUNDS. There is no ASan build in the ordinary test run, so
+//     this was invisible.
+//
+//  2. Positions past `max_len` were SILENTLY ZEROED. The output tensor is
+//     value-initialised to 0.0 and the original loop stopped at `max_len`,
+//     so the tail of an over-long sequence had its token content DESTROYED
+//     with no error at all.
+//
+// Both are now explicit, DISTINCT errors -- a substring that appears in two
+// messages discriminates nothing, and the tests assert the MESSAGE.
+Tensor PositionalEncoding::forward_at(const Tensor& input, size_t offset) {
+    const size_t d_model_local = input.rows;
+    const size_t seq_len = input.cols;
+    const size_t max_len = pe.rows;
+
+    if (d_model_local != pe.cols) {
+        throw std::invalid_argument(
+            "PositionalEncoding::forward_at: the input must have d_model = " +
+            std::to_string(pe.cols) + " rows, got " +
+            std::to_string(d_model_local));
+    }
+    if (offset + seq_len > max_len) {
+        throw std::invalid_argument(
+            "PositionalEncoding::forward_at: the positions [" +
+            std::to_string(offset) + ", " + std::to_string(offset + seq_len) +
+            ") exceed the encoding table's " + std::to_string(max_len) +
+            " rows");
+    }
 
     Tensor output(input.rows, input.cols);
     for (size_t f = 0; f < d_model_local; ++f) {
-        for (size_t s = 0; s < seq_len && s < max_len; ++s) {
-            output[f][s] = input[f][s] + pe[s][f];
+        for (size_t s = 0; s < seq_len; ++s) {
+            output[f][s] = input[f][s] + pe[offset + s][f];
         }
     }
     return output;

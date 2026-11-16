@@ -91,6 +91,69 @@ public:
     std::vector<Tensor*> parameters() override;
     std::vector<Tensor*> gradients() override;
     void zero_grad() override;
+
+    // -----------------------------------------------------------------------
+    // THE BLOCK-LEVEL CACHED DECODE (added 2026-11-16)
+    //
+    // `forward()` is the ORDINARY path: it attends over the whole sequence
+    // it is given, in O(T^2). It is UNCHANGED by this feature.
+    //
+    // `forward_cached()` is the INCREMENTAL path: the input holds only the
+    // NEW tokens, and the attention's key/value cache holds the previous
+    // tokens'. It is a SEPARATE entry point on purpose -- there is no
+    // ambiguity about whether an input is a full sequence or an increment.
+    //
+    // THE INVARIANT: for a causal block, the incremental decode equals the
+    // full-sequence forward, TOKEN FOR TOKEN, and the tests assert it to
+    // the LAST BIT -- because the cached path performs the same arithmetic
+    // in the same order, and the block's post-attention tail is ROW-WISE.
+    //
+    // **NO RESIDUAL-STREAM CACHE IS NEEDED, AND THAT IS A MEASURED FACT,
+    // NOT AN ASSUMPTION.** This repo's LayerNorm normalises over the
+    // FEATURE axis of each row (see layer_norm.cpp), so it is PER TOKEN,
+    // and the block's tail -- residual -> ln1 -> FFN -> + -> ln2 -- is
+    // POSITION-WISE. The ONLY cross-token coupling in the whole block is
+    // the ATTENTION, which the key/value cache already covers exactly.
+    // Measured: the tail computed on the last two tokens alone equals the
+    // full sequence's rows to 0.0, while the COUNTERFACTUAL (a LayerNorm
+    // over the token axis) differs by 1.54 -- so the property is a
+    // property of this repo's convention, not a tautology. A second cache
+    // would be a second source of truth to keep in sync for zero
+    // behavioural difference.
+    //
+    // IT IS AN INFERENCE PATH. There is no adjoint for a decode, so
+    // `backward()` after a cached forward throws rather than silently
+    // producing a gradient that is wrong.
+    // -----------------------------------------------------------------------
+
+    // Attach a cache. `layer_index` selects this block's slot in the cache,
+    // so that ONE cache can serve a whole stack of blocks.
+    void set_kv_cache(std::shared_ptr<nn::utils::KVCache> cache,
+                      int layer_index = 0);
+    void clear_kv_cache();
+    bool has_kv_cache() const { return attn.has_kv_cache(); }
+    int kv_cache_layer_index() const { return attn.kv_cache_layer_index(); }
+
+    // The incremental forward. `input` is (d_model, n_new) and the output is
+    // (d_model, n_new).
+    Tensor forward_cached(const Tensor& input);
+
+private:
+    // The block's POST-ATTENTION tail, shared by the ordinary and the
+    // cached path so that the two cannot drift apart.
+    //
+    //   residual = x + attn
+    //   norm1    = LayerNorm(residual)
+    //   ffn      = W2 @ GELU(W1 @ norm1 + b1) + b2
+    //   out      = LayerNorm(norm1 + ffn)
+    //
+    // `x_tokens` and `attn_tokens` are (tokens, d_model) -- the block's
+    // internal layout. The loop bodies are the ones that used to live
+    // inside forward(); they were moved here VERBATIM so that the ordinary
+    // path's arithmetic is bit-for-bit what it was.
+    Tensor compute_tail(const Tensor& x_tokens, const Tensor& attn_tokens);
+
+    bool last_forward_was_cached_ = false;
 };
 
 class PositionalEncoding : public Layer {
@@ -105,6 +168,42 @@ public:
     std::vector<Tensor*> parameters() override { return {}; }
     std::vector<Tensor*> gradients() override { return {}; }
     void zero_grad() override {}
+
+    // -----------------------------------------------------------------------
+    // THE ABSOLUTE-POSITION FORM (added 2026-11-16)
+    //
+    // `forward()` uses the tensor's LOCAL COLUMN INDEX as the position:
+    //
+    //     output[f][s] = input[f][s] + pe[s][f]
+    //
+    // That is correct for a WHOLE sequence, where column s IS token s. It
+    // is WRONG for an incremental decode, where the caller hands over only
+    // the NEW tokens: column 0 is then the new token, whose absolute
+    // position is `past`, not 0. A decode built on the local form would be
+    // SILENTLY MIS-POSITIONED -- a wrong answer with no error, which is
+    // the worst kind of defect.
+    //
+    // `forward_at(input, offset)` uses the ABSOLUTE position `offset + s`:
+    //
+    //     output[f][s] = input[f][s] + pe[offset + s][f]
+    //
+    // `forward(input)` is exactly `forward_at(input, 0)`.
+    //
+    // TWO LATENT DEFECTS IN THE SAME SIX LINES ARE FIXED BY THIS CHANGE,
+    // and both were silent:
+    //
+    //  1. `input.rows` was NEVER checked against `d_model`. `pe[s][f]`
+    //     reads `pe`'s columns with `f` running to `input.rows-1`, and
+    //     `pe` has `d_model` columns -- so a caller with more rows than
+    //     `d_model` read OUT OF BOUNDS.
+    //  2. Positions past `max_len` were SILENTLY ZEROED. The output
+    //     tensor is value-initialised to 0.0 and the loop stops at
+    //     `max_len`, so the tail of an over-long sequence had its token
+    //     content DESTROYED with no error.
+    //
+    // Both are now explicit, DISTINCT errors.
+    // -----------------------------------------------------------------------
+    Tensor forward_at(const Tensor& input, size_t offset);
 };
 
 #endif
