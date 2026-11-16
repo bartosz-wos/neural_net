@@ -28,7 +28,7 @@ ALL_DIRS := $(sort $(dir $(LIB_OBJS)))
 # silently produce stale objects.
 DEPS := $(LIB_OBJS:.o=.d) \
         $(patsubst $(DEMOS_DIR)/%.cpp,$(BUILD_DIR)/%.d,$(wildcard $(DEMOS_DIR)/*.cpp)) \
-        $(patsubst tests/%.cpp,$(BUILD_DIR)/test_%.d,$(wildcard tests/*.cpp))
+        $(patsubst tests/%.cpp,$(BUILD_DIR)/%.d,$(wildcard tests/*.cpp))
 -include $(DEPS)
 
 # make treats objects built only to satisfy an implicit rule (the demos, which
