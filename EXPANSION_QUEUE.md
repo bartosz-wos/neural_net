@@ -4,6 +4,14 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-11-16] THE INFERENCE-TIME KV CACHE SHIPPED. 108/108, oracle
+#     66/66, oracle-mutation 22 caught / 0 survived / 0 broken / 0 noop /
+#     0 anchor, C++ mutation 20 caught / 0 survived / 0 broken / 0 crashed /
+#     0 noop / 0 anchor, ASan+UBSan CLEAN, 285 suites with zero new failures
+#     (the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY
+#     -- 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line
+#     561)` -- and is the long-standing entry in `NOT_FIXED.md`). The
+#     KV-CACHE bullet is closed. Do not re-pop.
 # [DONE 2026-11-13] LINEAR MULTI-LEVEL QUANTILE REGRESSION SHIPPED. 173/173,
 #     oracle 3215/3215, oracle-mutation 15 caught / 0 survived / 0 broken /
 #     0 noop / 0 anchor, C++ mutation 16 caught / 0 survived / 0 broken /
@@ -1256,6 +1264,9 @@ After completing an item, move it to the "Done" section.
        caches and report the feature as PRESENT. PRINT THE MATCHING LINES.
        <!-- 2026-11-10: re-measured, unchanged: 3 hits, ALL COMMENTS. Still
            unbuilt. Do not re-pop without re-measuring first. -->
+      <!-- 2026-11-16: SHIPPED as `utils/kv_cache.{h,cpp}` plus the cached
+          incremental forward path of `MultiHeadAttention` (see ## Done).
+          Do not re-pop. -->
      - **A STANDALONE ELBO / VI UTILITY.** `grep -rinE 'elbo|variational.inference|kullback' include/`
        -> **1 hit**, a comment (`utils/distribution_losses.h:8`, "KL
        Divergence (Kullback-Leibler)"). The repo's VAE computes its KL
@@ -1305,7 +1316,38 @@ After completing an item, move it to the "Done" section.
        architectures: StripedHyena, MEGALODON, HyenaDNA, RWKV-7 already shipped.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
+
 ## Done
+- **THE INFERENCE-TIME KEY/VALUE CACHE SHIPPED: a reusable per-layer K/V store, and the canonical attention layer's incremental decoding path -- the decode equals the full-sequence forward TO THE LAST BIT** (2026-11-16). `include/nn/utils/kv_cache.{h,cpp}` + `MultiHeadAttention::forward_cached` in `include/nn/layers/attention/transformer.{h,cpp}`, 108/108 in `test_kv_cache`, oracle 66/66, oracle-mutation **22 caught / 0 survived / 0 broken / 0 noop / 0 anchor**, C++ mutation **20 caught / 0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor**, ASan+UBSan CLEAN, **285 suites with zero new failures** (the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY -- 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)` -- and is the long-standing entry in `NOT_FIXED.md`). **THE `## Ideas` LIST WAS DRAINED a TWENTY-FOURTH TIME** -- every bullet is marked `[DONE]` -- so the session fell back to the queue's own documented method (a verified-absent concept sweep) and took the one item that EVERY still-unbuilt list in this file names.
+
+  **THE GAP WAS MEASURED, AND IT WAS A REAL ONE.** `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/` -> **3 hits, ALL COMMENTS** (`mla.h:33`, `sliding_window.h:17`, `megalodon.h:67` -- the last says "No KV cache or incremental decoding"). **ZERO implementation across ~250 layers.** Many attention layers hold `last_k_` / `last_v_`, but those are caches for the BACKWARD pass: a `grep -ril 'kv_cache'` hits them and reports the feature as PRESENT, so the absence was measured with the MATCHING LINES printed. The repo had no autoregressive decoding path at all -- every transformer forward is O(T^2) over the whole sequence, so generation re-computed the entire prefix at every step.
+
+  **THE INVARIANT IS PINNED EXACTLY, NOT WITHIN A TOLERANCE.** The token-by-token decode equals the full-sequence forward with **max_abs_diff == 0.0** -- asserted as EXACT equality, for every chunk size from 1 to 6 and for two attention layers sharing one cache. It is exact because the cached path performs the SAME arithmetic in the SAME order (a SHARED Q/K/V projection helper, the same scores, the same -1e9 causal mask, the same softmax reduction order, the same weighted sum), and because the masked columns contribute `exp(-1e9 - max) == 0.0` EXACTLY, so a column the ordinary path masks and the cached path skips contributes exactly zero to the sum. **A tolerance would have hidden a cache that attends to the wrong tokens by a small amount.**
+
+  **THE NON-VACUITY IS PINNED TOO.** The oracle MEASURES that a cache which is silently ignored would differ (2.188), that a missing causal mask differs (0.837), that perturbing token 0 changes the later steps (4.526), and that perturbing the LAST token changes ONLY the last step (2.354, and exactly 0.0 for every earlier step). The C++ suite pins the same property: perturbing token 0 must change a later step, because a cache that ignored the past would leave the later steps IDENTICAL.
+
+  **THE ORACLE HAD THE PROJECTION CONVENTION WRONG, AND THE CROSS-LANGUAGE COMPARISON IS WHAT CAUGHT IT.** The oracle wrote `X @ Wq.T` -- the textbook convention for a projection stored as (out, in) -- while the repo computes `Q[i][j] = sum_k x[i][k] * W_q[k][j]`, which is the standard matmul `X @ W_q`, and `Tensor::operator*` in this repo is exactly that. **The defect was INVISIBLE to the oracle's own checks, which agreed with themselves**, and surfaced as `max_abs_diff = 1.546` against the C++. *Two implementations of the same maths can agree with each other and both be wrong about the convention; the pinned-fixture transfer is what makes the disagreement visible.* The oracle was corrected, the harness's two anchors were re-anchored, and the fixtures were re-emitted.
+
+  **THE ORACLE ALSO CAUGHT A DEFECT IN ITS OWN FIRST DRAFT:** the causality check perturbed token 0 and then asserted that step 0 was unchanged, which is FALSE because token 0 *IS* step 0. It failed by 4.387 and the failure was in the CHECK -- the property under test is "a step cannot see a LATER token", so the token to perturb is the last one.
+
+  **THE C++ MUTATION HARNESS'S FIRST RUN REPORTED FOUR CRASHES AND TWO AMBIGUOUS ANCHORS, AND ALL SIX WERE DEFECTS IN THE HARNESS OR THE SUITE RATHER THAN VERDICTS.** Two anchors were ambiguous because the cached and the ordinary paths share lines with the SAME indentation (the softmax's `exp()` and the output projection's `W_o` term) -- an ambiguous anchor is a coin flip, not a verdict -- and both were re-anchored on CONTEXT. Two mutations CRASHED, which is a third verdict class: "the length is not incremented" left the cached path reading an EMPTY score buffer and SEGFAULTED, and was rewritten to grow the length by ONE row instead. **The second crash led to a real improvement in the SUITE: it is now EXCEPTION-SAFE.** An uncaught exception used to ABORT the run, losing every result after the throw and turning a clean failure into a crash; the suite now reports the escaping exception as a FAILURE.
+
+  **AND THE FEATURE EXPOSED A REPO-WIDE BUILD BUG, WHICH IS THE PART THAT MATTERS MOST.** Adding three members to `MultiHeadAttention` changed that class's LAYOUT, and `test_mha_backward` then SEGFAULTED with no output at all -- in a suite that touches none of the changed code. **The controlled experiment settled it: the same suite passes 10/10 with the change reverted and fails with it, and the ASan build of the same sources, compiled fresh, passes 10/10.** The cause was the Makefile's DEPS list: `$(patsubst tests/%.cpp,$(BUILD_DIR)/test_%.d,...)` DUPLICATED the prefix (the test files are already named `test_*.cpp`), so it asked for `build/test_test_mha_backward.d` while the file lives at `build/test_mha_backward.d`. **289 of the 289 test dependency files were named WRONG, and NONE of the wrong names existed on disk** -- a missing file in an `-include` is silently ignored, so **no test object in this repo had ever been rebuilt on a header change.** The library objects were unaffected (their names are correct), so the two halves of a link could disagree about a class layout -- exactly the ODR violation the Makefile's own header comment warns about at length. **THE FIX IS ONE LINE**, and the whole suite now runs against FRESH objects for the first time in this repo's history.
+
+  **STILL UNBUILT, verified absent BY CONTENT this session (re-measure before taking):**
+    - **A RESIDUAL-STREAM CACHE, for a BLOCK-LEVEL cached decode.**
+      `grep -rinE 'residual.?stream|hidden.?state.?cache|x.?cache' include/`
+      -> the attention cache exists now (`utils/kv_cache.h`), but nothing
+      caches the block's RESIDUAL, which carries the prefix just as the
+      attention does. `TransformerBlock::forward_cached` therefore needs a
+      SECOND cache, and the FFN's position-wise nature does not remove the
+      requirement. **A block-level decode is NOT shipped**, and shipping a
+      half-working one would be worse than shipping none. Every other
+      stack (ViT, GPT, the decoder) has its own attention path and needs
+      its own equivalence test.
+
+  **SCOPE, STATED PLAINLY.** The cache is at the ATTENTION level, and it is BOOKKEEPING ONLY: it owns the per-layer storage, the length, the capacity and the reset -- no eviction policy, no paging, because a cache that silently drops the oldest tokens CHANGES the model's output, and one that does that by default is a trap. The capacity is a hard bound and exceeding it is an ERROR. **A `TransformerBlock`-level cached decode is NOT shipped and needs a RESIDUAL-STREAM cache as well** (the FFN is position-wise, but the block's residual carries the prefix), which is a separate feature. The cached path is an INFERENCE path: `backward()` after a cached forward throws with its own message rather than silently producing a gradient that is wrong, and an ordinary forward re-enables the backward pass.
+
 
 - **LINEAR MULTI-LEVEL QUANTILE REGRESSION SHIPPED: one dense layer that maps `(N, D)` features to `(N, K)` conditional quantile predictions, with a level-wise pinball objective, a measured crossing diagnostic, and a monotone projection** (2026-11-13). `include/nn/layers/dense/quantile_regression.{h,cpp}`, 173/173 in `test_quantile_regression`, oracle 3215/3215, oracle-mutation **15 caught / 0 survived / 0 broken / 0 noop / 0 anchor**, C++ mutation **16 caught / 0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor**, ASan+UBSan CLEAN, zero new full-suite failures (the only failing suite, `test_neural_ode`, was **re-measured IDENTICALLY on a stashed pre-work tree** — 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)` — and is the long-standing entry in `NOT_FIXED.md`). **THE `## Ideas` LIST WAS DRAINED a TWENTY-THIRD TIME** -- every bullet is marked `[DONE]` -- so the session fell back to the queue's own documented method (a verified-absent concept sweep) and selected the last bullet: a quantile-regression layer.
 
@@ -1781,6 +1823,9 @@ After completing an item, move it to the "Done" section.
 
   **STILL UNBUILT, verified absent BY CONTENT this session (re-measure before taking):**
     - `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/` -> a KV cache for the repo's transformer stack. **Verify before taking**: many attention layers cache for BACKWARD (`last_k_`, `last_v_`), which is NOT an inference-time KV cache.
+      <!-- 2026-11-16: SHIPPED as `utils/kv_cache.{h,cpp}` plus the cached
+          incremental forward path of `MultiHeadAttention` (see ## Done).
+          Do not re-pop. -->
     - `grep -rinE '\bcrf\b|conditional.random.field|linear.chain' include/` -> a CRF layer. Needs a forward-backward over a chain, a different shape from everything else in the repo.
     - `grep -rinE 'elbo|variational.inference' include/` -> a standalone ELBO / VI utility; the repo's VAE computes its KL inline.
     - `grep -rinE 'ordinal.regress|cumulative.link|probit' include/` -> 0 hits. An ordinal-regression layer.
@@ -1803,6 +1848,9 @@ After completing an item, move it to the "Done" section.
 
   **STILL UNBUILT, verified absent BY CONTENT this session (re-measure before taking):**
     - `grep -rinE '\bkv.?cache|paged.attn|prefix.cache|past_key' include/` -> a KV cache for the repo's transformer stack. **Verify before taking**: many attention layers cache for BACKWARD (`last_k_`, `last_v_`), which is NOT an inference-time KV cache.
+      <!-- 2026-11-16: SHIPPED as `utils/kv_cache.{h,cpp}` plus the cached
+          incremental forward path of `MultiHeadAttention` (see ## Done).
+          Do not re-pop. -->
     - `grep -rinE '\bcrf\b|conditional.random.field|linear.chain' include/` -> a CRF layer. Needs a forward-backward over a chain, a different shape from everything else in the repo.
     - `grep -rinE 'elbo|variational.inference' include/` -> a standalone ELBO / VI utility; the repo's VAE computes its KL inline.
     - `weight.?standard`, `learnable.?lip`, `ngram`, `jelinek`, `mercer`, `stupid.?backoff`, `katz`, `nystrom` are all CLOSED or measured present. Do not re-pop.
