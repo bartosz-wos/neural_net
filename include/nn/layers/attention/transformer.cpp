@@ -549,21 +549,30 @@ Tensor MultiHeadAttention::backward(const Tensor& grad_output, double) {
             }
         }
 
-        // grad_W_v += last_x^T @ grad_v: (d_model, tokens) @ (tokens, d_model) = (d_model, d_model)
-        // grad_W_k += last_x^T @ grad_k
-        // grad_W_q += last_x^T @ grad_q
-        for (size_t i = 0; i < d_model; ++i) {
-            for (size_t j = 0; j < d_model; ++j) {
-                double gq = 0.0, gk = 0.0, gv = 0.0;
-                for (size_t t = 0; t < tokens; ++t) {
-                    gq += last_x[t][i] * grad_q[t][j];
-                    gk += last_x[t][i] * grad_k[t][j];
-                    gv += last_x[t][i] * grad_v[t][j];
-                }
-                grad_W_q[i][j] += gq;
-                grad_W_k[i][j] += gk;
-                grad_W_v[i][j] += gv;
+    }
+
+    // grad_W_v += last_x^T @ grad_v: (d_model, tokens) @ (tokens, d_model) = (d_model, d_model)
+    // grad_W_k += last_x^T @ grad_k
+    // grad_W_q += last_x^T @ grad_q
+    //
+    // This accumulation MUST run ONCE, after the per-head loop above.
+    // grad_q / grad_k / grad_v hold EVERY head's contribution by the time
+    // that loop ends (each head writes its own column slice). Accumulating
+    // inside the loop therefore counted head 0's contribution twice -- once
+    // on its own, then again together with head 1 -- which exactly doubled
+    // the gradient of every column belonging to head 0. With one head the
+    // error is invisible; with two or more it is a factor of two.
+    for (size_t i = 0; i < d_model; ++i) {
+        for (size_t j = 0; j < d_model; ++j) {
+            double gq = 0.0, gk = 0.0, gv = 0.0;
+            for (size_t t = 0; t < tokens; ++t) {
+                gq += last_x[t][i] * grad_q[t][j];
+                gk += last_x[t][i] * grad_k[t][j];
+                gv += last_x[t][i] * grad_v[t][j];
             }
+            grad_W_q[i][j] += gq;
+            grad_W_k[i][j] += gk;
+            grad_W_v[i][j] += gv;
         }
     }
 

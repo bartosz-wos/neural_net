@@ -40,6 +40,17 @@ static double mha_loss(MultiHeadAttention& a, const Tensor& x) {
     return L;
 }
 
+// Loss with an EXPLICIT upstream gradient: L = sum(g * out), so dL/dout = g.
+// The gradient handed to backward() must be the gradient of THIS loss, or the
+// finite difference and the analytical gradient describe different functions.
+static double mha_loss_with(MultiHeadAttention& a, const Tensor& x, const Tensor& g) {
+    Tensor o = a.forward(x);
+    double L = 0.0;
+    for (size_t i = 0; i < o.rows; ++i)
+        for (size_t j = 0; j < o.cols; ++j) L += g(i, j) * o(i, j);
+    return L;
+}
+
 static void fd_input_grad(size_t d_model, size_t seq_len, size_t heads, double init_scale) {
     MultiHeadAttention a(d_model, heads);
     // Re-init at a non-degenerate scale: MHA ships with 0.01, which puts the
@@ -83,6 +94,82 @@ static void fd_input_grad(size_t d_model, size_t seq_len, size_t heads, double i
                   "FD input grad d_model=%zu L=%zu H=%zu scale=%.2f: worst rel_err=%.3g < 1e-4",
                   d_model, seq_len, heads, init_scale, worst);
     check(worst < 1e-4, buf);
+}
+
+// ---------------------------------------------------------------------------
+// MULTI-HEAD parameter gradients.
+//
+// The parameter-gradient check above uses MultiHeadAttention a(4, 1) -- ONE
+// head -- and the input gradient check uses a saturating ramp that drives the
+// causal softmax to a one-hot distribution. Neither can see a defect that
+// only appears with two or more heads.
+//
+// The defect this pins: MultiHeadAttention::backward accumulates
+//     grad_W_q += last_x^T @ grad_q
+// INSIDE the per-head loop, while grad_q is progressively filled with EVERY
+// head's contribution (each head writes its own column slice). Head 0's
+// contribution was therefore counted twice -- once on its own, then again
+// together with head 1 -- so every gradient column belonging to head 0 was
+// exactly doubled. With one head the error is invisible; with two or more it
+// is a clean factor of two.
+//
+// The fixture must not saturate the softmax, or the FD signal for W_q/W_k/W_v
+// collapses to zero and the check becomes vacuous. The bounded sinusoidal
+// input below keeps the attention scores O(1).
+static void fd_param_grad_multihead(size_t d_model, size_t seq_len, size_t heads) {
+    MultiHeadAttention a(d_model, heads);
+    a.W_q = Tensor::random(d_model, d_model, 0.6);
+    a.W_k = Tensor::random(d_model, d_model, 0.6);
+    a.W_v = Tensor::random(d_model, d_model, 0.6);
+    a.W_o = Tensor::random(d_model, d_model, 0.6);
+
+    // Bounded, O(1) input: the scores stay in a range where the softmax is
+    // genuinely sensitive to W_q/W_k.
+    Tensor x(d_model, seq_len);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s)
+            x(f, s) = 0.30 * std::sin(1.7 * f + 0.9 * s)
+                    + 0.20 * std::cos(0.6 * s + 0.3 * f);
+
+    Tensor y = a.forward(x);
+    Tensor gy = Tensor::zeros(d_model, seq_len);
+    for (size_t f = 0; f < d_model; ++f)
+        for (size_t s = 0; s < seq_len; ++s) gy(f, s) = 0.7 * y(f, s) - 0.3;
+    a.zero_grad();
+    a.backward(gy, 0.0);
+
+    struct { Tensor* p; Tensor* g; const char* nm; } targets[] = {
+        {&a.W_q, &a.grad_W_q, "W_q"},
+        {&a.W_k, &a.grad_W_k, "W_k"},
+        {&a.W_v, &a.grad_W_v, "W_v"},
+        {&a.W_o, &a.grad_W_o, "W_o"},
+    };
+    for (auto& t : targets) {
+        const double eps = 1e-5;
+        double worst = 0.0;
+        double fd_max = 0.0;
+        for (size_t i = 0; i < t.p->rows; ++i)
+            for (size_t j = 0; j < t.p->cols; ++j) {
+                double orig = (*t.p)(i, j);
+                (*t.p)(i, j) = orig + eps; double lp = mha_loss_with(a, x, gy);
+                (*t.p)(i, j) = orig - eps; double lm = mha_loss_with(a, x, gy);
+                (*t.p)(i, j) = orig;
+                double num = (lp - lm) / (2.0 * eps);
+                double ana = (*t.g)(i, j);
+                fd_max = std::max(fd_max, std::fabs(num));
+                double den = std::max(std::fabs(ana), std::fabs(num));
+                if (den < 1e-12) den = 1.0;
+                double rel = std::fabs(ana - num) / den;
+                if (rel > worst) worst = rel;
+            }
+        char buf[200];
+        // Guard against a vacuous pass: the FD signal must be far above the
+        // double-precision noise floor, otherwise "they agree" means nothing.
+        std::snprintf(buf, sizeof(buf),
+                      "FD %s gradient (H=%zu): worst rel_err=%.3g < 1e-3 (|FD|max=%.3g > 1e-9)",
+                      t.nm, heads, worst, fd_max);
+        check(worst < 1e-3 && fd_max > 1e-9, buf);
+    }
 }
 
 int main() {
@@ -173,6 +260,13 @@ int main() {
             check(worst < 1e-3, buf);
         }
     }
+
+    // Multi-head parameter gradients: the defect they pin is invisible with
+    // one head, so H=1 is included only as a control.
+    fd_param_grad_multihead(4, 3, 1);
+    fd_param_grad_multihead(8, 4, 2);
+    fd_param_grad_multihead(8, 4, 3);
+    fd_param_grad_multihead(6, 5, 3);
 
     std::printf("=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
