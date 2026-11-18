@@ -256,6 +256,7 @@
 #include "layers/architectures/multi_output_model.h"
 #include "layers/architectures/sparse_moe.h"
 #include "layers/architectures/switch_transformer.h"
+#include "layers/architectures/transformer_stack.h"
 #include "layers/architectures/knn_classifier.h"
 #include "layers/architectures/lstm_las.h"
 #include "layers/architectures/seq2seq_attention.h"
