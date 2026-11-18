@@ -398,9 +398,34 @@ def main():
     # =======================================================================
     section("4. FID'S STRUCTURAL PROPERTIES")
     # =======================================================================
+    # -- 4.1: FID(X, X). **THE FIRST DRAFT ASSERTED `== 0.0` EXACTLY, AND
+    #    THAT WAS A FALSE CLAIM ABOUT THE MATHS.**
+    #
+    #    The radicand for identical inputs is MATHEMATICALLY zero, but
+    #    NUMERICALLY it is O(the eigensolver's error) with EITHER sign,
+    #    and the shipped clamp only fires when it goes NEGATIVE. Measured
+    #    on four fixtures:
+    #        n=  40 d=  6: raw radicand = +5.329071e-15  (POSITIVE)
+    #        n=  10 d= 64: raw radicand = -4.307842e-06  (NEGATIVE)
+    #        n= 200 d= 16: raw radicand = +1.421085e-14  (POSITIVE)
+    #        n= 300 d= 10: raw radicand = +7.105427e-15  (POSITIVE)
+    #    So the exact zero held on THIS file's fixture only by the
+    #    accident of one rounding. The C++ then FAILED the exact-zero
+    #    assertion, because the repo's cyclic Jacobi and numpy's LAPACK
+    #    eigh round differently -- and the C++ was RIGHT.
+    #
+    #    THE GUARANTEE IS: the FID is >= 0 (the clamp), and it is 0 to
+    #    within the eigensolver's accuracy. Both are asserted below, and
+    #    the second is asserted with a tolerance that is ABOVE the
+    #    solver's noise floor rather than at zero.
     fid_same = frechet_inception_distance(feats_real, feats_real)
-    check(fid_same == 0.0,
-          "4.1 FID(X, X) is EXACTLY 0 (the clamp makes it so)",
+    fid_same_raw = frechet_distance(mu_r, S_r, mu_r, S_r) ** 2
+    check(fid_same >= 0.0,
+          "4.1a FID(X, X) is >= 0 (the shipped clamp guarantees it)",
+          f"got {fid_same!r}")
+    check(fid_same < 1e-12,
+          "4.1b FID(X, X) is 0 to within the eigensolver's accuracy "
+          "(NOT necessarily exactly 0)",
           f"got {fid_same!r}")
     fid_swapped = frechet_inception_distance(feats_fake, feats_real)
     check(abs(fid_swapped - fid) < 1e-9,
@@ -617,9 +642,19 @@ def main():
     print("  sample mean (40x6)         = %s" % repr(feats_a.mean(axis=0).tolist()))
     print("  sample cov trace (40x6)     = %.15f" % np.trace(S_a))
 
+    # The trace terms, computed on the FID's OWN fixture (feats_real /
+    # feats_fake), so the C++ suite compares like with like.
+    mu_fr, S_fr = sample_mean_cov(feats_real)
+    mu_ff, S_ff = sample_mean_cov(feats_fake)
+    trace_scipy = float(np.real(np.trace(scipy.linalg.sqrtm(S_fr @ S_ff))))
+    S_frh = psd_sqrt(S_fr)
+    trace_sym = float(np.trace(psd_sqrt(S_frh @ S_ff @ S_frh)))
+    trace_naive = float(np.trace(psd_sqrt(sym(S_fr @ S_ff))))
+
     if "--emit-cpp" in sys.argv:
         emit_cpp(feats_a, mu_a, S_a, feats_real, feats_fake, fid, fid_biased,
-                 is_1, is_10, is_identical, is_uniform, fid_rankdef, Xs, Xf)
+                 is_1, is_10, is_identical, is_uniform, fid_rankdef, Xs, Xf,
+                 trace_sym, trace_scipy, trace_naive, fid_same_raw, onehot)
 
     print(f"\n=== SUMMARY: {'ORACLE GREEN' if FAILS == 0 else str(FAILS) + ' ORACLE FAILURES'} ===")
     return 0 if FAILS == 0 else 1
@@ -632,7 +667,8 @@ def main():
 # the oracle's).
 # ---------------------------------------------------------------------------
 def emit_cpp(feats_a, mu_a, S_a, feats_real, feats_fake, fid, fid_biased,
-             is_1, is_10, is_identical, is_uniform, fid_rankdef, Xs, Xf):
+             is_1, is_10, is_identical, is_uniform, fid_rankdef, Xs, Xf,
+             trace_sym, trace_scipy, trace_naive, fid_same_raw, onehot):
     def mat(name, a):
         rows = []
         for r in a:
@@ -663,7 +699,15 @@ def emit_cpp(feats_a, mu_a, S_a, feats_real, feats_fake, fid, fid_biased,
     print(mat("kOracleFeaturesFake", feats_fake))
     print(mat("kOracleRankDefReal", Xs))
     print(mat("kOracleRankDefFake", Xf))
-    print(eye("kOracleOneHot", 10, 3))
+    # THE ONE-HOT FIXTURE IS THE ORACLE'S OWN 200x10 MATRIX OF RANDOM
+    # ONE-HOT ROWS -- NOT a synthetic eye(). The first draft of this
+    # emitter wrote `eye(name, 10, 3)`, which is a 10x10 matrix with class 3
+    # ALWAYS: a DIFFERENT fixture, on which the Inception Score is 1.0
+    # (every row identical) instead of 7.49. The repo has been burned by
+    # exactly this before -- "both numbers were correct for the fixture
+    # they were given, and the fixture was simply not the oracle's" -- so
+    # the matrix is TRANSFERRED, never reconstructed.
+    print(mat("kOracleOneHot", onehot))
     print(uniform("kOracleUniform10", 100, 10))
     print("")
     print("// The oracle's own numbers.")
@@ -677,6 +721,10 @@ def emit_cpp(feats_a, mu_a, S_a, feats_real, feats_fake, fid, fid_biased,
     print(f"static const double kOracleIsUniform        = {is_uniform:.17g};")
     print(f"static const double kOracleSampleMeanA0     = {mu_a[0]:.17g};")
     print(f"static const double kOracleSampleCovTraceA  = {np.trace(S_a):.17g};")
+    print(f"static const double kOracleTraceSymmetrised  = {trace_sym:.17g};")
+    print(f"static const double kOracleTraceScipy       = {trace_scipy:.17g};")
+    print(f"static const double kOracleTraceNaive       = {trace_naive:.17g};")
+    print(f"static const double kOracleFidSameRaw       = {fid_same_raw:.17g};")
     print("// ==== ORACLE-EMITTED FIXTURE END ====")
 
 
