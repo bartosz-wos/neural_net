@@ -948,14 +948,45 @@ Tensor TransformerBlock::backward(const Tensor& grad_output, double) {
     }
 
     // 4. Backprop through GELU: multiply by GELU derivative
-    // GELU'(x) = 0.5 * (1 - tanh^2(z)) * sqrt(2/pi) * (1 + 3*0.044715*x^2)
+    //
+    // The block's FORWARD GELU (see compute_tail above) is
+    //
+    //     GELU(x) = 0.5 * x * (1 + tanh(u)),
+    //     u       = sqrt(2/pi) * (x + 0.044715 * x^3)
+    //
+    // whose derivative is
+    //
+    //     GELU'(x) = 0.5 * (1 + tanh(u))
+    //              + 0.5 * x * (1 - tanh(u)^2) * u'
+    //     u'       = sqrt(2/pi) * (1 + 3 * 0.044715 * x^2)
+    //
+    // i.e. `cdf + x * pdf`.
+    //
+    // THE PREVIOUS CODE COMPUTED ONLY THE `pdf` TERM:
+    //
+    //     0.5 * (1 - tanh(u)^2) * sqrt(2/pi) * (1 + 3*0.044715*x^2)
+    //
+    // so BOTH the `cdf` term AND the factor `x` were missing. Measured
+    // against finite differences of the block's own GELU, that formula is
+    // off by up to 1.03 in ABSOLUTE value -- which is why the block's
+    // analytical input gradient disagreed with finite differences by
+    // rel_err ~ 1.0 (the gradients had opposite signs).
+    //
+    // NOTE there is deliberately NO clamping here: the block's forward GELU
+    // does not clamp its input, so its adjoint must not clamp either. The
+    // repo's `GELU::derivative` (activations.cpp) DOES clamp, but it
+    // differentiates a DIFFERENT function -- the activations' GELU, whose
+    // forward clamps too. A clamp here would be the derivative of a
+    // function the block does not compute.
     for (size_t i = 0; i < tokens; ++i) {
         for (size_t j = 0; j < d; ++j) {
             double x_g = last_ffn_pregelu[i][j];
             double z = std::sqrt(2.0 / M_PI) * (x_g + 0.044715 * x_g * x_g * x_g);
             double tanh_z = std::tanh(z);
-            double gelu_deriv = 0.5 * (1.0 - tanh_z * tanh_z) * std::sqrt(2.0 / M_PI) * (1.0 + 3.0 * 0.044715 * x_g * x_g);
-            grad_ffn1[i][j] *= gelu_deriv;
+            const double cdf = 0.5 * (1.0 + tanh_z);
+            const double pdf = 0.5 * (1.0 - tanh_z * tanh_z) * std::sqrt(2.0 / M_PI)
+                             * (1.0 + 3.0 * 0.044715 * x_g * x_g);
+            grad_ffn1[i][j] *= (cdf + x_g * pdf);
         }
     }
 
@@ -988,14 +1019,28 @@ Tensor TransformerBlock::backward(const Tensor& grad_output, double) {
     // Accumulate FFN contribution into grad_norm1
     grad_norm1 = grad_norm1 + grad_norm1_ffn;
 
-    // 6. Backprop through residual1: residual1 = x + attn_tokens
-    // dL/dx += dL/dnorm1 (identity), dL/dattn_tokens = dL/dnorm1
-    Tensor grad_attn_tokens = grad_norm1;
-
-    // 7. Backprop through ln1: dL/dresidual1 = ln1.backward(grad_norm1)
+    // 6. Backprop through the RESIDUAL.
+    //
+    // The forward is
+    //
+    //     residual = x + attn_tokens
+    //     norm1    = LayerNorm(residual)
+    //
+    // so BOTH `x` and `attn_tokens` reach the loss ONLY through the
+    // residual, and the gradient that reaches them is the LayerNorm's
+    // BACKWARD OUTPUT -- dL/dresidual -- NOT dL/dnorm1, which is the
+    // gradient with respect to the LayerNorm's OUTPUT.
+    //
+    // The previous code used grad_norm1 (the pre-LayerNorm gradient) for
+    // both the attention path and an extra term added to dL/dx, so the
+    // LayerNorm's Jacobian was skipped entirely on the attention path and
+    // double-counted on the input path.
     Tensor grad_residual1 = ln1.backward(grad_norm1, 0.0);
-    // dL/dx = grad_residual1 + grad_attn_tokens
-    Tensor grad_x = grad_residual1 + grad_attn_tokens;
+
+    // dL/dattn_tokens = dL/dresidual (the residual add is the identity on
+    // this path), and dL/dx = dL/dresidual as well.
+    Tensor grad_attn_tokens = grad_residual1;
+    Tensor grad_x = grad_residual1;
 
     // 8. Backprop through attention
     // Reshape grad_attn_tokens to standard space for attn.backward
@@ -1025,20 +1070,42 @@ void TransformerBlock::update_weights(double learning_rate) {
     }
 }
 
+// The block's TRAINABLE PARAMETERS.
+//
+// The LayerNorms' gamma/beta MUST be in this list. They are trainable
+// tensors (LayerNorm::backward accumulates gradients into grad_gamma_ /
+// grad_beta_), and if they are absent from parameters() then:
+//
+//   * the optimizer never updates them -- the block's LayerNorm scale and
+//     shift stay frozen at their random initialisation forever, and
+//   * `gradients()` returns a list whose LENGTH no longer matches the
+//     number of parameters the optimizer is stepping, and whose gradient
+//     accumulators are never cleared by zero_grad() -- they grow without
+//     bound across steps.
+//
+// The order here and in gradients() MUST agree: the optimizers index the
+// two lists in parallel.
 std::vector<Tensor*> TransformerBlock::parameters() {
     auto p = attn.parameters();
+    p.push_back(&ln1.gamma); p.push_back(&ln1.beta);
+    p.push_back(&ln2.gamma); p.push_back(&ln2.beta);
     p.push_back(&W1); p.push_back(&b1);
     p.push_back(&W2); p.push_back(&b2);
     return p;
 }
 std::vector<Tensor*> TransformerBlock::gradients() {
     auto g = attn.gradients();
+    g.push_back(&ln1.grad_gamma_); g.push_back(&ln1.grad_beta_);
+    g.push_back(&ln2.grad_gamma_); g.push_back(&ln2.grad_beta_);
     g.push_back(&grad_W1); g.push_back(&grad_b1);
     g.push_back(&grad_W2); g.push_back(&grad_b2);
     return g;
 }
 void TransformerBlock::zero_grad() {
     attn.zero_grad();
+    // The LayerNorms' gradient accumulators grow with `+=` inside
+    // LayerNorm::backward, so they must be cleared here too.
+    ln1.zero_grad(); ln2.zero_grad();
     grad_W1.fill(0.0); grad_b1.fill(0.0);
     grad_W2.fill(0.0); grad_b2.fill(0.0);
 }
