@@ -68,6 +68,24 @@ tests/test_*just_*.cpp
 # always deleted before the commit — a leftover probe means the session ended
 # mid-investigation.
 tests/test_*probe*.cpp
+# A MUTATION HARNESS'S INERTNESS PROBE IS A LIVE DEPENDENCY, NOT A STRAY
+# DEBUG FILE, AND THE RULE ABOVE WOULD SILENTLY IGNORE IT.
+#
+# The repo's convention for an inertness probe is `probe_*.cpp` WITHOUT
+# the `test_` prefix -- `tests/probe_inert_m7.cpp` is referenced by
+# `tests/mutate_temperature_scaling.sh` and is REQUIRED by that harness.
+# The wildcard above only matches `test_*probe*.cpp`, so the convention
+# itself is safe. **BUT A FUTURE SESSION THAT NAMES ITS PROBE
+# `test_something_probe.cpp` WOULD HAVE IT SILENTLY IGNORED**, and the
+# harness would then fail with a bare "no such file" -- a confusing
+# failure that looks like a missing dependency rather than an ignore rule.
+#
+# The exception below makes the safe direction explicit: every probe file
+# is tracked, and the stray-debug-file protection stays with the
+# `debug_*` / `dbg_*` / `diag_*` rules at the top of this file, which
+# catch a stray probe WITHOUT its `test_` prefix.
+!tests/probe_*.cpp
+!tests/*_probe.cpp
 tests/test_*scratch*.cpp
 tests/test_*tmp*.cpp
 tests/test_*repro*.cpp
