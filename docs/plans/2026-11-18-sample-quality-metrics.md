@@ -329,3 +329,62 @@ git push origin master
 - **No `Layer`, no `Model`, no randomness, no optimizer.** Every core is a free function over `Tensor`.
 - **The FID path composes `utils::frechet_distance`.** There is exactly one copy of the Gaussian-to-Gaussian distance in the repo.
 - **The Inception Score takes probabilities, not a network.** The `splits` convention is pinned and documented, not left implicit.
+
+---
+
+## What the work actually found (measured, not narrated)
+
+The plan above is what was intended. This section is what happened, and it is the part worth keeping.
+
+### The oracle's own mutation harness reported FOUR SURVIVORS on its first run, and every one was a real gap
+
+The oracle's properties were all **relative** — "the split count changes the value", "an identical set gives 1.0", "the IS is >= 1" — and a mutant can satisfy every one of them while moving the number. The sharpest case: replacing the split's own marginal with the whole set's marginal moves the 10-split score from `7.9430631552552615` to `9.923028431014757`, and the oracle stayed green.
+
+**The fix was an independent scalar-loop reference** (`inception_score_reference`, explicit Python loops and `math.log`, sharing no code with the vectorised version) plus checks against `np.cov` and `scipy.linalg.sqrtm`. A survivor is a *specification for a better check*, not a nudge to drop the mutation.
+
+### The KL's zero guard was implemented TWICE, and the second guard was dead code
+
+The first draft used an inner `np.log(..., where=mask)` that zeroes the logarithm at a zero probability AND an outer `np.where(mask, ..., 0.0)` that discards the whole term. The outer one was **redundant** — with the logarithm already zeroed, the term is `0 * (0 - log q) == 0` — and that redundancy is why the mutation "remove the zero guard" SURVIVED: it removed a guard that was not carrying the load.
+
+**Two guards for one condition is one guard too many, and the redundant one makes the live one untested.** The oracle now has exactly one guard, and the harness targets that one.
+
+### The `FID(X, X) == 0` claim was FALSE, and the C++ was right
+
+The radicand for identical inputs is mathematically zero but numerically O(the eigensolver's error) with **either** sign, and the shipped clamp only fires when it goes negative. Measured on four fixtures: `+5.329071e-15`, `-4.307842e-06`, `+1.421085e-14`, `+7.105427e-15`. The exact zero held on the oracle's fixture only by the accident of one rounding, and the C++ then failed the assertion — because the repo's cyclic Jacobi and numpy's LAPACK `eigh` round differently.
+
+**The C++ was right and the claim was wrong.** The header, the oracle and the suite now state the actual guarantee: the FID is `>= 0`, and it is 0 to within the eigensolver's accuracy.
+
+### Six of the C++ suite's ten first-run failures were TEST bugs, and one was a false claim in the header
+
+- The scaled-features fixture was built as a **6x6 block** of the 40x6 matrix instead of the whole matrix.
+- The "no columns" guard was asserted on a fully **empty** tensor, where the "no rows" guard fires first — the guard ORDER is correct, the FIXTURE was wrong.
+- The row-sum and negative-probability guards were asserted with a 4-row matrix and the default 10 splits, so the splits guard fired first — again the ORDER is correct, the FIXTURE was wrong.
+- The "reference" trace was computed by symmetrising `S1 @ S2` and taking ITS eigenvalues, which is **not** the reference quantity (the reference's `sqrtm(S1 @ S2)` is the square root of a non-symmetric matrix). It disagreed with the shipped form by 1.28e-3, while the oracle's scipy value agrees with the shipped form to 3.6e-15.
+- The rank-deficient tolerance was 1e-8, **below the eigensolvers' noise floor on a singular matrix** (measured: LAPACK `104.04417000952868` against the repo's Jacobi `104.04417126600167`, a relative difference of 1.208e-08). It is now 1e-6.
+- A Python f-string leaked into the C++ test.
+
+**A failing comparison is evidence about one of two pieces of code you just wrote, not about the implementation.**
+
+### Two mutations are PROVABLY INERT, and both are scored with an inverted verdict
+
+FID is mathematically symmetric in its two arguments: `S1^(1/2) . S2 . S1^(1/2)` is similar to `S1 . S2`, and `S1 . S2` and `S2 . S1` have the same eigenvalues, so the two trace terms are equal. Measured over 3000 random feature pairs: the worst relative difference was 3.850e-08 — floating-point noise around an exact symmetry.
+
+**A survivor must never be silently dropped**, and an "inert" verdict must itself be *checkable*, or a future refactor leaves the harness reporting a stale "inert" that is no longer true. `tests/sample_quality_inertness.py` re-derives the symmetry from first principles, independently of either harness, and asserts the mutated FID is **bit-identical** to the pristine one (worst absolute difference exactly `0.0`).
+
+### One harness defect of the class that produces false verdicts
+
+The C++ harness's M6 first reported "HARNESS-DEFECT (edit did not land)": its old and new strings were identical, because it targeted the mean term's squaring, which lives inside the shipped `frechet_distance` in `utils/linear_algebra.cpp` and **not** in the file under test. **A mutation that targets another file's code is not this harness's business** — the decision belongs to the harness that owns the file (`tests/mutate_linear_algebra.sh`). M6 was re-anchored on a decision that *is* this file's (the sample mean's normaliser); the mean term's squaring is pinned by the suite's scale-equivariance check.
+
+---
+
+## Results
+
+| artefact | result |
+|---|---|
+| `tests/test_sample_quality` | **46/46** pass, deterministic across 3 runs |
+| `tests/sample_quality_oracle.py` | **41/41** pass |
+| oracle mutation harness | **15 caught / 0 survived / 0 broken / 0 noop** + **2 measured-inert** (inverted verdict) |
+| C++ mutation harness | **16 caught / 0 survived / 0 broken / 0 crashed / 0 noop** + **1 measured-inert** (inverted verdict) |
+| ASan + UBSan (`-O1 -g`) | **CLEAN** — 46/46 |
+| full suite | **289 suite invocations** (288 before this work), **ZERO new failures** |
+| the one failing suite | `test_neural_ode` — 47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)`, **re-measured IDENTICALLY** against the pre-work baseline. It is the long-standing entry in `NOT_FIXED.md`. |
