@@ -95,6 +95,7 @@
 #include "utils/sinkhorn.h"
 #include "utils/linear_algebra.h"
 #include "utils/sample_quality.h"
+#include "utils/survival.h"
 #include "utils/sliced_wasserstein.h"
 #include "utils/off_policy_eval.h"
 #include "utils/rank_correlation.h"
