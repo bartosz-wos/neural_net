@@ -17,7 +17,17 @@ TEST = "tests/test_survival.cpp"
 BEGIN = "// >>> ORACLE-EMITTED FIXTURE BEGIN (do not hand-edit) <<<"
 END = "// >>> ORACLE-EMITTED FIXTURE END <<<"
 
-out = subprocess.run([sys.executable, ORACLE, "--emit-cpp"],
+# THE REPO'S CONVENTION: the oracles run under /usr/bin/python3, which is
+# the interpreter that has numpy and scipy. The sibling scripts hardcode
+# it for the same reason (`tests/dtw_mutate_oracle.py`, `tests/
+# block_cached_decode_mutate_oracle.py`, and
+# `tests/splice_sample_quality_fixture.py` all name it explicitly).
+# Using `sys.executable` here would run the oracle under whatever
+# interpreter happens to be first on PATH -- which, inside the Hermes
+# agent's own venv, is NOT the one with numpy.
+PYTHON = "/usr/bin/python3"
+
+out = subprocess.run([PYTHON, ORACLE, "--emit-cpp"],
                      capture_output=True, text=True)
 if out.returncode != 0:
     print("the oracle failed:\n%s" % out.stdout)

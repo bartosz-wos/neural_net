@@ -7,8 +7,17 @@ Cox proportional-hazards partial log-likelihood with its analytic gradient.
 
 RUN THIS BEFORE WRITING ANY C++.
 
-    python3 tests/survival_oracle.py
-    python3 tests/survival_oracle.py --emit-cpp
+    /usr/bin/python3 tests/survival_oracle.py
+    /usr/bin/python3 tests/survival_oracle.py --emit-cpp
+
+**THE INTERPRETER IS /usr/bin/python3, NOT `python3`.** That is the
+interpreter with numpy and scipy on this host, and it is what the sibling
+oracles in this repo hardcode (`tests/dtw_mutate_oracle.py`,
+`tests/block_cached_decode_mutate_oracle.py`,
+`tests/edit_distance_mutate_oracle.py`). A bare `python3` resolves to
+whatever is first on PATH, which inside an agent's own virtual environment
+is NOT the one with numpy -- and the oracle would fail to import, which
+looks like a broken oracle rather than a wrong interpreter.
 
 Its discriminating power is MEASURED, not narrated: the companion harness
 tests/survival_mutate_oracle.py breaks the model code below in specific ways
@@ -56,6 +65,11 @@ MAINTAINED reference implementation. lifelines is not consulted for the
 VALUES -- the values are computed from the DEFINITIONS here -- but it is
 consulted to CONFIRM the definitions, and the agreement is measured and
 printed.
+
+**LIFELINES IS AN OPTIONAL DEPENDENCY.** The cross-check is wrapped in a
+try/except that prints `[SKIP]` and CONTINUES, so the oracle's own checks
+run on a host without it. It is installed user-side here with
+`/usr/bin/python3 -m pip install --user lifelines`.
 
 Where lifelines and this file disagree, the disagreement is reported with
 the exact case, and the convention is then pinned EXPLICITLY rather than

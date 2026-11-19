@@ -224,10 +224,25 @@ The fixtures are **emitted** by the oracle and spliced in by the script, never h
 ```bash
 make -j6 build/test_survival && ./build/test_survival     # 170/170
 bash tests/mutate_survival.sh                               # 23 caught / 0 survived
-python3 tests/survival_oracle.py                           # 93/93
-python3 tests/survival_mutate_oracle.py                    # 20 caught / 0 survived
+/usr/bin/python3 tests/survival_oracle.py                  # 93/93
+/usr/bin/python3 tests/survival_mutate_oracle.py           # 20 caught / 0 survived
 make run_tests                                              # no new failures
 ```
+
+**THE ORACLES RUN UNDER `/usr/bin/python3`, NOT A BARE `python3`.** That is
+the interpreter with numpy and scipy on this host, and it is what the
+sibling oracles in this repo already hardcode (`tests/dtw_mutate_oracle.py`,
+`tests/block_cached_decode_mutate_oracle.py`,
+`tests/edit_distance_mutate_oracle.py`). A bare `python3` resolves to
+whatever is first on PATH — which, inside an agent's own virtual
+environment, is **not** the one with numpy — and the oracle then fails to
+import, which looks like a broken oracle rather than a wrong interpreter.
+
+**`lifelines` IS OPTIONAL.** The oracle's cross-check against it is wrapped
+in a try/except that prints `[SKIP]` and continues, so the oracle's own
+93 checks run without it. It is installed user-side here
+(`/usr/bin/python3 -m pip install --user lifelines`) so the cross-check
+runs too.
 
 **ASan+UBSan:** the mutated TU and the test TU are compiled with `-fsanitize=address,undefined` and linked against the plain library, which is the repo's per-TU sanitizer convention (`tests/mutate_logit_processing.sh`, `tests/mutate_lr_multiplier.sh`). Expected: **clean**.
 

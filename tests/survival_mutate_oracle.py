@@ -6,7 +6,7 @@ tests/survival_oracle.py.
 PURPOSE: prove that the oracle actually CATCHES the defects it was written
 for. A green oracle proves nothing on its own; the mutation has to fail.
 
-    python3 tests/survival_mutate_oracle.py
+    /usr/bin/python3 tests/survival_mutate_oracle.py
 
 WHY THIS HARNESS EXISTS AT ALL
 ==============================
@@ -109,6 +109,17 @@ import subprocess
 import sys
 
 ORACLE = pathlib.Path("tests/survival_oracle.py")
+
+# THE REPO'S CONVENTION: the oracles run under /usr/bin/python3, which is
+# the interpreter that has numpy and scipy. The sibling harnesses hardcode
+# it for the same reason (`tests/dtw_mutate_oracle.py`,
+# `tests/block_cached_decode_mutate_oracle.py`,
+# `tests/edit_distance_mutate_oracle.py`). Using `sys.executable` here
+# would run the oracle under whatever interpreter happens to be first on
+# PATH -- which, inside the Hermes agent's own venv, is NOT the one with
+# numpy, and the oracle would fail to import and every mutation would be
+# scored as a false verdict.
+PYTHON = "/usr/bin/python3"
 
 # Each spec is (id, description, old_text, new_text). The old_text must
 # occur EXACTLY ONCE in the oracle source.
@@ -253,7 +264,7 @@ def main():
     print("=" * 74)
 
     # ---- the PRISTINE oracle must be GREEN first ------------------------
-    pre = subprocess.run([sys.executable, str(ORACLE)], capture_output=True, text=True)
+    pre = subprocess.run([PYTHON, str(ORACLE)], capture_output=True, text=True)
     if pre.returncode != 0:
         print("  [HARNESS-DEFECT] the pristine oracle is RED (rc=%d):" % pre.returncode)
         print(pre.stdout[-4000:])
@@ -282,7 +293,7 @@ def main():
             print("  [%s] HARNESS-DEFECT -- the edit was a NO-OP" % mid)
             defects += 1
             continue
-        run = subprocess.run([sys.executable, str(ORACLE)], capture_output=True, text=True)
+        run = subprocess.run([PYTHON, str(ORACLE)], capture_output=True, text=True)
         restore()
         if run.returncode == 0:
             print("  [%s] SURVIVED -- the oracle did NOT notice: %s" % (mid, desc))
