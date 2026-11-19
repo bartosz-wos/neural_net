@@ -4,6 +4,21 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# [DONE 2026-11-19] THE SURVIVAL-ANALYSIS UTILITIES SHIPPED. 170/170, oracle
+#     93/93, oracle-mutation 20 caught / 0 survived / 0 broken / 0 noop,
+#     C++ mutation 23 caught / 0 survived / 0 broken / 0 crashed / 0 noop,
+#     ASan+UBSan CLEAN, 290 suite invocations with ZERO new failures (the
+#     only failing suite, `test_neural_ode`, was re-measured IDENTICALLY --
+#     47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)`
+#     -- and is the long-standing entry in `NOT_FIXED.md`). THE COX PARTIAL
+#     LOG-LIKELIHOOD SHIPS WITH A CLOSED-FORM GRADIENT, so it composes
+#     with the repo's existing optimizers directly. TWO CONVENTIONS WERE
+#     SETTLED BY MEASUREMENT RATHER THAN BY TASTE: the CONCORDANCE SIGN
+#     (lifelines uses the COMPLEMENT, so the two are pinned from both
+#     sides by `C(s) + C(-s) == 1`), and the MEAN-VS-SUM of the partial
+#     log-likelihood (the repo's own D7 convention, and the `NOT_FIXED.md`
+#     VAE bug biting again). The `## Ideas` list is drained for the 29th
+#     time.
 # [DONE 2026-11-18] THE STACK-LEVEL CACHED DECODE SHIPPED. 20/20, oracle
 #     19/19, oracle-mutation 20 caught / 0 survived / 0 ambiguous / 0 no-op,
 #     C++ mutation 12 caught / 0 survived / 0 broken / 0 crashed / 0 noop /
@@ -1354,6 +1369,50 @@ After completing an item, move it to the "Done" section.
        architectures: StripedHyena, MEGALODON, HyenaDNA, RWKV-7 already shipped.
        TTT shipped earlier. ChebyKAN completes the canonical KAN trio. -->
 
+
+- **THE SURVIVAL-ANALYSIS UTILITIES SHIPPED: the Kaplan-Meier estimator, the Nelson-Aalen cumulative hazard, the two-sample log-rank test, Harrell's concordance index, and the COX PROPORTIONAL-HAZARDS PARTIAL LOG-LIKELIHOOD WITH ITS ANALYTIC GRADIENT — the first thing in this repo that can reason about a TIME TO EVENT observed under CENSORING** (2026-11-19). `include/nn/utils/survival.{h,cpp}`, 170/170 in `test_survival`, oracle 93/93, oracle-mutation **20 caught / 0 survived / 0 broken / 0 noop**, C++ mutation **23 caught / 0 survived / 0 broken / 0 crashed / 0 noop**, ASan+UBSan CLEAN, **290 suite invocations (289 before this work) with ZERO new failures** -- the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY (47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)`) against the pre-work baseline, and it is the long-standing entry in `NOT_FIXED.md`. **THE `## Ideas` LIST WAS DRAINED a TWENTY-NINTH TIME** — every bullet is marked `[DONE]` — so the session fell back to the queue's own documented method (a verified-absent concept sweep).
+
+  **THE GAP, MEASURED NOT ASSUMED, AND THE SWEEP WAS RUN AGAINST THE WHOLE NEIGHBOURHOOD RATHER THAN BY KEYWORD ALONE.** `grep -rinE 'survival|kaplan|cox.proportional|hazard|time.to.event|censoring' include/ tests/ --include=*.h --include=*.cpp` -> **2 hits, BOTH FALSE POSITIVES** (`stochastic_depth.cpp:11` "block SURVIVAL", `sinkhorn.cpp:359` "argument-evaluation-order HAZARD"). **ZERO IMPLEMENTATION.** The wider sweep is the part worth keeping, because four of its five results are false positives that a filename-only grep would have reported as presence: `causal|backdoor|propensity` -> **284 hits, ALL "causal ATTENTION"**; `fisher.information|empirical.fisher` -> 11, shipped; `bayesian.opt|tpe|acquisition` -> 6, ALL "GradientPenaltyLoss"; `bandit|thompson.sampl|upper.confidence.bound` -> 1, a comment in `off_policy_eval.h`. **A `grep -ril` THAT RETURNS HITS IS NOT EVIDENCE OF PRESENCE** -- this repo has been burned by that before, and the sweep measured it AGAIN rather than assuming it.
+
+  **IT IS NOT REDUNDANT WITH THE SHIPPED NEIGHBOURS, AND THE ARGUMENT IS ABOUT WHAT EACH ONE CANNOT SEE.** `utils/conformal.h` measures a SET's coverage: it has no notion of a survival time, of censoring, or of a hazard. `utils/rank_correlation.h` measures the association between two quantities observed **without** censoring -- and a censored observation breaks exactly the assumption a rank statistic rests on. `utils/gaussian_process.h` regresses a value on covariates: the subject here is a **TIME TO EVENT**, observed only up to a censoring time, and the estimator that handles that is a different algorithm (a risk set, not a design matrix). All the shipped neighbours are distribution-free or non-parametric in the same sense, so this is the same family of tool and not a new kind of thing.
+
+  **THE COX GRADIENT IS WHY THIS IS AN ML-LIBRARY FEATURE AND NOT JUST A STATISTICS BOX.** The partial log-likelihood ships with a CLOSED-FORM gradient, and the gradient is a **MEAN over the number of events** -- so the step size does not change with the event count, which is what makes the objective directly usable by the repo's existing optimizers. Every core is a free function over `Tensor`: no `Layer`, no `Model`, no randomness, no optimizer.
+
+  --------------------------------------------------------------------------
+  **THE TWO CONVENTIONS THAT ONLY MEASUREMENT COULD SETTLE, AND BOTH ARE THE KIND THAT SILENTLY HALVE A RESULT**
+
+  **THE CONCORDANCE SIGN.** `lifelines`' `concordance_index(event_times, predicted_scores, ...)` treats the score as a **SURVIVAL-TIME-like** quantity -- HIGHER SCORE = LONGER SURVIVAL -- and its own Cox example therefore passes `-cph.predict_partial_hazard(...)`, **NEGATED**. MEASURED on a four-subject fixture with times `[1,2,3,4]` and all events: a RISK score `[4,3,2,1]` (high = early failure) gives lifelines **0.0**, and a survival score `[1,2,3,4]` gives **1.0**. **THE TWO CONVENTIONS ARE COMPLEMENTS OF EACH OTHER, so an implementation that silently picks one reports `1 - C` of the other.** The oracle's first draft followed lifelines and the cross-check disagreed by exactly that (ours 0.5238 against lifelines 0.4762) -- and resolving it needed a SECOND measurement (a known-perfect risk score), not an argument about which is "right". **THIS FILE SHIPS THE RISK CONVENTION**, because a Cox model's own output IS a risk score and every published C-index for a Cox model uses that orientation -- and the oracle pins it from BOTH sides with the complementarity identity `C_risk(s) + C_risk(-s) == 1`, which holds exactly for every score vector INCLUDING one with tied scores.
+
+  **THE MEAN-VS-SUM.** lifelines reports the Cox partial log-likelihood as a raw SUM (`-28.552063357741332` on the 24-subject fixture); the MEAN is exactly that divided by the event count (17), giving `-1.6795331386906664`. **THIS IS THE `NOT_FIXED.md` VAE CONVENTION BITING AGAIN**, and the resolution is by measurement rather than taste: `utils/losses.h` documents that the mean reduction divides by `numel` and NOT by the row count (D7), and the VAE entry records the bug that happens when two halves of one loss are scaled differently -- "a loss that scales with the batch size is not a per-sample quantity". The partial likelihood is a sum over **EVENT TIMES**, so the analogous per-event quantity divides by the number of events. The factor is REPORTED (`n_events`), so a caller who wants lifelines' number multiplies by it.
+
+  --------------------------------------------------------------------------
+  **THE ORACLE CAUGHT FOUR DEFECTS, AND TWO OF THEM WERE CONVENTIONS RATHER THAN CODE**
+
+  The oracle ran BEFORE any C++ existed and its first run reported **18 failures**. Two were the conventions above. **TWO WERE THE ORACLE'S OWN HAND-WRITTEN EXPECTATIONS BEING WRONG** -- the classic "the fixture, not the code" family: the F1 fixture's hand-computed at-risk counts did not match the fixture that was actually written (6 expected, 12 present), and the all-censored median comparison was `abs(inf - inf)`, which is `NaN`, and `NaN <= 0` is false -- so that check COULD NEVER PASS. Both were fixed by rebuilding the FIXTURE, not by editing the expectation.
+
+  --------------------------------------------------------------------------
+  **THE ORACLE-MUTATION HARNESS FOUND THREE REAL COVERAGE GAPS, AND THE THIRD IS THE MOST REUSABLE FINDING IN THIS FILE**
+
+  Its first run reported **17 caught / 3 survived**, and **every survivor was a real gap** -- the rule is that a survivor is a specification for a better check, not a nudge to drop the mutation.
+
+  - **"the median is INTERPOLATED" survived** because F1's survival curve landed **EXACTLY** on 0.5, where interpolating returns the same point. The fix is **F11**: a curve that **CROSSES** 0.5 strictly between two event times, so the event-time median (2.0) and the interpolated median (1.5) disagree.
+  - **"the log-rank variance drops the finite-population factor" survived** because EVERY event time carried `d = 1`, and `(n-d)/(n-1)` is then **EXACTLY 1** -- the factor is arithmetically INERT on that fixture. The fix: F5's two groups now **SHARE event times**, so the factor is 13/14 and 10/12.
+  - **"the Cox Breslow denominator keeps the tied deaths' contribution" survived** because the mutation moves the value **AND** the gradient **CONSISTENTLY**, so the finite-difference check -- which compares the implementation **AGAINST ITSELF** -- still passes. **A FINITE-DIFFERENCE CHECK CANNOT SEE A DEFECT THAT MOVES THE VALUE AND THE GRADIENT TOGETHER.** The only thing that can see it is a SECOND IMPLEMENTATION, which is what the fix is: an **independent scalar-loop reference** in the oracle (and in the C++ suite), compared ABSOLUTELY. This is the same pattern `utils/sample_quality.h` uses for its `inception_score_reference`.
+
+  After the three fixes: **20 caught / 0 survived / 0 broken / 0 harness defects**.
+
+  --------------------------------------------------------------------------
+  **THE C++ MUTATION HARNESS'S ONE CRASH WAS A DEFECT IN THE MUTATION, NOT IN THE SUITE**
+
+  `tests/mutate_survival.sh` reported **22 caught / 0 survived / 1 crashed**. **M8 CRASHED (rc=139), AND A CRASH IS NOT A VERDICT**: its first form replaced the Nelson-Aalen's grid with all the distinct times while leaving the hazard vector at the event-grid length, so the step lookup indexed past the end of a shorter vector. A mutation that makes the binary crash says **NOTHING** about whether the suite covers the behaviour. It was rewritten to change the grid at its **SOURCE** (the shared builder), so every vector stays the same length as its grid and the mutation changes the **OBSERVABLE** instead of the memory safety. After the fix: **23 caught / 0 survived / 0 broken / 0 crashed / 0 noop**.
+
+  --------------------------------------------------------------------------
+  **FOUR GUARD ASSERTIONS FAILED ON THEIR FIRST RUN, AND EVERY ONE WAS A FIXTURE BUG RATHER THAN AN IMPLEMENTATION BUG**
+
+  Each guard fixture violated an **EARLIER** precondition, so the row-count guard fired first and the guard under test was never reached -- the assertion would have passed **for the wrong reason**, and the guard would have been untested. **THE GUARD ORDER IS CORRECT; THE FIXTURES WERE WRONG.** Every fixture now matches the row count of the data it is paired with.
+
+  --------------------------------------------------------------------------
+  **THE CITATIONS ARE ALL PRE-arXiv, SO NO arXiv ID IS ASSERTED.** Kaplan & Meier (JASA 1958), Nelson (Ann. Math. Statist. 1972), Cox (JRSS-B 1972), Efron (JASA 1977), Harrell, Lee & Mark (Statistics in Medicine 1996), Mantel (Cancer 1966). The reference implementation used for the cross-check is **lifelines 0.30.3**, a MAINTAINED implementation.
 
 ## Done
 
