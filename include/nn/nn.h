@@ -100,6 +100,7 @@
 #include "utils/sliced_wasserstein.h"
 #include "utils/off_policy_eval.h"
 #include "utils/rank_correlation.h"
+#include "utils/correlation_tests.h"
 #include "utils/isotonic_regression.h"
 #include "utils/edit_distance.h"
 #include "utils/dtw.h"
