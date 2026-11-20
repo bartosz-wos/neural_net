@@ -14,44 +14,22 @@ After completing an item, move it to the "Done" section.
 # re-measure by CONTENT before taking it, and do not trust a number typed
 # here.
 #
-# - **HYPOTHESIS TESTS AND p-VALUES FOR THE RANK CORRELATIONS.** This is the
-#   HIGHEST-SIGNAL bullet on the list, because a SHIPPED HEADER NAMES ITS
-#   OWN MISSING PIECE in as many words -- `include/nn/utils/rank_correlation.h`
-#   says, under "WHAT IS DELIBERATELY NOT SHIPPED, AND WHY":
-#
-#       * Hypothesis tests and p-values. The asymptotic normal approximations
-#         carry their own tie corrections and the exact permutation test is a
-#         different order of complexity. The STATISTICS ship; the TESTS do not.
-#
-#   **AND THE NEW MODULE MAKES THE ASYMPTOTIC PATH CHEAP.** The
-#   contingency-statistics module shipped 2026-11-20 brought the GENERAL
-#   chi-square survival function (the regularized upper incomplete gamma)
-#   with it -- `nn::utils::chi_square_survival(x, df)` -- so the asymptotic
-#   p-value for a rank correlation is now ONE FUNCTION CALL away, where
-#   before this repo could only produce a chi-square p-value for df == 1
-#   (`utils/survival.cpp`'s `erfc(sqrt(x/2))`). **That is exactly the
-#   "the repo names its own missing piece" pattern the queue treats as its
-#   strongest signal, and it is now unblocked by the previous session's
-#   work.** MEASURED absence: `grep -rn 'p_value' include/nn/utils/*.h`
-#   returns only `randomized_smoothing.h` (its abstention test) --
-#   `rank_correlation.h` exposes NO p-value for Spearman, Kendall or
-#   Pearson. The tie corrections in the asymptotic formulas are the part
-#   that must be measured against a reference rather than recalled.
-#
 # - **MULTIPLE-COMPARISON CORRECTION.** `grep -rinE 'bonferroni|holm|benjamini|
 #   hochberg|false.discovery.rate|familywise|multiplicity|adjusted.?p' include/
 #   tests/ --include=*.h --include=*.cpp --include=*.py` -> **1 hit, a FALSE
 #   POSITIVE**: `layers/generative/flow_matching.h:14` cites "Lipman, Chen,
 #   **Benjamini**, Nickel..." (the AUTHOR of the flow-matching paper). **ZERO
-#   IMPLEMENTATION.** The repo now ships FOUR families that each produce a
-#   p-value -- `utils/survival.h` (log-rank), `utils/contingency.h` (chi-square,
-#   G-test, McNemar, Fisher), `utils/conformal.h` -- and NOTHING corrects for
-#   running many of them at once. Bonferroni, Holm-Bonferroni and
-#   Benjamini-Hochberg are model-free and compose with all of them. This is
-#   the cheapest possible next feature and the most obviously load-bearing.
-#   (The Benjamini-Hochberg step-UP procedure's exact behaviour on TIED
-#   p-values is the kind of thing that must be MEASURED against a reference,
-#   not recalled -- the same lesson as the Fisher tie tolerance.)
+#   IMPLEMENTATION.** The repo now ships FIVE families that each produce a
+#   p-value -- `utils/survival.h` (log-rank), `utils/contingency.h`
+#   (chi-square, G-test, McNemar, Fisher), `utils/conformal.h`,
+#   `utils/correlation_tests.h` (Pearson, Spearman, Kendall) -- and NOTHING
+#   corrects for running many of them at once. Bonferroni, Holm-Bonferroni
+#   and Benjamini-Hochberg are model-free and compose with all of them.
+#   This is the cheapest possible next feature and the most obviously
+#   load-bearing. (The Benjamini-Hochberg step-UP procedure's exact
+#   behaviour on TIED p-values is the kind of thing that must be MEASURED
+#   against a reference, not recalled -- the same lesson as the Fisher tie
+#   tolerance.)
 #
 # - **A BOOTSTRAP CONFIDENCE-INTERVAL ESTIMATOR.** `grep -rinE 'bootstrap'
 #   include/` -> 5 hits, ALL false positives for this purpose:
@@ -83,6 +61,7 @@ After completing an item, move it to the "Done" section.
 #   explicitly an IID-association tool -- so this is a different question
 #   from either.
 #
+# ---------------------------------------------------------------------------
 # **DO NOT RE-POP** (measured present or deliberately closed): the
 # contingency statistics, the survival analysis, the rank correlations and
 # copulas, the conformal prediction, the isotonic regression, the sample
@@ -93,6 +72,42 @@ After completing an item, move it to the "Done" section.
 # orthogonality penalty, the weight standardisation, the muP, the Hutchinson
 # HVP, the curriculum, the LR multiplier, the PTQ, the TTA, the adversarial
 # robustness, the randomised smoothing, the VAT, the VQ-VAE, the LoRA.
+# ---------------------------------------------------------------------------
+# [DONE 2026-11-20] THE CORRELATION HYPOTHESIS TESTS SHIPPED. 713/713, oracle
+#     43/43, oracle-mutation 11 caught / 0 survived, C++ mutation 17 caught /
+#     0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor, ASan+UBSan CLEAN,
+#     289 suite invocations with ZERO new failures (the only failing suite,
+#     `test_neural_ode`, was re-measured IDENTICALLY -- 47 passed / 1 failed,
+#     the same `ODERNN dense1.W grad vs FD (line 561)` -- and is the
+#     long-standing entry in `NOT_FIXED.md`). The asymptotic two-sided
+#     p-values for Pearson's r, Spearman's rho and Kendall's tau-b -- the
+#     piece `utils/rank_correlation.h` NAMES AS ITS OWN MISSING PIECE ("The
+#     STATISTICS ship; the TESTS do not"). NEW `utils/correlation_tests.{h,cpp}`,
+#     composing the repo's own `regularized_incomplete_beta` (exported from
+#     `utils/randomized_smoothing.h` rather than reimplemented) and the three
+#     shipped statistics. FIVE PLACES WHERE THE TEXTBOOK ANSWER IS NOT THE
+#     ANSWER, all found by reading scipy's and R's SOURCE and MEASURING:
+#     the Pearson p-value's convention FORKS (scipy defaults to the EXACT
+#     beta of r, R and scipy's asymptotic branch use the Student t -- the t
+#     form ships, and it agrees with scipy's exact form to 3.3e-14 worst
+#     RELATIVE); scipy's `pearsonr` returns **1.0** at n == 2 where its
+#     `spearmanr` returns **NaN** and R refuses outright, so there is NO
+#     reference to agree with and NaN is the honest answer; scipy's
+#     `kendalltau(method='exact')` RAISES on ties, so the asymptotic form is
+#     the only one that exists for the common case; the repo's own
+#     `pearson_r` can return **1.0000000000000011102**, so the clip to
+#     [-1,1] is LOAD-BEARING and the first draft's `denom <= 0` branch made
+#     it invisible (the mutation harness PROVED that -- "a redundant guard
+#     hides a defect"); and the two-sided normal survival must be computed
+#     with `erfc`, not `2*(1-Phi)`, which CANCELS in the tail (7.1% wrong at
+#     |z| = 8, and 0.0 where the truth is 2.3e-19 at |z| = 9). The
+#     mutation harnesses found FOUR REAL DEFECTS that a green suite had
+#     hidden: a test reference with a spurious factor of two, the
+#     implementation's cancellation, an algebraically INERT mutation that
+#     was scored as caught, and -- in the ORACLE -- an "inert" claim that the
+#     harness REFUTED, because "the two conventions agree to 14 digits" is
+#     not the same claim as "the two conventions are indistinguishable" and
+#     only the SECOND one licenses an inertness verdict.
 # ---------------------------------------------------------------------------
 # [DONE 2026-11-20] THE CONTINGENCY STATISTICS SHIPPED. 201/201, oracle
 #     99/99, oracle-mutation 19 caught / 0 survived / 0 broken / 0 harness-defect
