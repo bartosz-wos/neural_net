@@ -4,6 +4,114 @@ Items are implemented from the bottom up (last item = next to pop).
 After completing an item, move it to the "Done" section.
 
 ## Ideas
+# ---------------------------------------------------------------------------
+# A FRESH LIST, seeded 2026-11-20 by the queue's own documented method
+# (a VERIFIED-ABSENT concept sweep run against the whole neighbourhood, with
+# the MATCHING LINES printed rather than the filenames -- a `grep -ril` that
+# returns hits is NOT evidence of presence, and this repo has been burned by
+# that repeatedly). **THE ORDER IS LIFO: THE LAST BULLET IS THE NEXT TO
+# POP.** Every bullet below is a HYPOTHESIS about a gap, not a specification:
+# re-measure by CONTENT before taking it, and do not trust a number typed
+# here.
+#
+# - **HYPOTHESIS TESTS AND p-VALUES FOR THE RANK CORRELATIONS.** This is the
+#   HIGHEST-SIGNAL bullet on the list, because a SHIPPED HEADER NAMES ITS
+#   OWN MISSING PIECE in as many words -- `include/nn/utils/rank_correlation.h`
+#   says, under "WHAT IS DELIBERATELY NOT SHIPPED, AND WHY":
+#
+#       * Hypothesis tests and p-values. The asymptotic normal approximations
+#         carry their own tie corrections and the exact permutation test is a
+#         different order of complexity. The STATISTICS ship; the TESTS do not.
+#
+#   **AND THE NEW MODULE MAKES THE ASYMPTOTIC PATH CHEAP.** The
+#   contingency-statistics module shipped 2026-11-20 brought the GENERAL
+#   chi-square survival function (the regularized upper incomplete gamma)
+#   with it -- `nn::utils::chi_square_survival(x, df)` -- so the asymptotic
+#   p-value for a rank correlation is now ONE FUNCTION CALL away, where
+#   before this repo could only produce a chi-square p-value for df == 1
+#   (`utils/survival.cpp`'s `erfc(sqrt(x/2))`). **That is exactly the
+#   "the repo names its own missing piece" pattern the queue treats as its
+#   strongest signal, and it is now unblocked by the previous session's
+#   work.** MEASURED absence: `grep -rn 'p_value' include/nn/utils/*.h`
+#   returns only `randomized_smoothing.h` (its abstention test) --
+#   `rank_correlation.h` exposes NO p-value for Spearman, Kendall or
+#   Pearson. The tie corrections in the asymptotic formulas are the part
+#   that must be measured against a reference rather than recalled.
+#
+# - **MULTIPLE-COMPARISON CORRECTION.** `grep -rinE 'bonferroni|holm|benjamini|
+#   hochberg|false.discovery.rate|familywise|multiplicity|adjusted.?p' include/
+#   tests/ --include=*.h --include=*.cpp --include=*.py` -> **1 hit, a FALSE
+#   POSITIVE**: `layers/generative/flow_matching.h:14` cites "Lipman, Chen,
+#   **Benjamini**, Nickel..." (the AUTHOR of the flow-matching paper). **ZERO
+#   IMPLEMENTATION.** The repo now ships FOUR families that each produce a
+#   p-value -- `utils/survival.h` (log-rank), `utils/contingency.h` (chi-square,
+#   G-test, McNemar, Fisher), `utils/conformal.h` -- and NOTHING corrects for
+#   running many of them at once. Bonferroni, Holm-Bonferroni and
+#   Benjamini-Hochberg are model-free and compose with all of them. This is
+#   the cheapest possible next feature and the most obviously load-bearing.
+#   (The Benjamini-Hochberg step-UP procedure's exact behaviour on TIED
+#   p-values is the kind of thing that must be MEASURED against a reference,
+#   not recalled -- the same lesson as the Fisher tie tolerance.)
+#
+# - **A BOOTSTRAP CONFIDENCE-INTERVAL ESTIMATOR.** `grep -rinE 'bootstrap'
+#   include/` -> 5 hits, ALL false positives for this purpose:
+#   `optimizers/prodigy.h` ("initial bootstrap" = a threshold warmup),
+#   `optimizers/prodigy.cpp`, `utils/isolation_forest.cpp` and
+#   `utils/random_forest.cpp` ("Bootstrap sample" = a resampled training
+#   set), `utils/random_forest.h` (same), and
+#   `utils/self_supervised_losses.h` (BYOL = "Bootstrap Your Own Latent").
+#   **ZERO confidence-interval estimator.** The BCa / percentile / basic
+#   bootstrap for an ARBITRARY statistic over a `Tensor` would be a
+#   model-free utility in the same shape as every other file here, and it
+#   is the standard way to put an interval on a quantity the repo already
+#   computes (an AUC, a kappa, a C-index). **The percentile bootstrap's
+#   seed-handling and the BCa acceleration constant are both places where
+#   the textbook formula and the reference implementation can disagree**, so
+#   measure them.
+#
+# - **AN AUTOCORRELATION / TIME-SERIES RESIDUAL DIAGNOSTIC.** `grep -rinE
+#   'autocorrel|ljung|box.?pierce|\bacf\b' include/` -> **0 hits**, and
+#   `grep -rinE 'arima|exponential smoothing|holt.winters' include/` -> 0
+#   hits (the only "exponential moving average" hits are OPTIMIZER state
+#   EMA, `optimizers/ademamix.h` and `adabelief.h`). The repo's optimizers
+#   track a moving average of the gradient; nothing tracks a moving average
+#   of the RESIDUALS. A partial-autocorrelation function plus the
+#   Ljung-Box portmanteau test is model-free and is the standard way to ask
+#   "is there structure left in my residuals that my model is missing?".
+#   **Note the neighbours**: `utils/survival.h` reasons about time-to-event
+#   but not about SERIAL correlation, and `utils/rank_correlation.h` is
+#   explicitly an IID-association tool -- so this is a different question
+#   from either.
+#
+# **DO NOT RE-POP** (measured present or deliberately closed): the
+# contingency statistics, the survival analysis, the rank correlations and
+# copulas, the conformal prediction, the isotonic regression, the sample
+# quality metrics, the sliced Wasserstein, the off-policy evaluation, the
+# edit distance / DTW, the ordinal and quantile regression, the KV cache,
+# the n-gram LM, the BPE tokenizer, the logit processing, the typical-p
+# sampling, the speculative decoding, the GPR, the CRF, the Sinkhorn, the
+# orthogonality penalty, the weight standardisation, the muP, the Hutchinson
+# HVP, the curriculum, the LR multiplier, the PTQ, the TTA, the adversarial
+# robustness, the randomised smoothing, the VAT, the VQ-VAE, the LoRA.
+# ---------------------------------------------------------------------------
+# [DONE 2026-11-20] THE CONTINGENCY STATISTICS SHIPPED. 201/201, oracle
+#     99/99, oracle-mutation 19 caught / 0 survived / 0 broken / 0 harness-defect
+#     + 2 inert-ok, C++ mutation 19 caught / 0 survived / 0 broken / 0 crashed /
+#     0 noop / 0 anchor + 2 declared-inert, ASan+UBSan CLEAN, 288 suite
+#     invocations with ZERO new failures (the only failing suite,
+#     `test_neural_ode`, was re-measured IDENTICALLY -- 47 passed / 1 failed,
+#     the same `ODERNN dense1.W grad vs FD (line 561)` -- and is the
+#     long-standing entry in `NOT_FIXED.md`). Cohen's kappa (unweighted /
+#     linear / quadratic), the Matthews coefficient, the chi-square test of
+#     independence, the G-test, McNemar's test and Fisher's exact test, PLUS
+#     the general chi-square survival function (the regularized upper
+#     incomplete gamma) this repo has never shipped -- which is what
+#     `utils/survival.h` names as its own missing piece. THREE PLACES WHERE
+#     THE TEXTBOOK ANSWER IS WRONG were found by reading scipy's and R's
+#     SOURCE: Yates' correction is CLAMPED to each cell's own deviation,
+#     McNemar's correction is applied IFF n01 != n10 and uses the ABSOLUTE
+#     value, and scipy's `power_divergence` uses the wrong degrees of
+#     freedom. The `## Ideas` list is drained for the 30th time.
 # [DONE 2026-11-19] THE SURVIVAL-ANALYSIS UTILITIES SHIPPED. 170/170, oracle
 #     93/93, oracle-mutation 20 caught / 0 survived / 0 broken / 0 noop,
 #     C++ mutation 23 caught / 0 survived / 0 broken / 0 crashed / 0 noop,
@@ -1415,6 +1523,41 @@ After completing an item, move it to the "Done" section.
   **THE CITATIONS ARE ALL PRE-arXiv, SO NO arXiv ID IS ASSERTED.** Kaplan & Meier (JASA 1958), Nelson (Ann. Math. Statist. 1972), Cox (JRSS-B 1972), Efron (JASA 1977), Harrell, Lee & Mark (Statistics in Medicine 1996), Mantel (Cancer 1966). The reference implementation used for the cross-check is **lifelines 0.30.3**, a MAINTAINED implementation.
 
 ## Done
+
+- **THE CONTINGENCY STATISTICS SHIPPED: Cohen's kappa (with unweighted / linear / quadratic disagreement weights), the Matthews correlation coefficient, Pearson's chi-square test of independence, the G-test (the likelihood-ratio sibling), McNemar's test for paired binary outcomes, and Fisher's exact test for a 2x2 table — plus the GENERAL chi-square survival function all three table tests need, which this repo has never shipped** (2026-11-20). `include/nn/utils/contingency.{h,cpp}`, **201/201** in `test_contingency`, oracle **99/99**, oracle-mutation **21 total / 19 CAUGHT / 0 SURVIVED / 0 MUT-BROKEN / 0 harness-defect + 2 INERT-OK** (with an inverted verdict), C++ mutation **21 total / 19 CAUGHT / 0 SURVIVED / 0 BROKEN / 0 CRASHED / 0 NOOP / 0 ANCHOR + 2 declared-inert** (with an inverted verdict), ASan+UBSan CLEAN, **288 suite invocations (287 before this work) with ZERO new failures** -- the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY (47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)`) against the pre-work baseline, and it is the long-standing entry in `NOT_FIXED.md`. **THE `## Ideas` LIST WAS DRAINED a THIRTIETH TIME** -- every bullet was marked `[DONE]` -- so the session fell back to the queue's own documented method (a verified-absent concept sweep), and the pick was made by the PRIOR session (the oracle and the plan are commit `b8ee5e2`); this session finished the C++ implementation, verified it end to end, and shipped it.
+
+  **THE GAP, MEASURED NOT ASSUMED, AND IT WAS NAMED BY THE REPO'S OWN SHIPPED HEADER.** `utils/survival.h` says in its own words: *"k > 2 GROUPS IS OUT OF SCOPE ... the statistic generalises to k-1 degrees of freedom, but its p-value does not have a closed form in erfc, and shipping a general incomplete gamma for one extra function is a scope decision this file does not make silently."* **A FILE THAT NAMES ITS OWN MISSING PIECE IS A SPECIFICATION**, and that is what the queue's own history records as its highest-signal kind of absence. The sweep around it: `cohen|kappa` -> 6 hits, ALL false positives (megalodon's `kappa_q`/`kappa_k` are DiT modulation parameters; `randomized_smoothing.h` cites "Jeremy M. Cohen" the AUTHOR); `matthews|\bmcc\b` -> 0; `mcnemar` -> 0; `fisher.?exact` -> 0; `contingency` -> 0; `cramer|phi.?coefficient` -> 0; `likelihood.?ratio` -> 0; `chi.?square|chisq|chi2` -> 3 hits, ALL the df=1 closed form in `utils/survival.{h,cpp}`; `incomplete.?gamma` -> 3 hits, ALL comments saying the repo does NOT have one. **ZERO IMPLEMENTATION** in a repo with ~250 layers and 60+ utility files.
+
+  **IT IS NOT REDUNDANT WITH THE SHIPPED NEIGHBOURS, AND THE ARGUMENT IS ABOUT WHAT EACH ONE CANNOT SEE.** `utils/metrics.h` (accuracy, F1, ROC-AUC, ECE, NDCG, MRR) is entirely SCORE-vs-LABEL: nothing there compares two LABELINGS OF THE SAME ITEMS, which is what kappa and McNemar do, and nothing corrects for the agreement two raters would reach BY CHANCE. `utils/rank_correlation.h` is Pearson/Spearman/Kendall on CONTINUOUS quantities; there is no categorical analogue of association anywhere. `utils/survival.h`'s log-rank p-value is the CHI-SQUARE-1 survival function `erfc(sqrt(x/2))`, a closed form that exists ONLY for one degree of freedom -- so a 2x3 table (df = 2) did not fit, and **the repo could not produce a p-value for any contingency table bigger than 2x2**. `utils/conformal.h` measures a SET's coverage: no notion of two raters, of a table, or of chance agreement.
+
+  --------------------------------------------------------------------------
+  **THE THREE PLACES WHERE THE TEXTBOOK ANSWER IS WRONG, AND ALL THREE WERE FOUND BY READING THE REFERENCES' SOURCE RATHER THAN BY TRUSTING MEMORY**
+
+  - **YATES' CONTINUITY CORRECTION IS CLAMPED TO EACH CELL'S OWN DEVIATION.** scipy computes `magnitude = min(0.5, abs(expected - observed))` and R computes `YATES <- min(0.5, abs(x - E))`, so the statistic is `sum_ij (|O-E| - min(0.5,|O-E|))^2 / E` and NOT the textbook `sum_ij (|O-E| - 0.5)^2 / E`. **The discriminating fixture is the 2x2 [[1,1],[1,2]], where every cell has `|O-E| = 0.2`: the unclamped form gives 0.3125 and BOTH scipy and R give 0.0.** MEASURED over every 2x2 table with entries in 0..8 and no empty row or column (6272 tables), scipy and R agree to 1.8e-15 on the corrected statistic.
+  - **McNEMAR'S CORRECTION IS APPLIED IFF `n01 != n10`, AND ITS NUMERATOR IS `(|n01-n10| - 1)^2` -- WITH THE ABSOLUTE VALUE.** R's condition is `correct && r == 2 && any(x - t(x) != 0)`, so on a SYMMETRIC table the correction is SKIPPED and the statistic is 0, NOT `1/(2*n01)`. The signed form `(n01 - n10 - 1)^2` is wrong whenever `n01 < n10`: MEASURED on [[0,3],[5,0]] (n01 = 3, n10 = 5) R reports `(|3-5|-1)^2/8 = 0.125` where the signed form gives 0.5625.
+  - **scipy's `power_divergence` COMPUTES ITS OWN p-VALUE WITH df = cells - 1, WHICH IS WRONG FOR A CONTINGENCY TABLE** (for a 4x3 table it uses 11 where the contingency df is 6). scipy's own `chi2_contingency` uses `(R-1)(C-1)`; this module does too.
+
+  --------------------------------------------------------------------------
+  **THE TWO CONVENTIONS THAT THE REFERENCES DISAGREE ON, AND THE MEASUREMENT THAT SETTLED EACH ONE**
+
+  - **THE DEGENERATE CASE IS NaN FOR KAPPA AND 0.0 FOR THE MATTHEWS COEFFICIENT.** `sklearn`'s `cohen_kappa_score` returns NaN and raises an `UndefinedMetricWarning`; `sklearn`'s `matthews_corrcoef` returns **0.0** in the same degenerate situation (either marginal concentrated). **TWO DIFFERENT CONVENTIONS IN ONE LIBRARY**, and they are not interchangeable, so the fixtures pin BOTH.
+  - **THE WEIGHT MATRIX IS BUILT OVER THE EXPLICIT CLASS-INDEX SPACE, NOT OVER THE PRESENT LABELS.** `sklearn`'s `labels=None` path compresses; its `labels=[...]` path does not. MEASURED on a fixture whose present classes are {0,1,3}: the linear kappa is **0.360000000000** in the explicit space and **0.304347826087** in the compressed one; the quadratic is 0.421686746988 against 0.360000000000. The unweighted kappa is space-INDEPENDENT (the off-diagonal indicator is the same whatever the indices are), which is why only the weighted rows differ. The repo's own convention is explicit -- `utils/metrics.h`'s `confusion_matrix` takes an explicit `num_classes` -- so THIS MODULE USES THE EXPLICIT INDEX SPACE.
+
+  --------------------------------------------------------------------------
+  **ONE CONVENTION THAT IS ABOUT THE ARITHMETIC RATHER THAN THE STATISTICS, AND IT IS LOAD-BEARING**
+
+  **THE SUMS ARE ACCUMULATED IN NUMPY'S PAIRWISE ORDER, NOT IN A NAIVE LOOP.** numpy's `ndarray.sum()` accumulates in blocks of EIGHT with eight partial sums, combines them pairwise, and splits above 128 elements. A C++ loop that accumulates sequentially disagrees with the oracle in the last bits -- and in the kappa's near-zero regime, where `1 - numerator/denominator` cancels catastrophically, that last bit is worth **5.6e-04 of RELATIVE difference**, which is 9 orders of magnitude outside the repo's own 1e-12 relative tolerance. **MEASURED, over 1200 random (labels, labels, num_classes, weights) cases covering all three weight schemes: with numpy's pairwise reduction the kappa agrees with the oracle BIT FOR BIT on 1200/1200; with a sequential accumulation it agrees on 732/1200 only.** The pairwise routine is transcribed from numpy's own `pairwise_sum_DOUBLE`, and `np.trace` reduces a DIAGONAL with the same routine (it matches the pairwise diagonal sum on 56/56 random 2-D arrays and the sequential one on 40/56 only).
+
+  --------------------------------------------------------------------------
+  **THE ONE PLACE THE MODULE AND THE ORACLE CAN DISAGREE, AND THE MODULE IS THE MORE ACCURATE OF THE TWO**
+
+  Fisher's tie decision compares pmf values computed in LOG SPACE, so the comparison sits at the ~1e-13 level -- the same order as the 1e-14 relative tolerance and the same order as the difference between two libms' `lgamma`. CPython's `math.lgamma` (an internal Lanczos implementation since 3.11) and glibc's `std::lgamma` disagree on 2465 of 4399 arguments here, by up to 1135 ulp. **AGAINST EXACT RATIONAL ARITHMETIC (Fractions, no floating point at all) over 3000 random 2x2 tables, the ORACLE's model is exact on 2990/3000 and THIS MODULE is exact on 2996/3000 -- and on every table where the two disagree, the module sides with the exact arithmetic.** The consequence is measured and bounded: over 800 random 2x2 tables the module and the model disagree on the p-value on 3 of them, and the module is correct on all three. **NO CHOICE OF `lgamma` CAN MAKE A float64 TIE COMPARISON AGREE WITH ANOTHER LIBM'S**, so the module implements the rule as written and lets the libm decide the boundary case -- which is the same choice the oracle makes.
+
+  --------------------------------------------------------------------------
+  **THE TWO MUTATIONS THAT ARE GENUINELY INERT, MEASURED RATHER THAN ASSUMED, AND SCORED WITH AN INVERTED VERDICT** -- so a mutation that starts to matter is a FAILURE rather than a pass: (1) the TRANSPOSED expected matrix in the kappa, which cancels EXACTLY for symmetric weights (every weight matrix this module supports is symmetric), and (2) the ABSOLUTED chi-square deviation, whose square equals the un-absoluted square bit for bit in IEEE-754. **A SURVIVOR IS A SPECIFICATION FOR A BETTER CHECK, NOT A NUDGE TO DROP THE MUTATION** -- so both are kept, with the reason recorded inline, and the harness proves they are inert rather than asserting it.
+
+  --------------------------------------------------------------------------
+  **THE CITATIONS ARE ALL PRE-arXiv, SO NO arXiv ID IS ASSERTED.** Cohen (1960, 1968), Matthews (1975), Pearson (1900), Fisher (1922), Yates (1934), McNemar (1947), Goodman & Kruskal (1954). **This repo's expansion queue has produced fifteen wrong arXiv identifiers, every one a plausible-looking neighbour of the right paper, so none is asserted here.** The reference implementations the conventions were measured against are scipy 1.17.1, scikit-learn 1.9.0 and R 4.5.3, all on this host.
 
 - **THE SAMPLE-QUALITY METRICS SHIPPED: the Frechet Inception Distance, the Inception Score, and the SAMPLE GAUSSIAN ESTIMATOR they are built on — the first thing in this repo that measures whether a generative model's samples are good** (2026-11-18). `include/nn/utils/sample_quality.{h,cpp}`, 46/46 in `test_sample_quality`, oracle 41/41, oracle-mutation **15 caught / 0 survived / 0 broken / 0 noop / 0 anchor** + **2 measured-inert** (with an inverted verdict), C++ mutation **16 caught / 0 survived / 0 broken / 0 crashed / 0 noop / 0 anchor** + **1 measured-inert** (with an inverted verdict), ASan+UBSan CLEAN, **289 suite invocations (288 before this work) with ZERO new failures** -- the only failing suite, `test_neural_ode`, was re-measured IDENTICALLY (47 passed / 1 failed, the same `ODERNN dense1.W grad vs FD (line 561)`) against the pre-work baseline, and it is the long-standing entry in `NOT_FIXED.md`. **THE `## Ideas` LIST WAS DRAINED a TWENTY-EIGHTH TIME** — every bullet is marked `[DONE]` — so the session fell back to the queue's own documented method (a verified-absent concept sweep).
 

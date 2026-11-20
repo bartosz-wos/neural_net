@@ -447,10 +447,19 @@ runtime crash, `MUT-NOOP` is an edit that did not apply).
     /usr/bin/python3 tests/contingency_oracle.py
     /usr/bin/python3 tests/contingency_mutate_oracle.py
     bash tests/mutate_contingency.sh
-    g++ -std=c++17 -O1 -g -fsanitize=address,undefined -Iinclude \
-        tests/test_contingency.cpp include/nn/utils/contingency.cpp \
-        include/nn/utils/metrics.cpp -o build/test_contingency_asan
-    ./build/test_contingency_asan
+
+    # ASan + UBSan. A sanitizer needs its OWN object tree, and the repo's
+    # link rules do NOT put $(CXXFLAGS) on the link line, so the sanitizer
+    # runtime has to be added there EXPLICITLY or the link fails with
+    # `undefined reference to __ubsan_handle_nonnull_arg`.
+    make BUILD_DIR=build_asan setup
+    make BUILD_DIR=build_asan \
+         CXXFLAGS="-std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer" \
+         -j"$(nproc)" build_asan/test_contingency
+    g++ -fsanitize=address,undefined -fno-omit-frame-pointer \
+        $(find build_asan -name '*.o') -o build_asan/test_contingency
+    ./build_asan/test_contingency
+
     make run_tests
 
 The suite sweep must show **zero new failures**. The only failing suite
