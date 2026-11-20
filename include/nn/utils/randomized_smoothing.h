@@ -152,6 +152,32 @@ double normal_cdf(double x);
 // ---------------------------------------------------------------------------
 double normal_quantile(double p);
 
+// --------------------------------------------------------------------------
+// The regularised incomplete beta function I_x(a, b), for a, b > 0 and
+// x in [0, 1]. Returns 0.0 for x <= 0, 1.0 for x >= 1, and NaN when
+// a <= 0 or b <= 0.
+//
+// WHY IT IS PUBLIC. It was file-local until 2026-11-20, when
+// `utils/correlation_tests.{h,cpp}` needed it for the Student's t
+// distribution's two-sided survival function
+//
+//     P(|T_dof| >= |t|) = I_{dof/(dof+t^2)}(dof/2, 1/2)
+//
+// and a SECOND copy of a continued-fraction incomplete beta would have
+// been exactly the "one implementation of each primitive" mistake this
+// repo has already paid for -- the three copies of the Jacobi rotation
+// angle are why `utils/linear_algebra.h` exists at all.
+//
+// MEASURED against scipy.special.betainc over the grid the correlation
+// tests use (dof in {1..100}, t in [0, 8]): worst RELATIVE error 2.8e-14
+// at the p-near-1 end and 6.6e-14 at the p-near-0 end.
+//
+// The implementation is a continued fraction by Lentz's method, with the
+// MIRRORED form used when x is large -- evaluating the small tail
+// directly there would lose every significant digit to cancellation.
+// -----------------------------------------------------------------------
+double regularized_incomplete_beta(double a, double b, double x);
+
 // ---------------------------------------------------------------------------
 // The one-sided (1−alpha) Clopper–Pearson LOWER confidence bound on a binomial
 // proportion, given k successes in n trials: `Beta^-1(alpha; k, n-k+1)` (D6).
